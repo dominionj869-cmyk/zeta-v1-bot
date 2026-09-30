@@ -8,28 +8,71 @@ import requests
 from iqoptionapi.stable_api import IQ_Option
 import iqoptionapi.constants as OP_code
 
+from candlestick_patterns import evaluate_confirmation_context
+
 
 # ============================================================
-# ZETA V1 — IQ OPTION OTC DEMO TRADER
+# ZETA V1 — DEMO / PRACTICE TRADING BOT
+# ============================================================
+# REAL IQ OPTION OTC FEEDS
+# 5M TREND / STRUCTURE
+# 1M ENTRY
+# 2-MINUTE EXPIRY
+#
+# Candle confirmation is handled by:
+# candlestick_patterns.py
+#
+# IMPORTANT:
+# This bot is intended for PRACTICE/DEMO testing.
+# It does not guarantee profitable results.
+# ============================================================
+
+
+# ============================================================
+# CONFIGURATION
 # ============================================================
 
 BALANCE_MODE = "PRACTICE"
+
 STAKE = 1.0
 
+# Trade expiry
 EXPIRY_MINUTES = 2
+
+# Main execution timeframe
 TIMEFRAME = 60
 CANDLE_COUNT = 180
 
+# Higher timeframe
+TIMEFRAME_5M = 300
+CANDLE_COUNT_5M = 120
+
+# OTC discovery
 MAX_OTC_ASSETS = 60
 
+# Scan loop
 SCAN_INTERVAL = 5
+
+# Telegram heartbeat
 STATUS_INTERVAL = 300
+
+# Reconnection
 RECONNECT_INTERVAL = 30
 
-MAX_ACTIVE_TRADES = 1000
+# ============================================================
+# 50-TRADE TEST
+# ============================================================
+
+# The experiment stops opening NEW trades after 50 tracked trades.
+TEST_TRADE_TARGET = 50
+
+# This is NOT the total lifetime trade limit.
+# It prevents more than 50 tracked trades from being opened
+# during this controlled experiment.
+MAX_ACTIVE_TRADES = 50
 
 # ============================================================
-# ZETA V1 SETTINGS
+# ZETA TREND SETTINGS
 # ============================================================
 
 FAST_LENGTH = 9
@@ -38,10 +81,34 @@ ATR_PERIOD = 14
 
 NORMALIZED_DISTANCE_MIN = 0.05
 
-USE_CANDLE_CONFIRM = True
 USE_TREND_SLOPE = True
 
+# Number of bars to wait before another signal
 SIGNAL_COOLDOWN_BARS = 3
+
+# ============================================================
+# ZETA FLIP SETTINGS
+# ============================================================
+
+# Keep False as requested.
+REQUIRE_ZETA_FLIP = False
+
+ZETA_FLIP_MAX_AGE_BARS = 10
+
+ZETA_REQUIRE_CLOSE_BEYOND_FAST_EMA = False
+
+ZETA_REQUIRE_FAST_SLOPE = False
+
+ZETA_CLOSE_VS_SLOW_TOLERANCE_ATR = 0.15
+
+# ============================================================
+# CANDLE LIBRARY
+# ============================================================
+
+CANDLE_LIBRARY_CONFIG = {}
+
+LOG_ZETA_REJECTIONS = True
+
 
 # ============================================================
 # ENVIRONMENT
@@ -53,6 +120,7 @@ IQ_PASSWORD = os.getenv("IQ_PASSWORD", "").strip()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
+
 # ============================================================
 # GLOBAL STATE
 # ============================================================
@@ -63,1172 +131,1276 @@ otc_assets = []
 
 last_signal_time = {}
 
+logged_once = {}
+
+evaluated_candles = {}
+
+ready_at = {}
+
+cache_5m = {}
+
 active_trades = {}
 
 total_trades = 0
 wins = 0
 losses = 0
 draws = 0
+
 total_profit = 0.0
 
 start_time = time.time()
 
 last_status_time = 0
+
 last_discovery_time = 0
+
 last_connection_check = 0
 
-
-# ============================================================
-# HELPERS
-# ============================================================
-
-def now_utc():
-    return datetime.now(timezone.utc).strftime(
-        "%Y-%m-%d %H:%M:%S UTC"
-    )
-
-
-def safe_float(value, default=0.0):
-    try:
-        value = float(value)
-
-        if math.isfinite(value):
-            return value
-
-    except Exception:
-        pass
-
-    return default
-
-
-def server_now():
-    try:
-        if api is not None:
-            value = api.get_server_timestamp()
-
-            if value:
-                return int(value)
-
-    except Exception:
-        pass
-
-    return int(time.time())
-
-
-def runtime_string():
-    seconds = int(time.time() - start_time)
-
-    hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
-
-    return f"{hours}h {minutes}m"
+final_report_sent = False
 
 
 # ============================================================
 # TELEGRAM
 # ============================================================
 
-def send_telegram(text):
-
+def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("\n[TELEGRAM DISABLED]")
-        print(text)
         return False
 
     url = (
-        "https://api.telegram.org/bot"
+        f"https://api.telegram.org/bot"
         f"{TELEGRAM_TOKEN}/sendMessage"
     )
 
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "Markdown",
+        "text": message,
+        "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
 
     try:
-
         response = requests.post(
             url,
-            json=payload,
+            data=payload,
             timeout=15,
         )
 
-        if response.ok:
+        return response.ok
+
+    except Exception:
+        return False
+
+
+# ============================================================
+# TIME
+# ============================================================
+
+def server_now():
+    return int(time.time())
+
+
+def utc_text(timestamp=None):
+    if timestamp is None:
+        timestamp = server_now()
+
+    return datetime.fromtimestamp(
+        timestamp,
+        timezone.utc
+    ).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+# ============================================================
+# CONNECTION
+# ============================================================
+
+def connect_iq():
+    global api
+
+    if not IQ_EMAIL or not IQ_PASSWORD:
+        raise RuntimeError(
+            "IQ_EMAIL or IQ_PASSWORD is missing."
+        )
+
+    print("Connecting to IQ Option...")
+
+    api = IQ_Option(
+        IQ_EMAIL,
+        IQ_PASSWORD
+    )
+
+    connected, reason = api.connect()
+
+    if not connected:
+        raise RuntimeError(
+            f"IQ Option connection failed: {reason}"
+        )
+
+    print("IQ Option connection: OK")
+
+    try:
+        api.change_balance(BALANCE_MODE)
+    except Exception:
+        pass
+
+    return True
+
+
+# ============================================================
+# CONNECTION CHECK
+# ============================================================
+
+def ensure_connection():
+    global api
+    global last_connection_check
+
+    now = server_now()
+
+    if now - last_connection_check < RECONNECT_INTERVAL:
+        return True
+
+    last_connection_check = now
+
+    try:
+        if api is None:
+            return connect_iq()
+
+        check = api.check_connect()
+
+        if check:
             return True
 
-        print(
-            "[TELEGRAM ERROR]",
-            response.status_code,
-            response.text[:500],
-        )
+    except Exception:
+        pass
 
-    except Exception as e:
+    print("Connection lost. Reconnecting...")
 
-        print(
-            "[TELEGRAM EXCEPTION]",
-            repr(e),
-        )
+    try:
+        connected, reason = api.connect()
+
+        if connected:
+            print("Reconnected to IQ Option.")
+
+            try:
+                api.change_balance(BALANCE_MODE)
+            except Exception:
+                pass
+
+            return True
+
+        print(f"Reconnect failed: {reason}")
+
+    except Exception as exc:
+        print(f"Reconnect error: {exc}")
 
     return False
 
 
 # ============================================================
-# OTC NAME DETECTION
+# SAFE ACTIVE REGISTRATION
 # ============================================================
 
-def is_otc_name(name):
-
-    if not isinstance(name, str):
-        return False
-
-    upper = name.upper().strip()
-
-    return (
-        upper.endswith("-OTC")
-        or upper.endswith("_OTC")
-        or upper.endswith(" OTC")
-        or "-OTC." in upper
-        or "_OTC." in upper
-        or " OTC." in upper
-    )
-
-
-def clean_active_name(raw_name):
-
-    if raw_name is None:
-        return None
-
-    name = str(raw_name).strip()
-
-    # IQ Option can return names such as:
-    # "1.EURUSD-OTC"
-    # "76.EURUSD-OTC"
-
-    if "." in name:
-        parts = name.split(".")
-
-        if len(parts) >= 2:
-            name = parts[-1]
-
-    return name.strip()
-
-
-# ============================================================
-# ACTIVE ID REGISTRATION
-# ============================================================
-
-def register_active_id(name, active_id):
-
-    if not name:
-        return False
-
+def register_active(asset):
     try:
-        active_id = int(active_id)
+        active_id = OP_code.ACTIVES.get(asset)
 
+        if active_id is not None:
+            return active_id
     except Exception:
-        return False
-
-    try:
-        OP_code.ACTIVES[name] = active_id
-
-        return True
-
-    except Exception as e:
-
-        print(
-            "[ACTIVE MAP ERROR]",
-            name,
-            active_id,
-            repr(e),
-        )
-
-        return False
-
-
-# ============================================================
-# RAW INITIALIZATION
-# ============================================================
-
-def get_raw_initialization():
-
-    if api is None:
-        return None
-
-    print("\n" + "=" * 70)
-    print("IQ OPTION MARKET INITIALIZATION")
-    print("=" * 70)
-
-    # --------------------------------------------------------
-    # METHOD 1
-    # --------------------------------------------------------
-
-    try:
-
-        print(
-            "[RAW] Requesting get_all_init_v2()..."
-        )
-
-        data = api.get_all_init_v2()
-
-        if data:
-
-            print(
-                "[RAW] get_all_init_v2 received."
-            )
-
-            print(
-                "[RAW] Type:",
-                type(data).__name__,
-            )
-
-            return data
-
-    except Exception as e:
-
-        print(
-            "[RAW V2 ERROR]",
-            repr(e),
-        )
-
-    # --------------------------------------------------------
-    # METHOD 2
-    # --------------------------------------------------------
-
-    try:
-
-        print(
-            "[RAW] Trying get_all_init()..."
-        )
-
-        data = api.get_all_init()
-
-        if data:
-
-            print(
-                "[RAW] get_all_init received."
-            )
-
-            print(
-                "[RAW] Type:",
-                type(data).__name__,
-            )
-
-            return data
-
-    except Exception as e:
-
-        print(
-            "[RAW LEGACY ERROR]",
-            repr(e),
-        )
-
-    print(
-        "[RAW] No initialization data."
-    )
+        pass
 
     return None
 
 
 # ============================================================
-# RECURSIVE OTC DISCOVERY
+# RECURSIVE ACTIVE EXTRACTION
 # ============================================================
 
-def discover_otc_from_initialization(data):
+def extract_otc_assets(obj, output=None):
+    if output is None:
+        output = set()
 
-    print("\n" + "=" * 70)
-    print("ROBUST OTC DISCOVERY")
-    print("=" * 70)
+    if isinstance(obj, dict):
 
-    if not isinstance(data, dict):
+        for key, value in obj.items():
 
-        print(
-            "[DISCOVERY] Unexpected root type:",
-            type(data).__name__,
-        )
-
-        return []
-
-    found = []
-    seen = set()
-
-    # --------------------------------------------------------
-    # RECURSIVE SEARCH
-    # --------------------------------------------------------
-
-    def walk(node, market_type="unknown"):
-
-        if len(found) >= MAX_OTC_ASSETS:
-            return
-
-        if isinstance(node, dict):
-
-            # ----------------------------------------------
-            # Detect active dictionaries
-            # ----------------------------------------------
-
-            if "actives" in node:
-
-                actives = node.get("actives")
-
-                if isinstance(actives, dict):
-
-                    for active_id, active in actives.items():
-
-                        if len(found) >= MAX_OTC_ASSETS:
-                            return
-
-                        if not isinstance(active, dict):
-                            continue
-
-                        raw_name = active.get("name")
-
-                        name = clean_active_name(
-                            raw_name
-                        )
-
-                        if not is_otc_name(name):
-                            continue
-
-                        # ----------------------------------
-                        # Status
-                        # ----------------------------------
-
-                        enabled = active.get(
-                            "enabled",
-                            True,
-                        )
-
-                        suspended = active.get(
-                            "is_suspended",
-                            False,
-                        )
-
-                        # Some IQ Option responses use
-                        # integers instead of booleans.
-
-                        enabled = bool(enabled)
-                        suspended = bool(suspended)
-
-                        if not enabled:
-                            continue
-
-                        if suspended:
-                            continue
-
-                        try:
-                            numeric_id = int(
-                                active_id
-                            )
-
-                        except Exception:
-                            continue
-
-                        register_active_id(
-                            name,
-                            numeric_id,
-                        )
-
-                        key = (
-                            name,
-                            numeric_id,
-                        )
-
-                        if key in seen:
-                            continue
-
-                        seen.add(key)
-
-                        found.append(
-                            {
-                                "asset": name,
-                                "market_type": market_type,
-                                "active_id": numeric_id,
-                            }
-                        )
-
-            # ----------------------------------------------
-            # Continue recursively
-            # ----------------------------------------------
-
-            for key, value in node.items():
-
-                child_market = market_type
-
-                if key in (
-                    "binary",
-                    "turbo",
-                    "digital",
-                    "cfd",
-                    "forex",
-                    "crypto",
-                ):
-
-                    child_market = key
-
-                if isinstance(
-                    value,
-                    (dict, list),
-                ):
-
-                    walk(
-                        value,
-                        child_market,
-                    )
-
-        elif isinstance(node, list):
-
-            for item in node:
-
-                if len(found) >= MAX_OTC_ASSETS:
-                    return
-
-                walk(
-                    item,
-                    market_type,
-                )
-
-    # --------------------------------------------------------
-    # START SEARCH
-    # --------------------------------------------------------
-
-    root = data
-
-    # Handle legacy:
-    # {"result": {...}}
-
-    if isinstance(
-        data.get("result"),
-        dict,
-    ):
-
-        print(
-            "[DISCOVERY] result wrapper detected."
-        )
-
-        root = data["result"]
-
-    print(
-        "[DISCOVERY] Top-level keys:"
-    )
-
-    for key in root.keys():
-
-        print(
-            " -",
-            key,
-        )
-
-    walk(root)
-
-    # --------------------------------------------------------
-    # SORT
-    # --------------------------------------------------------
-
-    found.sort(
-        key=lambda item: (
-            item["asset"],
-            item["market_type"],
-            item["active_id"],
-        )
-    )
-
-    print("")
-    print(
-        "TOTAL OPEN OTC DISCOVERED:",
-        len(found),
-    )
-
-    if found:
-
-        print("")
-        print(
-            "[REAL IQ OPTION OTC ASSETS]"
-        )
-
-        for index, item in enumerate(
-            found,
-            start=1,
-        ):
-
-            print(
-                f"{index:02d}. "
-                f"{item['asset']:<20} "
-                f"{item['market_type']:<10} "
-                f"ID={item['active_id']}"
-            )
-
-    else:
-
-        print("")
-        print(
-            "[DISCOVERY] No enabled OTC "
-            "instruments found in initialization."
-        )
-
-    return found[:MAX_OTC_ASSETS]
-
-
-# ============================================================
-# CANDLE NORMALIZATION
-# ============================================================
-
-def normalize_candles(raw):
-
-    if not raw:
-        return []
-
-    result = []
-
-    for candle in raw:
-
-        try:
-
-            item = {
-                "from": safe_float(
-                    candle.get("from")
-                ),
-
-                "open": safe_float(
-                    candle.get("open")
-                ),
-
-                "close": safe_float(
-                    candle.get("close")
-                ),
-
-                "low": safe_float(
-                    candle.get(
-                        "min",
-                        candle.get("low"),
-                    )
-                ),
-
-                "high": safe_float(
-                    candle.get(
-                        "max",
-                        candle.get("high"),
-                    )
-                ),
-
-                "volume": safe_float(
-                    candle.get("volume")
-                ),
-            }
+            key_text = str(key)
 
             if (
-                item["open"] > 0
-                and item["close"] > 0
-                and item["low"] > 0
-                and item["high"] > 0
+                "-OTC" in key_text.upper()
+                or key_text.upper().endswith("OTC")
             ):
+                output.add(key_text)
 
-                result.append(item)
+            extract_otc_assets(
+                value,
+                output
+            )
 
+    elif isinstance(obj, list):
+
+        for item in obj:
+            extract_otc_assets(
+                item,
+                output
+            )
+
+    return output
+
+
+# ============================================================
+# OTC DISCOVERY
+# ============================================================
+
+def discover_otc_assets():
+    global otc_assets
+    global last_discovery_time
+
+    print("Discovering IQ Option OTC instruments...")
+
+    discovered = set()
+
+    try:
+        data = None
+
+        # First attempt
+        try:
+            data = api.get_all_init_v2()
         except Exception:
+            data = None
 
+        # Fallback
+        if not data:
+            try:
+                data = api.get_all_init()
+            except Exception:
+                data = None
+
+        if data:
+            discovered = extract_otc_assets(data)
+
+    except Exception as exc:
+        print(f"OTC discovery error: {exc}")
+
+    # Clean up names
+    cleaned = []
+
+    for asset in discovered:
+
+        if not isinstance(asset, str):
             continue
 
-    result.sort(
-        key=lambda x: x["from"]
+        asset = asset.strip()
+
+        if not asset:
+            continue
+
+        if "-OTC" not in asset.upper():
+            continue
+
+        # Confirm active ID exists
+        active_id = register_active(asset)
+
+        if active_id is None:
+            continue
+
+        cleaned.append(asset)
+
+    cleaned = sorted(
+        list(set(cleaned))
     )
 
-    return result
+    if MAX_OTC_ASSETS:
+        cleaned = cleaned[:MAX_OTC_ASSETS]
+
+    otc_assets = cleaned
+
+    last_discovery_time = server_now()
+
+    print(
+        f"OTC instruments discovered: "
+        f"{len(otc_assets)}"
+    )
+
+    if otc_assets:
+        print(
+            "Sample OTC assets:",
+            ", ".join(otc_assets[:10])
+        )
+
+    return otc_assets
 
 
 # ============================================================
-# CLOSED CANDLES ONLY
+# CANDLE CLEANING
 # ============================================================
 
-def remove_open_candle(
-    candles,
-    timeframe_seconds,
-):
+def normalize_candle(candle):
+    if not isinstance(candle, dict):
+        return None
 
-    if len(candles) < 2:
-        return candles
+    try:
+        return {
+            "from": int(
+                candle.get(
+                    "from",
+                    candle.get("at", 0)
+                )
+            ),
+            "open": float(
+                candle.get(
+                    "open",
+                    candle.get("open_price", 0)
+                )
+            ),
+            "close": float(
+                candle.get(
+                    "close",
+                    candle.get("close_price", 0)
+                )
+            ),
+            "high": float(
+                candle.get(
+                    "max",
+                    candle.get(
+                        "high",
+                        candle.get("max_price", 0)
+                    )
+                )
+            ),
+            "low": float(
+                candle.get(
+                    "min",
+                    candle.get(
+                        "low",
+                        candle.get("min_price", 0)
+                    )
+                )
+            ),
+            "volume": float(
+                candle.get(
+                    "volume",
+                    0
+                )
+            ),
+        }
 
-    current_time = server_now()
+    except Exception:
+        return None
 
-    completed = []
+
+# ============================================================
+# CLOSED CANDLE FILTER
+# ============================================================
+
+def get_closed_candles(candles, timeframe):
+    if not candles:
+        return []
+
+    normalized = []
 
     for candle in candles:
 
-        candle_start = candle["from"]
+        item = normalize_candle(candle)
 
-        if (
-            candle_start
-            + timeframe_seconds
-            <= current_time
-        ):
+        if item is None:
+            continue
 
-            completed.append(
-                candle
-            )
+        if item["from"] <= 0:
+            continue
 
-    return completed
+        if item["high"] <= 0 or item["low"] <= 0:
+            continue
+
+        normalized.append(item)
+
+    normalized.sort(
+        key=lambda x: x["from"]
+    )
+
+    now = server_now()
+
+    closed = [
+        candle
+        for candle in normalized
+        if candle["from"] + timeframe <= now
+    ]
+
+    # Remove duplicate timestamps
+    unique = []
+
+    seen = set()
+
+    for candle in closed:
+
+        timestamp = candle["from"]
+
+        if timestamp in seen:
+            continue
+
+        seen.add(timestamp)
+
+        unique.append(candle)
+
+    return unique
 
 
 # ============================================================
-# CANDLE FETCH
+# SAFE CANDLE REQUEST
 # ============================================================
 
 def get_candles_safe(
     asset,
-    interval,
-    count,
+    timeframe,
+    count
 ):
-
-    if api is None:
-        return []
-
     try:
 
-        raw = api.get_candles(
+        candles = api.get_candles(
             asset,
-            interval,
-            count + 5,
-            server_now(),
+            timeframe,
+            count,
+            server_now()
         )
 
-        candles = normalize_candles(
-            raw
-        )
+        if not candles:
+            return []
 
-        candles = remove_open_candle(
+        return get_closed_candles(
             candles,
-            interval,
+            timeframe
         )
 
-        return candles[-count:]
+    except Exception as exc:
 
-    except Exception as e:
+        key = f"candles:{asset}:{timeframe}"
 
-        print(
-            f"[CANDLE ERROR] "
-            f"{asset} "
-            f"{interval}s -> "
-            f"{repr(e)}"
-        )
+        if key not in logged_once:
+            logged_once[key] = True
+
+            print(
+                f"Candle error {asset} "
+                f"{timeframe}s: {exc}"
+            )
 
         return []
+
+
+# ============================================================
+# 5M CANDLE CACHE
+# ============================================================
+
+def get_5m_candles(asset):
+
+    bucket = server_now() // TIMEFRAME_5M
+
+    cached = cache_5m.get(asset)
+
+    if cached and cached[0] == bucket:
+        return cached[1]
+
+    candles = get_candles_safe(
+        asset,
+        TIMEFRAME_5M,
+        CANDLE_COUNT_5M
+    )
+
+    if candles:
+        cache_5m[asset] = (
+            bucket,
+            candles
+        )
+
+    return candles
 
 
 # ============================================================
 # EMA
 # ============================================================
 
-def ema(
-    values,
-    period,
-):
-
-    if len(values) < period:
+def ema(values, period):
+    if not values:
         return []
 
-    multiplier = (
-        2.0 / (period + 1.0)
-    )
+    if len(values) < period:
+        return [None] * len(values)
+
+    multiplier = 2.0 / (period + 1)
 
     result = [None] * len(values)
 
-    seed = (
-        sum(values[:period])
-        / period
-    )
+    seed = sum(
+        values[:period]
+    ) / period
 
     result[period - 1] = seed
 
     previous = seed
 
-    for i in range(
-        period,
-        len(values),
-    ):
+    for i in range(period, len(values)):
 
-        previous = (
-            (
-                values[i]
-                - previous
-            )
-            * multiplier
-            + previous
+        current = (
+            values[i] * multiplier
+            + previous * (1 - multiplier)
         )
 
-        result[i] = previous
+        result[i] = current
+
+        previous = current
 
     return result
 
 
 # ============================================================
-# ATR — WILDER RMA
+# WILDER ATR
 # ============================================================
 
-def pine_atr(
-    candles,
-    period=14,
-):
+def atr_wilder(candles, period=14):
 
     if len(candles) < period + 1:
-        return []
+        return [None] * len(candles)
 
-    true_ranges = [None] * len(candles)
+    tr = [None] * len(candles)
 
-    for i in range(
-        1,
-        len(candles),
-    ):
+    for i in range(1, len(candles)):
 
         high = candles[i]["high"]
         low = candles[i]["low"]
+        previous_close = candles[i - 1]["close"]
 
-        previous_close = candles[
-            i - 1
-        ]["close"]
-
-        true_ranges[i] = max(
+        tr[i] = max(
             high - low,
-            abs(
-                high
-                - previous_close
-            ),
-            abs(
-                low
-                - previous_close
-            ),
+            abs(high - previous_close),
+            abs(low - previous_close)
         )
 
     result = [None] * len(candles)
 
-    seed_values = [
-        x
-        for x in true_ranges
-        if x is not None
+    first_values = [
+        tr[i]
+        for i in range(1, period + 1)
+        if tr[i] is not None
     ]
 
-    if len(seed_values) < period:
+    if len(first_values) < period:
         return result
 
-    current = (
-        sum(seed_values[:period])
-        / period
+    first_atr = (
+        sum(first_values) / period
     )
 
-    result[period] = current
+    result[period] = first_atr
 
-    for i in range(
-        period + 1,
-        len(candles),
-    ):
+    previous_atr = first_atr
 
-        tr = true_ranges[i]
+    for i in range(period + 1, len(candles)):
 
-        if tr is None:
+        if tr[i] is None:
             continue
 
-        current = (
+        current_atr = (
             (
-                current
+                previous_atr
                 * (period - 1)
             )
-            + tr
+            + tr[i]
         ) / period
 
-        result[i] = current
+        result[i] = current_atr
+
+        previous_atr = current_atr
 
     return result
 
 
 # ============================================================
-# ZETA V1 STRATEGY
+# TREND CALCULATION
 # ============================================================
 
-def evaluate_zeta(
-    asset,
-    candles,
-):
+def calculate_zeta_state(candles):
 
     if len(candles) < 60:
         return None
 
     closes = [
-        c["close"]
-        for c in candles
+        candle["close"]
+        for candle in candles
     ]
 
-    fast_ema = ema(
+    ema_fast = ema(
         closes,
-        FAST_LENGTH,
+        FAST_LENGTH
     )
 
-    slow_ema = ema(
+    ema_slow = ema(
         closes,
-        SLOW_LENGTH,
+        SLOW_LENGTH
     )
 
-    atr_values = pine_atr(
+    atr_values = atr_wilder(
         candles,
-        ATR_PERIOD,
+        ATR_PERIOD
     )
-
-    if (
-        len(fast_ema) != len(candles)
-        or len(slow_ema) != len(candles)
-        or len(atr_values) != len(candles)
-    ):
-
-        return None
 
     i = len(candles) - 1
-    previous_i = i - 1
 
-    if previous_i < 1:
-        return None
-
-    f = fast_ema[i]
-    s = slow_ema[i]
-
-    fp = fast_ema[previous_i]
-    sp = slow_ema[previous_i]
-
+    fast = ema_fast[i]
+    slow = ema_slow[i]
     current_atr = atr_values[i]
 
-    if any(
-        x is None
-        for x in (
-            f,
-            s,
-            fp,
-            sp,
-            current_atr,
-        )
+    if (
+        fast is None
+        or slow is None
+        or current_atr is None
+        or current_atr <= 0
     ):
-
         return None
 
-    if current_atr <= 0:
+    close = closes[i]
+
+    if i < 3:
         return None
 
-    # --------------------------------------------------------
-    # TREND
-    # --------------------------------------------------------
+    fast_slope = (
+        fast - ema_fast[i - 3]
+        if ema_fast[i - 3] is not None
+        else 0
+    )
 
-    bull_trend = f > s
-    bear_trend = f < s
-
-    # --------------------------------------------------------
-    # SLOPE
-    # --------------------------------------------------------
-
-    fast_slope_up = f > fp
-    fast_slope_down = f < fp
-
-    slow_slope_up = s > sp
-    slow_slope_down = s < sp
-
-    # --------------------------------------------------------
-    # NORMALIZED DISTANCE
-    # --------------------------------------------------------
-
-    ema_distance = abs(
-        f - s
+    slow_slope = (
+        slow - ema_slow[i - 3]
+        if ema_slow[i - 3] is not None
+        else 0
     )
 
     normalized_distance = (
-        ema_distance / current_atr
-        if current_atr > 0
-        else 0.0
+        abs(fast - slow)
+        / current_atr
     )
 
-    # --------------------------------------------------------
-    # TREND STATE HISTORY
-    # --------------------------------------------------------
-
-    trend_states = [0] * len(candles)
-
-    for j in range(
-        len(candles)
-    ):
-
-        if (
-            fast_ema[j] is None
-            or slow_ema[j] is None
-            or atr_values[j] is None
-        ):
-
-            if j > 0:
-
-                trend_states[j] = (
-                    trend_states[j - 1]
-                )
-
-            continue
-
-        if j == 0:
-
-            continue
-
-        previous_fast = (
-            fast_ema[j - 1]
-        )
-
-        previous_slow = (
-            slow_ema[j - 1]
-        )
-
-        if (
-            previous_fast is None
-            or previous_slow is None
-        ):
-
-            continue
-
-        fast_up = (
-            fast_ema[j]
-            > previous_fast
-        )
-
-        fast_down = (
-            fast_ema[j]
-            < previous_fast
-        )
-
-        slow_up = (
-            slow_ema[j]
-            > previous_slow
-        )
-
-        slow_down = (
-            slow_ema[j]
-            < previous_slow
-        )
-
-        distance = (
-            abs(
-                fast_ema[j]
-                - slow_ema[j]
-            )
-            / atr_values[j]
-            if atr_values[j] > 0
-            else 0.0
-        )
-
-        historical_bull = (
-            fast_ema[j] > slow_ema[j]
-            and fast_up
-            and slow_up
-            and distance
-            > NORMALIZED_DISTANCE_MIN
-        )
-
-        historical_bear = (
-            fast_ema[j] < slow_ema[j]
-            and fast_down
-            and slow_down
-            and distance
-            > NORMALIZED_DISTANCE_MIN
-        )
-
-        if historical_bull:
-
-            trend_states[j] = 1
-
-        elif historical_bear:
-
-            trend_states[j] = -1
-
-        else:
-
-            trend_states[j] = (
-                trend_states[j - 1]
-            )
-
-    trend_state = trend_states[i]
-
-    previous_state = trend_states[
-        previous_i
-    ]
-
-    bull_flip = (
-        trend_state == 1
-        and previous_state != 1
+    bullish = (
+        fast > slow
+        and fast_slope > 0
+        and slow_slope > 0
+        and normalized_distance >= NORMALIZED_DISTANCE_MIN
     )
 
-    bear_flip = (
-        trend_state == -1
-        and previous_state != -1
+    bearish = (
+        fast < slow
+        and fast_slope < 0
+        and slow_slope < 0
+        and normalized_distance >= NORMALIZED_DISTANCE_MIN
     )
 
-    # --------------------------------------------------------
-    # CANDLE CONFIRMATION
-    # --------------------------------------------------------
-
-    current_candle = candles[i]
-
-    bull_candle = (
-        current_candle["close"]
-        > current_candle["open"]
-    )
-
-    bear_candle = (
-        current_candle["close"]
-        < current_candle["open"]
-    )
-
-    bull_confirmation = (
-        not USE_CANDLE_CONFIRM
-        or bull_candle
-    )
-
-    bear_confirmation = (
-        not USE_CANDLE_CONFIRM
-        or bear_candle
-    )
-
-    bull_slope = (
-        not USE_TREND_SLOPE
-        or (
-            fast_slope_up
-            and slow_slope_up
-        )
-    )
-
-    bear_slope = (
-        not USE_TREND_SLOPE
-        or (
-            fast_slope_down
-            and slow_slope_down
-        )
-    )
-
-    # --------------------------------------------------------
-    # SIGNAL
-    # --------------------------------------------------------
-
-    raw_buy = (
-        bull_flip
-        and current_candle["close"] > f
-        and bull_confirmation
-        and bull_slope
-    )
-
-    raw_sell = (
-        bear_flip
-        and current_candle["close"] < f
-        and bear_confirmation
-        and bear_slope
-    )
-
-    if not raw_buy and not raw_sell:
-        return None
-
-    # --------------------------------------------------------
-    # COOLDOWN
-    # --------------------------------------------------------
-
-    candle_time = current_candle["from"]
-
-    previous_signal_time = (
-        last_signal_time.get(
-            asset,
-            0,
-        )
-    )
-
-    if (
-        previous_signal_time
-        and candle_time
-        - previous_signal_time
-        <= (
-            SIGNAL_COOLDOWN_BARS
-            * TIMEFRAME
-        )
-    ):
-
-        return None
-
-    # --------------------------------------------------------
-    # DIRECTION
-    # --------------------------------------------------------
-
-    if raw_buy:
-
+    if bullish:
         direction = "CALL"
+
+    elif bearish:
+        direction = "PUT"
+
+    else:
+        direction = None
+
+    return {
+        "direction": direction,
+        "ema_fast": fast,
+        "ema_slow": slow,
+        "atr": current_atr,
+        "fast_slope": fast_slope,
+        "slow_slope": slow_slope,
+        "normalized_distance": normalized_distance,
+        "close": close,
+        "candle_time": candles[i]["from"],
+    }
+
+
+# ============================================================
+# ZETA ENTRY EVALUATION
+# ============================================================
+
+def evaluate_zeta(asset, candles):
+
+    global evaluated_candles
+    global last_signal_time
+
+    if len(candles) < 60:
+        return None
+
+    # --------------------------------------------------------
+    # Evaluate each closed candle only once.
+    # --------------------------------------------------------
+
+    candle = candles[-1]
+
+    candle_time = candle["from"]
+
+    last_evaluated = evaluated_candles.get(asset)
+
+    if last_evaluated == candle_time:
+        return None
+
+    evaluated_candles[asset] = candle_time
+
+    # --------------------------------------------------------
+    # Calculate ZETA state.
+    # --------------------------------------------------------
+
+    state = calculate_zeta_state(
+        candles
+    )
+
+    if not state:
+        return None
+
+    direction = state["direction"]
+
+    if direction is None:
+        if LOG_ZETA_REJECTIONS:
+            print(
+                f"[NO TRADE] {asset} "
+                f"ZETA trend not aligned."
+            )
+        return None
+
+    current_atr = state["atr"]
+
+    # --------------------------------------------------------
+    # Basic EMA structure.
+    # --------------------------------------------------------
+
+    if direction == "CALL":
+
+        if not (
+            state["ema_fast"]
+            > state["ema_slow"]
+        ):
+            return None
+
+        if state["slow_slope"] <= 0:
+            return None
+
+        # Do not allow a large bearish break below EMA21.
+        if (
+            candle["close"]
+            <
+            state["ema_slow"]
+            - (
+                ZETA_CLOSE_VS_SLOW_TOLERANCE_ATR
+                * current_atr
+            )
+        ):
+            return None
+
+        if (
+            ZETA_REQUIRE_CLOSE_BEYOND_FAST_EMA
+            and candle["close"] <= state["ema_fast"]
+        ):
+            return None
+
+        if (
+            ZETA_REQUIRE_FAST_SLOPE
+            and state["fast_slope"] <= 0
+        ):
+            return None
 
     else:
 
-        direction = "PUT"
+        if not (
+            state["ema_fast"]
+            < state["ema_slow"]
+        ):
+            return None
+
+        if state["slow_slope"] >= 0:
+            return None
+
+        # Do not allow a large bullish break above EMA21.
+        if (
+            candle["close"]
+            >
+            state["ema_slow"]
+            + (
+                ZETA_CLOSE_VS_SLOW_TOLERANCE_ATR
+                * current_atr
+            )
+        ):
+            return None
+
+        if (
+            ZETA_REQUIRE_CLOSE_BEYOND_FAST_EMA
+            and candle["close"] >= state["ema_fast"]
+        ):
+            return None
+
+        if (
+            ZETA_REQUIRE_FAST_SLOPE
+            and state["fast_slope"] >= 0
+        ):
+            return None
+
+    # --------------------------------------------------------
+    # Cooldown.
+    # --------------------------------------------------------
+
+    previous_signal_time = (
+        last_signal_time.get(asset)
+    )
+
+    if previous_signal_time is not None:
+
+        bars_since = (
+            candle_time
+            - previous_signal_time
+        ) / TIMEFRAME
+
+        if bars_since < SIGNAL_COOLDOWN_BARS:
+            return None
+
+    # --------------------------------------------------------
+    # Get 5M market structure.
+    # --------------------------------------------------------
+
+    candles_5m = get_5m_candles(
+        asset
+    )
+
+    if len(candles_5m) < 30:
+        if LOG_ZETA_REJECTIONS:
+            print(
+                f"[NO TRADE] {asset} "
+                f"not enough 5M candles."
+            )
+        return None
+
+    # --------------------------------------------------------
+    # CONNECT THE CANDLE LIBRARY.
+    #
+    # This is the important part.
+    #
+    # The candle library now checks:
+    # - 5M structure
+    # - 1M alignment
+    # - pullback
+    # - support/resistance
+    # - candle patterns
+    # - pattern quality
+    # - room
+    # - entry timing
+    # --------------------------------------------------------
+
+    try:
+
+        decision = evaluate_confirmation_context(
+            direction=direction,
+            candles_1m=candles,
+            candles_5m=candles_5m,
+            atr_1m=current_atr,
+            now_ts=server_now(),
+            cfg=CANDLE_LIBRARY_CONFIG,
+            timeframe=TIMEFRAME,
+            timeframe_5m=TIMEFRAME_5M,
+        )
+
+    except Exception as exc:
+
+        print(
+            f"Candle library error "
+            f"{asset}: {exc}"
+        )
+
+        traceback.print_exc()
+
+        return None
+
+    if not decision:
+        return None
+
+    # --------------------------------------------------------
+    # Candle library must explicitly approve.
+    # --------------------------------------------------------
+
+    if not decision.get("approved", False):
+
+        if LOG_ZETA_REJECTIONS:
+
+            reasons = decision.get(
+                "reasons",
+                []
+            )
+
+            print(
+                f"[NO TRADE] {asset} "
+                f"{direction} | "
+                f"{'; '.join(map(str, reasons))}"
+            )
+
+        return None
+
+    # --------------------------------------------------------
+    # Safety: require a valid candle confirmation.
+    # --------------------------------------------------------
+
+    patterns = decision.get(
+        "patterns",
+        []
+    )
+
+    if not patterns:
+        print(
+            f"[NO TRADE] {asset} "
+            f"approved without pattern."
+        )
+        return None
+
+    # --------------------------------------------------------
+    # Safety: confirmation must be meaningful.
+    # --------------------------------------------------------
+
+    quality = float(
+        decision.get(
+            "quality",
+            0
+        ) or 0
+    )
+
+    if quality < 0.45:
+        print(
+            f"[NO TRADE] {asset} "
+            f"pattern quality too low: "
+            f"{quality:.2f}"
+        )
+        return None
+
+    # --------------------------------------------------------
+    # Prevent duplicate signal on same candle.
+    # --------------------------------------------------------
+
+    last_signal_time[asset] = candle_time
 
     signal_id = (
-        "ZETA-"
-        + asset.replace(
-            "-",
-            "",
-        )
-        + "-"
-        + direction
-        + "-"
-        + datetime.now(
-            timezone.utc
-        ).strftime("%H%M%S")
+        f"ZETA-"
+        f"{asset.replace('/', '')}"
+        f"-{direction}-"
+        f"{candle_time}"
     )
 
     signal = {
         "signal_id": signal_id,
         "asset": asset,
         "direction": direction,
-        "price": current_candle["close"],
-        "ema9": f,
-        "ema21": s,
+        "price": candle["close"],
+        "ema_fast": state["ema_fast"],
+        "ema_slow": state["ema_slow"],
         "atr": current_atr,
-        "normalized_distance": normalized_distance,
+        "normalized_distance": state[
+            "normalized_distance"
+        ],
         "candle_time": candle_time,
-        "timestamp": now_utc(),
+        "timestamp": server_now(),
+        "confirmation": decision.get(
+            "confirmation_text",
+            ""
+        ),
+        "confirmation_quality": quality,
+        "structure_5m": decision.get(
+            "structure_5m",
+            ""
+        ),
+        "alignment_1m": decision.get(
+            "alignment_1m",
+            ""
+        ),
+        "zone": decision.get(
+            "zone"
+        ),
+        "zone_source": decision.get(
+            "zone_source",
+            ""
+        ),
+        "pullback": decision.get(
+            "pullback"
+        ),
+        "room": decision.get(
+            "room"
+        ),
+        "timing": decision.get(
+            "timing"
+        ),
+        "all_detected": decision.get(
+            "all_detected",
+            patterns
+        ),
+        "approval_reason": decision.get(
+            "approval_reason",
+            ""
+        ),
     }
-
-    last_signal_time[
-        asset
-    ] = candle_time
 
     return signal
 
 
 # ============================================================
-# SIGNAL FORMAT
+# SIGNAL MESSAGE
 # ============================================================
 
 def format_signal(signal):
 
-    direction = signal[
-        "direction"
-    ]
-
-    emoji = (
-        "🟢"
-        if direction == "CALL"
-        else "🔴"
+    patterns = signal.get(
+        "all_detected",
+        []
     )
+
+    if isinstance(patterns, list):
+        pattern_text = ", ".join(
+            str(x)
+            for x in patterns
+        )
+    else:
+        pattern_text = str(patterns)
 
     return (
-        f"{emoji} *ZETA V1 SIGNAL*\n"
+        "🟢 <b>ZETA V1 QUALIFIED SIGNAL</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"*Asset:* {signal['asset']}\n"
-        f"*Direction:* *{direction} / "
-        f"{'UP' if direction == 'CALL' else 'DOWN'}*\n"
-        "*Chart:* 1 Minute\n"
-        f"*Expiry:* *{EXPIRY_MINUTES} Minutes*\n"
-        f"*Price:* {signal['price']:.8f}\n"
-        f"*EMA 9:* {signal['ema9']:.8f}\n"
-        f"*EMA 21:* {signal['ema21']:.8f}\n"
-        f"*ATR 14:* {signal['atr']:.8f}\n"
-        f"*EMA/ATR:* "
-        f"{signal['normalized_distance']:.3f}\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"*Signal ID:* {signal['signal_id']}\n"
-        f"*Time:* {signal['timestamp']}\n"
-        "🤖 *ZETA V1 — DEMO AUTO TRADE*"
+        f"<b>Asset:</b> {signal['asset']}\n"
+        f"<b>Direction:</b> {signal['direction']}\n"
+        f"<b>Expiry:</b> {EXPIRY_MINUTES} minutes\n"
+        f"<b>Entry:</b> {signal['price']}\n"
+        f"<b>EMA {FAST_LENGTH}:</b> "
+        f"{signal['ema_fast']:.8f}\n"
+        f"<b>EMA {SLOW_LENGTH}:</b> "
+        f"{signal['ema_slow']:.8f}\n"
+        f"<b>ATR:</b> "
+        f"{signal['atr']:.8f}\n"
+        f"<b>Distance:</b> "
+        f"{signal['normalized_distance']:.2f} ATR\n"
+        f"<b>Patterns:</b> {pattern_text}\n"
+        f"<b>Quality:</b> "
+        f"{signal['confirmation_quality']:.2f}\n"
+        f"<b>5M Structure:</b> "
+        f"{signal['structure_5m']}\n"
+        f"<b>Zone:</b> "
+        f"{signal['zone_source']}\n"
+        f"<b>Confirmation:</b> "
+        f"{signal['confirmation']}\n"
+        f"<b>Signal ID:</b> "
+        f"<code>{signal['signal_id']}</code>\n"
+        "━━━━━━━━━━━━━━━━━━"
     )
+
+
+# ============================================================
+# TRADE EXECUTION
+# ============================================================
+
+def execute_demo_trade(signal):
+
+    global total_trades
+
+    # --------------------------------------------------------
+    # HARD 50-TRADE LIMIT
+    # --------------------------------------------------------
+
+    if total_trades >= TEST_TRADE_TARGET:
+
+        print(
+            "50-trade target already reached. "
+            "No new trade will be opened."
+        )
+
+        return False
+
+    # --------------------------------------------------------
+    # Safety active trade limit.
+    # --------------------------------------------------------
+
+    if len(active_trades) >= MAX_ACTIVE_TRADES:
+
+        print(
+            "Maximum active trade limit reached."
+        )
+
+        return False
+
+    asset = signal["asset"]
+
+    direction = (
+        "call"
+        if signal["direction"] == "CALL"
+        else "put"
+    )
+
+    try:
+
+        active_id = OP_code.ACTIVES.get(
+            asset
+        )
+
+        if active_id is None:
+
+            print(
+                f"Active ID unavailable "
+                f"for {asset}"
+            )
+
+            return False
+
+    except Exception:
+
+        print(
+            f"Could not resolve active ID "
+            f"for {asset}"
+        )
+
+        return False
+
+    print(
+        f"Sending DEMO order: "
+        f"{asset} {signal['direction']}"
+    )
+
+    try:
+
+        result = api.buy(
+            STAKE,
+            asset,
+            direction,
+            EXPIRY_MINUTES
+        )
+
+    except Exception as exc:
+
+        print(
+            f"Order error {asset}: {exc}"
+        )
+
+        send_telegram(
+            "🔴 <b>ORDER ERROR</b>\n"
+            f"Asset: {asset}\n"
+            f"Direction: {signal['direction']}\n"
+            f"Error: {exc}"
+        )
+
+        return False
+
+    success = False
+    trade_id = None
+
+    # IQ Option normally returns:
+    # (True, trade_id)
+    if isinstance(result, tuple):
+
+        if len(result) >= 1:
+            success = bool(
+                result[0]
+            )
+
+        if len(result) >= 2:
+            trade_id = result[1]
+
+    else:
+
+        success = bool(result)
+
+    if not success:
+
+        print(
+            f"❌ DEMO order rejected: "
+            f"{asset} "
+            f"{signal['direction']}"
+        )
+
+        send_telegram(
+            "🔴 <b>DEMO ORDER REJECTED</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"Asset: {asset}\n"
+            f"Direction: {signal['direction']}\n"
+            f"Stake: ${STAKE:.2f}\n"
+            f"Time: {utc_text()}\n"
+            "━━━━━━━━━━━━━━━━━━"
+        )
+
+        return False
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # We need a trade ID to track WIN/LOSS.
+    #
+    # If IQ Option says accepted but gives no usable ID,
+    # do NOT count it as one of the 50 tracked trades.
+    # --------------------------------------------------------
+
+    if trade_id is None:
+
+        print(
+            f"⚠️ Order accepted but "
+            f"no trade ID returned: {asset}"
+        )
+
+        send_telegram(
+            "⚠️ <b>ORDER ACCEPTED "
+            "BUT UNTRACKED</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"Asset: {asset}\n"
+            f"Direction: {signal['direction']}\n"
+            "No trade ID was returned.\n"
+            "This trade is NOT counted "
+            "toward the 50-trade sample.\n"
+            "━━━━━━━━━━━━━━━━━━"
+        )
+
+        return False
+
+    # --------------------------------------------------------
+    # SUCCESSFULLY TRACKED TRADE
+    # --------------------------------------------------------
+
+    total_trades += 1
+
+    active_trades[str(trade_id)] = {
+        "trade_id": str(trade_id),
+        "asset": asset,
+        "direction": signal["direction"],
+        "stake": STAKE,
+        "signal_id": signal["signal_id"],
+        "opened_at": server_now(),
+        "candle_time": signal["candle_time"],
+        "pattern": signal.get(
+            "all_detected",
+            []
+        ),
+    }
+
+    print(
+        f"🚀 DEMO TRADE OPENED\n"
+        f"Asset: {asset}\n"
+        f"Direction: {signal['direction']}\n"
+        f"Trade ID: {trade_id}\n"
+        f"Trade #{total_trades}/{TEST_TRADE_TARGET}"
+    )
+
+    send_telegram(
+        "🚀 <b>ZETA V1 DEMO TRADE OPENED</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"<b>Trade:</b> "
+        f"#{total_trades}/{TEST_TRADE_TARGET}\n"
+        f"<b>Asset:</b> {asset}\n"
+        f"<b>Direction:</b> "
+        f"{signal['direction']}\n"
+        f"<b>Stake:</b> ${STAKE:.2f}\n"
+        f"<b>Expiry:</b> "
+        f"{EXPIRY_MINUTES} minutes\n"
+        f"<b>Trade ID:</b> "
+        f"<code>{trade_id}</code>\n"
+        f"<b>Signal ID:</b> "
+        f"<code>{signal['signal_id']}</code>\n"
+        f"<b>Patterns:</b> "
+        f"{signal.get('all_detected', [])}\n"
+        f"<b>Quality:</b> "
+        f"{signal.get('confirmation_quality', 0):.2f}\n"
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    return True
 
 
 # ============================================================
@@ -1250,83 +1422,49 @@ def check_trade_result(trade):
             trade_id
         )
 
-        if result is None:
-            return None
-
-        result = safe_float(
-            result,
-            None,
-        )
-
-        if result is None:
-            return None
-
-        profit = result
-
-        total_profit += profit
-
-        if profit > 0:
-
-            outcome = "WIN"
-            wins += 1
-            emoji = "✅"
-
-        elif profit < 0:
-
-            outcome = "LOSS"
-            losses += 1
-            emoji = "❌"
-
-        else:
-
-            outcome = "DRAW"
-            draws += 1
-            emoji = "⚪"
-
-        message = (
-            f"{emoji} *ZETA V1 {outcome}*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"*Asset:* {trade['asset']}\n"
-            f"*Direction:* {trade['direction']}\n"
-            f"*Signal ID:* {trade['signal_id']}\n"
-            f"*Result:* {profit:+.2f}\n"
-            f"*Wins:* {wins}\n"
-            f"*Losses:* {losses}\n"
-            f"*Draws:* {draws}\n"
-            f"*Net P/L:* {total_profit:+.2f}\n"
-            "━━━━━━━━━━━━━━━━━━"
-        )
-
-        send_telegram(
-            message
-        )
-
-        print(
-            "[TRADE RESULT]",
-            outcome,
-            trade["asset"],
-            profit,
-        )
-
-        return outcome
-
-    except Exception as e:
-
-        print(
-            "[RESULT ERROR]",
-            trade_id,
-            repr(e),
-        )
-
+    except Exception:
         return None
 
+    # Still pending
+    if result is None:
+        return None
+
+    try:
+        profit = float(result)
+    except Exception:
+        return None
+
+    # IQ Option returns 0 for a draw in many cases.
+    if profit > 0:
+        outcome = "WIN"
+        wins += 1
+
+    elif profit < 0:
+        outcome = "LOSS"
+        losses += 1
+
+    else:
+        outcome = "DRAW"
+        draws += 1
+
+    total_profit += profit
+
+    return {
+        "outcome": outcome,
+        "profit": profit,
+    }
+
+
+# ============================================================
+# UPDATE ACTIVE TRADES
+# ============================================================
 
 def update_active_trades():
 
     if not active_trades:
         return
 
-    finished = []
+    completed = []
 
     for trade_id, trade in list(
         active_trades.items()
@@ -1336,688 +1474,453 @@ def update_active_trades():
             trade
         )
 
-        if result is not None:
+        if result is None:
+            continue
 
-            finished.append(
-                trade_id
-            )
+        completed.append(
+            trade_id
+        )
 
-    for trade_id in finished:
+        print(
+            f"📊 TRADE RESULT | "
+            f"{trade['asset']} | "
+            f"{trade['direction']} | "
+            f"{result['outcome']} | "
+            f"{result['profit']:+.2f}"
+        )
+
+        send_telegram(
+            "📊 <b>ZETA V1 TRADE RESULT</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"<b>Trade:</b> "
+            f"{total_completed_trades()}/"
+            f"{TEST_TRADE_TARGET}\n"
+            f"<b>Asset:</b> "
+            f"{trade['asset']}\n"
+            f"<b>Direction:</b> "
+            f"{trade['direction']}\n"
+            f"<b>Result:</b> "
+            f"{result['outcome']}\n"
+            f"<b>P/L:</b> "
+            f"${result['profit']:+.2f}\n"
+            f"<b>Wins:</b> {wins}\n"
+            f"<b>Losses:</b> {losses}\n"
+            f"<b>Draws:</b> {draws}\n"
+            f"<b>Net:</b> "
+            f"${total_profit:+.2f}\n"
+            "━━━━━━━━━━━━━━━━━━"
+        )
+
+    for trade_id in completed:
 
         active_trades.pop(
             trade_id,
-            None,
+            None
         )
 
 
 # ============================================================
-# EXECUTE DEMO TRADE
+# COMPLETED TRADES
 # ============================================================
 
-def execute_demo_trade(signal):
+def total_completed_trades():
 
-    global total_trades
-
-    if api is None:
-
-        send_telegram(
-            "🔴 *ZETA V1 TRADE ERROR*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "IQ Option API is not connected."
-        )
-
-        return False
-
-    if (
-        len(active_trades)
-        >= MAX_ACTIVE_TRADES
-    ):
-
-        print(
-            "[TRADE BLOCKED] "
-            f"Active trades={len(active_trades)}"
-        )
-
-        return False
-
-    asset = signal["asset"]
-
-    direction = signal[
-        "direction"
-    ]
-
-    option_type = (
-        "call"
-        if direction == "CALL"
-        else "put"
-    )
-
-    # --------------------------------------------------------
-    # REAL ACTIVE ID
-    # --------------------------------------------------------
-
-    active_id = OP_code.ACTIVES.get(
-        asset
-    )
-
-    if active_id is None:
-
-        print(
-            "[TRADE ERROR] No active ID:",
-            asset,
-        )
-
-        send_telegram(
-            "🔴 *ZETA V1 TRADE ERROR*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"*Asset:* {asset}\n"
-            f"*Direction:* {direction}\n"
-            "*Reason:* No real IQ Option "
-            "active ID is mapped."
-        )
-
-        return False
-
-    print(
-        "\n" + "=" * 70
-    )
-
-    print(
-        "[ZETA AUTO EXECUTION]"
-    )
-
-    print(
-        "Asset:",
-        asset,
-    )
-
-    print(
-        "Active ID:",
-        active_id,
-    )
-
-    print(
-        "Direction:",
-        direction,
-    )
-
-    print(
-        "Stake:",
-        STAKE,
-    )
-
-    print(
-        "Expiry:",
-        EXPIRY_MINUTES,
-    )
-
-    print(
-        "Account:",
-        BALANCE_MODE,
-    )
-
-    print(
-        "=" * 70
-    )
-
-    send_telegram(
-        "🟡 *ZETA V1 SENDING DEMO ORDER*\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"*Asset:* {asset}\n"
-        f"*Active ID:* {active_id}\n"
-        f"*Direction:* {direction}\n"
-        f"*Stake:* ${STAKE:.2f}\n"
-        f"*Expiry:* {EXPIRY_MINUTES} minutes\n"
-        f"*Signal ID:* {signal['signal_id']}\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "Sending order to IQ Option..."
-    )
-
-    try:
-
-        result = api.buy(
-            STAKE,
-            asset,
-            option_type,
-            EXPIRY_MINUTES,
-        )
-
-        print(
-            "[BUY RAW RESULT]:",
-            repr(result),
-        )
-
-    except Exception as e:
-
-        print(
-            "[BUY EXCEPTION]",
-            repr(e),
-        )
-
-        traceback.print_exc()
-
-        send_telegram(
-            "🔴 *ZETA V1 TRADE ERROR*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"*Asset:* {asset}\n"
-            f"*Direction:* {direction}\n"
-            f"*Error:* {str(e)[:700]}"
-        )
-
-        return False
-
-    # --------------------------------------------------------
-    # PARSE RESULT
-    # --------------------------------------------------------
-
-    success = False
-    trade_id = None
-
-    if isinstance(
-        result,
-        (tuple, list),
-    ):
-
-        if len(result) >= 2:
-
-            success = bool(
-                result[0]
-            )
-
-            trade_id = result[1]
-
-        elif len(result) == 1:
-
-            success = bool(
-                result[0]
-            )
-
-    else:
-
-        success = bool(
-            result
-        )
-
-    # --------------------------------------------------------
-    # FAILED
-    # --------------------------------------------------------
-
-    if not success:
-
-        print(
-            "[BUY FAILED]",
-            repr(result),
-        )
-
-        send_telegram(
-            "🔴 *ZETA V1 TRADE REJECTED*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"*Asset:* {asset}\n"
-            f"*Direction:* {direction}\n"
-            f"*Signal ID:* {signal['signal_id']}\n"
-            f"*IQ Option response:* "
-            f"{str(result)[:700]}"
-        )
-
-        return False
-
-    # --------------------------------------------------------
-    # NO ID
-    # --------------------------------------------------------
-
-    if trade_id is None:
-
-        send_telegram(
-            "🟡 *ZETA V1 ORDER ACCEPTED*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"*Asset:* {asset}\n"
-            f"*Direction:* {direction}\n"
-            f"*Stake:* ${STAKE:.2f}\n"
-            f"*Expiry:* {EXPIRY_MINUTES} minutes\n"
-            f"*Signal ID:* {signal['signal_id']}\n"
-            "*Trade ID:* NOT RETURNED"
-        )
-
-        return True
-
-    # --------------------------------------------------------
-    # SUCCESS
-    # --------------------------------------------------------
-
-    trade_id = str(
-        trade_id
-    )
-
-    total_trades += 1
-
-    active_trades[
-        trade_id
-    ] = {
-        "trade_id": trade_id,
-        "signal_id": signal["signal_id"],
-        "asset": asset,
-        "direction": direction,
-        "stake": STAKE,
-        "opened_at": time.time(),
-    }
-
-    print(
-        "[BUY SUCCESS]",
-        trade_id,
-    )
-
-    send_telegram(
-        "🚀 *ZETA V1 DEMO TRADE OPENED*\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"*Asset:* {asset}\n"
-        f"*Direction:* *{direction}*\n"
-        f"*Stake:* ${STAKE:.2f}\n"
-        f"*Expiry:* *{EXPIRY_MINUTES} minutes*\n"
-        f"*Trade ID:* {trade_id}\n"
-        f"*Signal ID:* {signal['signal_id']}\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🤖 *PRACTICE / DEMO ONLY*"
-    )
-
-    return True
+    return wins + losses + draws
 
 
 # ============================================================
-# CANDLE FEED TEST
+# WIN RATE
 # ============================================================
 
-def test_candle_access(assets):
+def win_rate():
 
-    print("\n" + "=" * 70)
-    print("TESTING REAL OTC CANDLE FEEDS")
-    print("=" * 70)
+    completed = total_completed_trades()
 
-    working = []
+    if completed <= 0:
+        return 0.0
 
-    for item in assets:
-
-        asset = item["asset"]
-
-        mapped_id = OP_code.ACTIVES.get(
-            asset
-        )
-
-        if mapped_id is None:
-            continue
-
-        candles = get_candles_safe(
-            asset,
-            TIMEFRAME,
-            10,
-        )
-
-        if len(candles) >= 5:
-
-            working.append(
-                item
-            )
-
-            print(
-                "[FEED OK]",
-                asset,
-                "| candles=",
-                len(candles),
-            )
-
-        else:
-
-            print(
-                "[FEED FAILED]",
-                asset,
-                "| candles=",
-                len(candles),
-            )
-
-    print(
-        "\nWORKING OTC CANDLE FEEDS:",
-        len(working),
+    return (
+        wins
+        / completed
+        * 100.0
     )
-
-    return working
-
-
-# ============================================================
-# DISCOVER + TEST OTC
-# ============================================================
-
-def refresh_otc_assets():
-
-    global otc_assets
-    global last_discovery_time
-
-    raw_data = get_raw_initialization()
-
-    if not raw_data:
-        return False
-
-    discovered = (
-        discover_otc_from_initialization(
-            raw_data
-        )
-    )
-
-    if not discovered:
-
-        print(
-            "[OTC] 0 open OTC assets."
-        )
-
-        return False
-
-    working = test_candle_access(
-        discovered
-    )
-
-    if working:
-
-        otc_assets = working
-
-        last_discovery_time = (
-            time.time()
-        )
-
-        return True
-
-    print(
-        "[OTC] Instruments found, "
-        "but no candle feeds responded."
-    )
-
-    return False
-
-
-# ============================================================
-# CONNECTION CHECK
-# ============================================================
-
-def connection_is_alive():
-
-    global last_connection_check
-
-    if api is None:
-        return False
-
-    if (
-        time.time()
-        - last_connection_check
-        < RECONNECT_INTERVAL
-    ):
-
-        return True
-
-    last_connection_check = (
-        time.time()
-    )
-
-    try:
-
-        if hasattr(
-            api,
-            "check_connect",
-        ):
-
-            return bool(
-                api.check_connect()
-            )
-
-    except Exception:
-
-        pass
-
-    return True
 
 
 # ============================================================
 # HEARTBEAT
 # ============================================================
 
-def send_heartbeat():
+def send_status():
 
-    balance = None
-
-    try:
-
-        balance = api.get_balance()
-
-    except Exception:
-
-        pass
-
-    win_rate = (
-        wins
-        / total_trades
-        * 100
-        if total_trades > 0
-        else 0.0
+    elapsed = int(
+        time.time() - start_time
     )
+
+    hours = elapsed // 3600
+
+    minutes = (
+        elapsed % 3600
+    ) // 60
+
+    seconds = elapsed % 60
+
+    completed = total_completed_trades()
 
     message = (
-        "🟡 *ZETA V1 HEARTBEAT*\n"
+        "🟡 <b>ZETA V1 STATUS</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "*Status:* ONLINE\n"
-        f"*OTC feeds:* {len(otc_assets)}\n"
-        f"*Trades:* {total_trades}\n"
-        f"*Wins:* {wins}\n"
-        f"*Losses:* {losses}\n"
-        f"*Draws:* {draws}\n"
-        f"*Win rate:* {win_rate:.2f}%\n"
-        f"*Net demo P/L:* "
+        f"<b>OTC Assets:</b> "
+        f"{len(otc_assets)}\n"
+        f"<b>Opened:</b> "
+        f"{total_trades}/{TEST_TRADE_TARGET}\n"
+        f"<b>Completed:</b> "
+        f"{completed}/{TEST_TRADE_TARGET}\n"
+        f"<b>Wins:</b> {wins}\n"
+        f"<b>Losses:</b> {losses}\n"
+        f"<b>Draws:</b> {draws}\n"
+        f"<b>Win Rate:</b> "
+        f"{win_rate():.2f}%\n"
+        f"<b>Net Demo P/L:</b> "
         f"${total_profit:+.2f}\n"
-        f"*Active trades:* "
-        f"{len(active_trades)} / "
-        f"{MAX_ACTIVE_TRADES}\n"
-        f"*Runtime:* {runtime_string()}\n"
+        f"<b>Active:</b> "
+        f"{len(active_trades)}\n"
+        f"<b>Runtime:</b> "
+        f"{hours:02d}:{minutes:02d}:{seconds:02d}\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"*Account:* {BALANCE_MODE}\n"
-        "*Auto-trading:* ON\n"
-        f"*Stake:* ${STAKE:.2f}\n"
-        f"*Expiry:* {EXPIRY_MINUTES} minutes\n"
+        f"<b>Mode:</b> {BALANCE_MODE}\n"
+        f"<b>Stake:</b> ${STAKE:.2f}\n"
+        f"<b>Expiry:</b> "
+        f"{EXPIRY_MINUTES} minutes\n"
+        f"<b>5M Trend:</b> ON\n"
+        f"<b>1M Entry:</b> ON\n"
+        f"<b>Candle Confirmation:</b> ON\n"
+        f"<b>Auto-trading:</b> ON\n"
+        "━━━━━━━━━━━━━━━━━━"
     )
 
-    if balance is not None:
-
-        message += (
-            f"*Demo balance:* "
-            f"${safe_float(balance):.2f}\n"
-        )
-
-    message += (
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🟢 *ZETA V1 SCANNING 1M CANDLES*"
-    )
-
-    send_telegram(
-        message
-    )
+    send_telegram(message)
 
 
 # ============================================================
-# CONNECT
+# FINAL 50-TRADE REPORT
 # ============================================================
 
-def connect_iq():
+def send_final_report():
 
-    global api
+    global final_report_sent
 
-    print("\n" + "=" * 70)
-    print("CONNECTING TO IQ OPTION")
-    print("=" * 70)
+    if final_report_sent:
+        return
 
-    api = IQ_Option(
-        IQ_EMAIL,
-        IQ_PASSWORD,
-    )
+    completed = total_completed_trades()
 
-    connected, reason = (
-        api.connect()
+    # Do not send the final report until every opened
+    # tracked trade has a result.
+    if total_trades < TEST_TRADE_TARGET:
+        return
+
+    if active_trades:
+        return
+
+    final_report_sent = True
+
+    message = (
+        "🏁 <b>ZETA V1 — 50 TRADE TEST COMPLETE</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"<b>Total tracked trades:</b> "
+        f"{completed}\n"
+        f"<b>Wins:</b> {wins}\n"
+        f"<b>Losses:</b> {losses}\n"
+        f"<b>Draws:</b> {draws}\n"
+        f"<b>Win rate:</b> "
+        f"{win_rate():.2f}%\n"
+        f"<b>Net demo P/L:</b> "
+        f"${total_profit:+.2f}\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "<b>Strategy:</b> ZETA V1\n"
+        "<b>Trend:</b> 5M\n"
+        "<b>Entry:</b> 1M\n"
+        f"<b>Expiry:</b> "
+        f"{EXPIRY_MINUTES} minutes\n"
+        "<b>Candle library:</b> ACTIVE\n"
+        "<b>Mode:</b> PRACTICE\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "No further trades will be opened "
+        "for this test."
     )
 
     print(
-        "[LOGIN]",
-        connected,
-        reason,
+        "\n"
+        "========================================\n"
+        "50-TRADE TEST COMPLETE\n"
+        "========================================"
     )
 
-    if not connected:
-        return False
+    print(
+        f"Trades: {completed}\n"
+        f"Wins: {wins}\n"
+        f"Losses: {losses}\n"
+        f"Draws: {draws}\n"
+        f"Win rate: {win_rate():.2f}%\n"
+        f"Net P/L: ${total_profit:+.2f}"
+    )
 
-    try:
+    print(
+        "========================================"
+    )
 
-        api.change_balance(
-            BALANCE_MODE
-        )
-
-    except Exception as e:
-
-        print(
-            "[BALANCE WARNING]",
-            repr(e),
-        )
-
-    try:
-
-        balance = api.get_balance()
-
-        print(
-            "[BALANCE]",
-            balance,
-        )
-
-    except Exception:
-
-        pass
-
-    return True
+    send_telegram(message)
 
 
 # ============================================================
-# MAIN TRADER
+# SCAN ONE ASSET
 # ============================================================
 
-def run_trader():
+def scan_asset(asset):
+
+    # --------------------------------------------------------
+    # Once 50 tracked trades have been opened, do not open
+    # another one.
+    # --------------------------------------------------------
+
+    if total_trades >= TEST_TRADE_TARGET:
+        return None
+
+    # --------------------------------------------------------
+    # Wait until the asset is ready for a new closed candle.
+    # --------------------------------------------------------
+
+    if server_now() < ready_at.get(
+        asset,
+        0
+    ):
+        return None
+
+    candles = get_candles_safe(
+        asset,
+        TIMEFRAME,
+        CANDLE_COUNT
+    )
+
+    if len(candles) < 60:
+        return None
+
+    # --------------------------------------------------------
+    # IMPORTANT CORRECTION:
+    #
+    # Previous version waited:
+    # last_candle + 2 * TIMEFRAME
+    #
+    # That delayed evaluation unnecessarily.
+    #
+    # Now we wait only one timeframe.
+    # --------------------------------------------------------
+
+    ready_at[asset] = (
+        candles[-1]["from"]
+        + TIMEFRAME
+    )
+
+    signal = evaluate_zeta(
+        asset,
+        candles
+    )
+
+    if not signal:
+        return None
+
+    print(
+        "\n"
+        "========================================\n"
+        "QUALIFIED SETUP\n"
+        "========================================"
+    )
+
+    print(
+        f"Asset: {signal['asset']}\n"
+        f"Direction: {signal['direction']}\n"
+        f"Patterns: {signal['all_detected']}\n"
+        f"Quality: "
+        f"{signal['confirmation_quality']:.2f}\n"
+        f"5M Structure: "
+        f"{signal['structure_5m']}\n"
+        f"Zone Source: "
+        f"{signal['zone_source']}\n"
+        f"Reason: "
+        f"{signal['approval_reason']}"
+    )
+
+    print(
+        "========================================"
+    )
+
+    send_telegram(
+        format_signal(signal)
+    )
+
+    execute_demo_trade(
+        signal
+    )
+
+    return signal
+
+
+# ============================================================
+# NO TRADE STATUS
+# ============================================================
+
+def send_no_trade_status():
+
+    completed = total_completed_trades()
+
+    send_telegram(
+        "🔵 <b>ZETA V1 SCANNING</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"<b>OTC assets:</b> "
+        f"{len(otc_assets)}\n"
+        f"<b>Trades opened:</b> "
+        f"{total_trades}/{TEST_TRADE_TARGET}\n"
+        f"<b>Completed:</b> "
+        f"{completed}/{TEST_TRADE_TARGET}\n"
+        f"<b>Wins:</b> {wins}\n"
+        f"<b>Losses:</b> {losses}\n"
+        f"<b>Win rate:</b> "
+        f"{win_rate():.2f}%\n"
+        f"<b>Net P/L:</b> "
+        f"${total_profit:+.2f}\n"
+        f"<b>Active:</b> "
+        f"{len(active_trades)}\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "<b>5M:</b> Trend + Structure\n"
+        "<b>1M:</b> Pullback + S/R + Candle\n"
+        "<b>Status:</b> NO TRADE\n"
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+
+# ============================================================
+# MAIN LOOP
+# ============================================================
+
+def main():
 
     global last_status_time
     global last_discovery_time
 
-    if not IQ_EMAIL or not IQ_PASSWORD:
+    print(
+        "\n"
+        "==================================================\n"
+        "ZETA V1 BOT STARTING\n"
+        "=================================================="
+    )
 
-        message = (
-            "🔴 *ZETA V1*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "IQ_EMAIL or IQ_PASSWORD "
-            "is missing from GitHub Secrets."
-        )
+    print(
+        f"Mode: {BALANCE_MODE}"
+    )
 
-        print(message)
+    print(
+        f"Stake: ${STAKE:.2f}"
+    )
 
-        send_telegram(
-            message
-        )
+    print(
+        f"Expiry: {EXPIRY_MINUTES} minutes"
+    )
 
-        return
+    print(
+        "Trend timeframe: 5M"
+    )
+
+    print(
+        "Entry timeframe: 1M"
+    )
+
+    print(
+        "Candle confirmation: ACTIVE"
+    )
+
+    print(
+        "Auto-trading: ON"
+    )
+
+    print(
+        f"50-trade target: "
+        f"{TEST_TRADE_TARGET}"
+    )
+
+    print(
+        "=================================================="
+    )
 
     # --------------------------------------------------------
     # CONNECT
     # --------------------------------------------------------
 
-    if not connect_iq():
+    while True:
 
-        send_telegram(
-            "🔴 *ZETA V1*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "IQ Option connection failed."
-        )
+        try:
 
-        return
+            if connect_iq():
+                break
 
-    print(
-        "\n" + "=" * 70
-    )
+        except Exception as exc:
 
-    print(
-        "🟢 ZETA V1 DEMO TRADER ONLINE"
-    )
+            print(
+                f"Initial connection error: "
+                f"{exc}"
+            )
 
-    print(
-        "Strategy: ZETA STYLE V1"
-    )
+            time.sleep(
+                RECONNECT_INTERVAL
+            )
 
-    print(
-        "Chart: 1 Minute"
-    )
+    # --------------------------------------------------------
+    # DISCOVER OTC
+    # --------------------------------------------------------
 
-    print(
-        "Expiry:",
-        EXPIRY_MINUTES,
-        "Minutes",
-    )
+    while not otc_assets:
 
-    print(
-        "Account:",
-        BALANCE_MODE,
-    )
+        try:
 
-    print(
-        "Automatic trading: ON"
-    )
+            discover_otc_assets()
 
-    print(
-        "=" * 70
-    )
+        except Exception as exc:
+
+            print(
+                f"Discovery error: {exc}"
+            )
+
+        if not otc_assets:
+
+            print(
+                "No OTC assets discovered. "
+                "Retrying..."
+            )
+
+            time.sleep(
+                RECONNECT_INTERVAL
+            )
 
     send_telegram(
-        "🟢 *ZETA V1 DEMO TRADER ONLINE*\n"
+        "🟢 <b>ZETA V1 BOT ONLINE</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "*Strategy:* ZETA STYLE V1\n"
-        "*Chart:* 1 Minute\n"
-        f"*Expiry:* {EXPIRY_MINUTES} Minutes\n"
-        f"*Account:* {BALANCE_MODE}\n"
-        "*Automatic trading:* ON\n"
+        f"<b>OTC assets:</b> "
+        f"{len(otc_assets)}\n"
+        "<b>Feed:</b> REAL IQ Option OTC\n"
+        "<b>Trend:</b> 5M\n"
+        "<b>Entry:</b> 1M\n"
+        f"<b>Expiry:</b> "
+        f"{EXPIRY_MINUTES} minutes\n"
+        "<b>Candle library:</b> ACTIVE\n"
+        "<b>Mode:</b> PRACTICE\n"
+        "<b>Auto-trading:</b> ON\n"
+        f"<b>Test target:</b> "
+        f"{TEST_TRADE_TARGET} trades\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "🔎 Discovering REAL IQ Option OTC instruments..."
+        "Scanning for qualified "
+        "trend-pullback setups."
     )
 
-    # --------------------------------------------------------
-    # INITIAL DISCOVERY
-    # --------------------------------------------------------
-
-    refresh_success = (
-        refresh_otc_assets()
-    )
-
-    if not refresh_success:
-
-        send_telegram(
-            "🟠 *ZETA V1 OTC STATUS*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "IQ Option connection: OK\n"
-            "OTC initialization returned "
-            "no working candle feeds yet.\n"
-            "The scanner will keep retrying."
-        )
-
-    else:
-
-        send_telegram(
-            "🟢 *ZETA V1 OTC FEEDS READY*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"*Working OTC feeds:* "
-            f"{len(otc_assets)}\n"
-            "*Data:* REAL IQ OPTION CANDLES\n"
-            "*Scanning:* 1M\n"
-            f"*Expiry:* {EXPIRY_MINUTES} minutes\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "ZETA V1 scanning started."
-        )
-
-    last_status_time = time.time()
-
-    last_scan_cycle = 0
+    last_status_time = server_now()
 
     # --------------------------------------------------------
     # CONTINUOUS LOOP
@@ -2027,314 +1930,195 @@ def run_trader():
 
         try:
 
-            current_time = time.time()
-
             # ------------------------------------------------
-            # CONNECTION
+            # Connection
             # ------------------------------------------------
 
-            if not connection_is_alive():
+            if not ensure_connection():
 
-                print(
-                    "[CONNECTION] Connection lost."
+                time.sleep(
+                    RECONNECT_INTERVAL
                 )
 
-                send_telegram(
-                    "🔴 *ZETA V1*\n"
-                    "━━━━━━━━━━━━━━━━━━\n"
-                    "IQ Option connection "
-                    "appears lost.\n"
-                    "Attempting reconnect..."
-                )
-
-                try:
-
-                    api.connect()
-
-                    api.change_balance(
-                        BALANCE_MODE
-                    )
-
-                    print(
-                        "[CONNECTION] Reconnected."
-                    )
-
-                except Exception as e:
-
-                    print(
-                        "[RECONNECT ERROR]",
-                        repr(e),
-                    )
-
-                    time.sleep(
-                        RECONNECT_INTERVAL
-                    )
-
-                    continue
+                continue
 
             # ------------------------------------------------
-            # RESULTS
+            # Update existing trades first.
             # ------------------------------------------------
 
             update_active_trades()
 
             # ------------------------------------------------
-            # OTC REFRESH
+            # Final test condition.
             # ------------------------------------------------
 
             if (
-                not otc_assets
-                or (
-                    current_time
-                    - last_discovery_time
-                    >= 1800
-                )
+                total_trades >= TEST_TRADE_TARGET
+                and not active_trades
             ):
+
+                send_final_report()
 
                 print(
-                    "\n[OTC] Refreshing "
-                    "real OTC instruments..."
+                    "50-trade test complete. "
+                    "Stopping scanner."
                 )
 
-                refresh_otc_assets()
+                break
 
             # ------------------------------------------------
-            # SCAN
+            # Refresh OTC periodically.
             # ------------------------------------------------
 
             if (
-                current_time
-                - last_scan_cycle
-                >= SCAN_INTERVAL
+                server_now()
+                - last_discovery_time
+                >= 1800
             ):
 
-                last_scan_cycle = (
-                    current_time
+                try:
+                    discover_otc_assets()
+                except Exception as exc:
+                    print(
+                        f"Refresh discovery "
+                        f"error: {exc}"
+                    )
+
+            # ------------------------------------------------
+            # Stop opening trades after 50.
+            # Continue checking existing trades.
+            # ------------------------------------------------
+
+            if total_trades < TEST_TRADE_TARGET:
+
+                assets_snapshot = list(
+                    otc_assets
                 )
 
-                if not otc_assets:
+                for asset in assets_snapshot:
 
-                    print(
-                        "[SCAN] No working OTC feeds. "
-                        "Waiting for next discovery..."
-                    )
-
-                else:
-
-                    print(
-                        "\n"
-                        + "-" * 70
-                    )
-
-                    print(
-                        "[ZETA SCAN]",
-                        now_utc(),
-                    )
-
-                    print(
-                        "OTC feeds:",
-                        len(otc_assets),
-                    )
-
-                    print(
-                        "Active trades:",
-                        len(active_trades),
-                    )
-
-                    for item in list(
-                        otc_assets
+                    if (
+                        total_trades
+                        >= TEST_TRADE_TARGET
                     ):
+                        break
 
-                        asset = item[
-                            "asset"
-                        ]
+                    try:
 
-                        try:
+                        scan_asset(
+                            asset
+                        )
 
-                            candles = (
-                                get_candles_safe(
-                                    asset,
-                                    TIMEFRAME,
-                                    CANDLE_COUNT,
-                                )
-                            )
+                    except Exception as exc:
 
-                            if len(candles) < 60:
-                                continue
+                        print(
+                            f"Scan error "
+                            f"{asset}: {exc}"
+                        )
 
-                            signal = (
-                                evaluate_zeta(
-                                    asset,
-                                    candles,
-                                )
-                            )
-
-                            if signal is None:
-                                continue
-
-                            print(
-                                "\n[ZETA SIGNAL]",
-                                asset,
-                                signal[
-                                    "direction"
-                                ],
-                                signal[
-                                    "signal_id"
-                                ],
-                            )
-
-                            # Telegram signal
-                            send_telegram(
-                                format_signal(
-                                    signal
-                                )
-                            )
-
-                            # Demo trade
-                            execute_demo_trade(
-                                signal
-                            )
-
-                        except Exception as e:
-
-                            print(
-                                "[ASSET ERROR]",
-                                asset,
-                                repr(e),
-                            )
-
+                        if LOG_ZETA_REJECTIONS:
                             traceback.print_exc()
 
-                    print(
-                        "[ZETA SCAN COMPLETE]",
-                        now_utc(),
-                    )
+                    # Small delay prevents hammering
+                    # IQ Option.
+                    time.sleep(0.15)
 
             # ------------------------------------------------
-            # HEARTBEAT
+            # Heartbeat every 5 minutes.
             # ------------------------------------------------
+
+            now = server_now()
 
             if (
-                time.time()
-                - last_status_time
+                now - last_status_time
                 >= STATUS_INTERVAL
             ):
 
-                last_status_time = (
-                    time.time()
-                )
+                send_status()
 
-                send_heartbeat()
+                last_status_time = now
 
-            time.sleep(1)
+            # ------------------------------------------------
+            # Loop delay.
+            # ------------------------------------------------
+
+            time.sleep(
+                SCAN_INTERVAL
+            )
 
         except KeyboardInterrupt:
 
             print(
-                "\n[STOP] Keyboard interrupt."
+                "Scanner stopped manually."
             )
 
             break
 
-        except Exception as e:
+        except Exception as exc:
 
             print(
-                "\n[MAIN LOOP ERROR]",
-                repr(e),
+                f"MAIN LOOP ERROR: {exc}"
             )
 
             traceback.print_exc()
 
-            time.sleep(5)
+            time.sleep(
+                RECONNECT_INTERVAL
+            )
+
+    # --------------------------------------------------------
+    # Final local output
+    # --------------------------------------------------------
+
+    print(
+        "\n"
+        "=================================================="
+    )
+
+    print(
+        "ZETA V1 TEST FINISHED"
+    )
+
+    print(
+        f"Opened trades: "
+        f"{total_trades}"
+    )
+
+    print(
+        f"Completed trades: "
+        f"{total_completed_trades()}"
+    )
+
+    print(
+        f"Wins: {wins}"
+    )
+
+    print(
+        f"Losses: {losses}"
+    )
+
+    print(
+        f"Draws: {draws}"
+    )
+
+    print(
+        f"Win rate: "
+        f"{win_rate():.2f}%"
+    )
+
+    print(
+        f"Net demo P/L: "
+        f"${total_profit:+.2f}"
+    )
+
+    print(
+        "=================================================="
+    )
 
 
 # ============================================================
-# MAIN
+# ENTRY POINT
 # ============================================================
-
-def main():
-
-    print(
-        "=" * 70
-    )
-
-    print(
-        "ZETA V1 — IQ OPTION OTC DEMO TRADER"
-    )
-
-    print(
-        "=" * 70
-    )
-
-    print(
-        "Started:",
-        now_utc(),
-    )
-
-    print(
-        "Strategy: ZETA STYLE V1"
-    )
-
-    print(
-        "Chart: 1 Minute"
-    )
-
-    print(
-        "Expiry:",
-        EXPIRY_MINUTES,
-        "Minutes"
-    )
-
-    print(
-        "Account:",
-        BALANCE_MODE
-    )
-
-    print(
-        "Stake:",
-        STAKE
-    )
-
-    print(
-        "Automatic trading: ENABLED"
-    )
-
-    print(
-        "=" * 70
-    )
-
-    try:
-
-        run_trader()
-
-    except Exception as e:
-
-        print(
-            "\n[FATAL ERROR]",
-            repr(e),
-        )
-
-        traceback.print_exc()
-
-        send_telegram(
-            "🔴 *ZETA V1 FATAL ERROR*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"{str(e)[:800]}"
-        )
-
-    finally:
-
-        if api is not None:
-
-            try:
-                api.close()
-            except Exception:
-                pass
-
-        print(
-            "\nZETA V1 stopped."
-        )
-
 
 if __name__ == "__main__":
     main()
