@@ -4,82 +4,58 @@ import math
 import socket
 import threading
 import traceback
-from datetime import datetime
 
-from iqoptionapi.stable_api import IQ_Option
-from iqoptionapi.constants import OP_code
 import requests
+from iqoptionapi.stable_api import IQ_Option
+import iqoptionapi.constants as OP_code
 
 
 # ============================================================
-# ZETA V1
-# IQ OPTION OTC DEMO SCANNER
+# ZETA V1 — IQ OPTION OTC DEMO SCANNER
 # ============================================================
-
-# -------------------- ENVIRONMENT --------------------
-
-IQ_EMAIL = os.getenv("IQ_EMAIL", "")
-IQ_PASSWORD = os.getenv("IQ_PASSWORD", "")
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-
-
-# -------------------- ACCOUNT --------------------
 
 BALANCE_MODE = "PRACTICE"
 
-# DEMO ONLY
 STAKE = 1.0
-
-# Reference expiry
 EXPIRY_MINUTES = 2
-
-
-# -------------------- MARKET --------------------
 
 TIMEFRAME = 60
 CANDLE_COUNT = 180
 MAX_OTC_ASSETS = 60
 
-# Scan frequently, but only evaluate closed candles
 SCAN_INTERVAL = 5
-
-# Telegram heartbeat
 STATUS_INTERVAL = 300
-
-# Refresh OTC list
 OTC_REFRESH_INTERVAL = 1800
-
-
-# -------------------- STRATEGY --------------------
 
 FAST_LENGTH = 9
 SLOW_LENGTH = 21
 ATR_PERIOD = 14
 
-# Minimum EMA distance measured in ATR
 NORMALIZED_DISTANCE_MIN = 0.05
 
 USE_CANDLE_CONFIRM = True
 USE_TREND_SLOPE = True
 
-# Prevent repeated signals on the same setup
 SIGNAL_COOLDOWN_BARS = 3
-
-
-# -------------------- CONNECTION --------------------
 
 LOGIN_TIMEOUT = 25
 SOCKET_TIMEOUT = 20
 
 RECONNECT_INTERVAL = 30
-
-
-# -------------------- TRADE TRACKING --------------------
-
 TRADE_RESULT_CHECK_INTERVAL = 5
+
 MAX_ACTIVE_TRADES = 1000
+
+
+# ============================================================
+# ENVIRONMENT
+# ============================================================
+
+IQ_EMAIL = os.getenv("IQ_EMAIL", "").strip()
+IQ_PASSWORD = os.getenv("IQ_PASSWORD", "").strip()
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 
 # ============================================================
@@ -87,21 +63,13 @@ MAX_ACTIVE_TRADES = 1000
 # ============================================================
 
 api = None
+otc_assets = {}
 
-otc_assets = []
 active_trades = {}
-
 last_signal_bar = {}
+
 last_status_time = 0
 last_otc_refresh = 0
-
-total_trades = 0
-wins = 0
-losses = 0
-draws = 0
-net_profit = 0.0
-
-bot_started_at = time.time()
 
 connection_lock = threading.Lock()
 
@@ -112,421 +80,237 @@ connection_lock = threading.Lock()
 
 def telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print(message)
         return
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }
-
     try:
+        url = (
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        )
+
         requests.post(
             url,
-            json=payload,
-            timeout=15
+            data={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": message,
+            },
+            timeout=15,
         )
-    except Exception as e:
-        print(f"[TELEGRAM ERROR] {e}")
 
-    print(message)
+    except Exception as e:
+        print("Telegram error:", e, flush=True)
 
 
 # ============================================================
-# INDICATORS
+# LOGGING
+# ============================================================
+
+def log(message):
+    print(message, flush=True)
+
+
+# ============================================================
+# SAFE FLOAT
+# ============================================================
+
+def safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+# ============================================================
+# EMA
 # ============================================================
 
 def ema(values, period):
-    if not values:
+    if len(values) < period:
         return []
 
-    if len(values) < period:
-        return [None] * len(values)
+    multiplier = 2 / (period + 1)
 
-    result = [None] * len(values)
+    result = [sum(values[:period]) / period]
 
-    seed = sum(values[:period]) / period
-    result[period - 1] = seed
-
-    multiplier = 2.0 / (period + 1)
-
-    previous = seed
-
-    for i in range(period, len(values)):
-        previous = (
-            (values[i] - previous) * multiplier
-        ) + previous
-
-        result[i] = previous
+    for price in values[period:]:
+        result.append(
+            (price - result[-1]) * multiplier + result[-1]
+        )
 
     return result
 
 
-def wilder_atr(candles, period=14):
-    if len(candles) < period + 1:
-        return [None] * len(candles)
+# ============================================================
+# ATR
+# ============================================================
 
-    true_ranges = [None] * len(candles)
+def atr(candles, period=14):
+    if len(candles) < period + 1:
+        return 0.0
+
+    trs = []
 
     for i in range(1, len(candles)):
-        high = float(candles[i]["max"])
-        low = float(candles[i]["min"])
-        previous_close = float(candles[i - 1]["close"])
+        high = safe_float(candles[i].get("max"))
+        low = safe_float(candles[i].get("min"))
+        previous_close = safe_float(candles[i - 1].get("close"))
 
-        tr = max(
+        true_range = max(
             high - low,
             abs(high - previous_close),
-            abs(low - previous_close)
+            abs(low - previous_close),
         )
 
-        true_ranges[i] = tr
+        trs.append(true_range)
 
-    atr = [None] * len(candles)
+    if len(trs) < period:
+        return 0.0
 
-    start = period
-
-    first_values = [
-        x for x in true_ranges[1:start + 1]
-        if x is not None
-    ]
-
-    if len(first_values) < period:
-        return atr
-
-    current = sum(first_values) / period
-    atr[start] = current
-
-    for i in range(start + 1, len(candles)):
-        tr = true_ranges[i]
-
-        if tr is None:
-            continue
-
-        current = (
-            ((current * (period - 1)) + tr)
-            / period
-        )
-
-        atr[i] = current
-
-    return atr
+    return sum(trs[-period:]) / period
 
 
 # ============================================================
-# CANDLE HELPERS
+# CANDLE CONFIRMATION
 # ============================================================
 
-def candle_bullish(candle):
-    return float(candle["close"]) > float(candle["open"])
+def bullish_candle(candle):
+    open_price = safe_float(candle.get("open"))
+    close_price = safe_float(candle.get("close"))
+    high = safe_float(candle.get("max"))
+    low = safe_float(candle.get("min"))
 
+    body = abs(close_price - open_price)
+    candle_range = high - low
 
-def candle_bearish(candle):
-    return float(candle["close"]) < float(candle["open"])
-
-
-def valid_number(value):
-    try:
-        return math.isfinite(float(value))
-    except Exception:
+    if candle_range <= 0:
         return False
 
+    return (
+        close_price > open_price
+        and body / candle_range >= 0.35
+    )
 
-# ============================================================
-# SIGNAL ENGINE
-# ============================================================
 
-def analyze_asset(asset, candles):
-    if not candles or len(candles) < SLOW_LENGTH + ATR_PERIOD + 10:
-        return None
+def bearish_candle(candle):
+    open_price = safe_float(candle.get("open"))
+    close_price = safe_float(candle.get("close"))
+    high = safe_float(candle.get("max"))
+    low = safe_float(candle.get("min"))
 
-    try:
-        # Remove current/open candle.
-        # IQ Option candle feeds normally include the latest candle.
-        closed = candles[:-1]
+    body = abs(close_price - open_price)
+    candle_range = high - low
 
-        if len(closed) < SLOW_LENGTH + ATR_PERIOD + 10:
-            return None
+    if candle_range <= 0:
+        return False
 
-        closes = [
-            float(c["close"])
-            for c in closed
-        ]
-
-        fast = ema(closes, FAST_LENGTH)
-        slow = ema(closes, SLOW_LENGTH)
-        atr = wilder_atr(closed, ATR_PERIOD)
-
-        i = len(closed) - 1
-        previous = i - 1
-
-        if previous < 1:
-            return None
-
-        if (
-            fast[i] is None
-            or fast[previous] is None
-            or slow[i] is None
-            or slow[previous] is None
-            or atr[i] is None
-        ):
-            return None
-
-        current_close = closes[i]
-        current_fast = fast[i]
-        previous_fast = fast[previous]
-
-        current_slow = slow[i]
-        previous_slow = slow[previous]
-
-        current_atr = float(atr[i])
-
-        if current_atr <= 0:
-            return None
-
-        # ----------------------------------------------------
-        # Trend state
-        # ----------------------------------------------------
-
-        previous_bull = previous_fast > previous_slow
-        current_bull = current_fast > current_slow
-
-        previous_bear = previous_fast < previous_slow
-        current_bear = current_fast < current_slow
-
-        bullish_flip = (
-            not previous_bull
-            and current_bull
-        )
-
-        bearish_flip = (
-            not previous_bear
-            and current_bear
-        )
-
-        # ----------------------------------------------------
-        # Trend slope
-        # ----------------------------------------------------
-
-        slope_up = current_fast > previous_fast
-        slope_down = current_fast < previous_fast
-
-        # ----------------------------------------------------
-        # EMA distance
-        # ----------------------------------------------------
-
-        normalized_distance = (
-            abs(current_fast - current_slow)
-            / current_atr
-        )
-
-        if normalized_distance < NORMALIZED_DISTANCE_MIN:
-            return None
-
-        # ----------------------------------------------------
-        # Candle confirmation
-        # ----------------------------------------------------
-
-        candle = closed[i]
-
-        bullish_candle = candle_bullish(candle)
-        bearish_candle = candle_bearish(candle)
-
-        # ----------------------------------------------------
-        # Signal
-        # ----------------------------------------------------
-
-        direction = None
-
-        if bullish_flip:
-            if current_close > current_fast:
-
-                if USE_CANDLE_CONFIRM and not bullish_candle:
-                    return None
-
-                if USE_TREND_SLOPE and not slope_up:
-                    return None
-
-                direction = "CALL"
-
-        elif bearish_flip:
-            if current_close < current_fast:
-
-                if USE_CANDLE_CONFIRM and not bearish_candle:
-                    return None
-
-                if USE_TREND_SLOPE and not slope_down:
-                    return None
-
-                direction = "PUT"
-
-        if direction is None:
-            return None
-
-        bar_time = int(
-            closed[i].get(
-                "from",
-                time.time()
-            )
-        )
-
-        # ----------------------------------------------------
-        # Cooldown
-        # ----------------------------------------------------
-
-        previous_signal_bar = last_signal_bar.get(asset)
-
-        if previous_signal_bar is not None:
-
-            bars_since = (
-                bar_time - previous_signal_bar
-            ) / TIMEFRAME
-
-            if bars_since < SIGNAL_COOLDOWN_BARS:
-                return None
-
-        last_signal_bar[asset] = bar_time
-
-        return {
-            "asset": asset,
-            "direction": direction,
-            "price": current_close,
-            "ema_fast": current_fast,
-            "ema_slow": current_slow,
-            "atr": current_atr,
-            "distance": normalized_distance,
-            "bar_time": bar_time,
-        }
-
-    except Exception:
-        return None
+    return (
+        close_price < open_price
+        and body / candle_range >= 0.35
+    )
 
 
 # ============================================================
-# IQ OPTION CONNECTION
+# CONNECT IQ OPTION
 # ============================================================
 
 def connect_iq():
+
     global api
 
     if not IQ_EMAIL or not IQ_PASSWORD:
-        telegram(
-            "🔴 <b>ZETA V1 CONFIGURATION ERROR</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "IQ_EMAIL or IQ_PASSWORD is missing."
-        )
+        log("ERROR: IQ_EMAIL or IQ_PASSWORD is missing.")
+        telegram("🔴 ZETA V1 ERROR\nIQ Option credentials are missing.")
         return False
 
-    with connection_lock:
+    log("")
+    log("================================================")
+    log("ZETA V1 — CONNECTING TO IQ OPTION")
+    log("================================================")
+
+    telegram(
+        "🟡 ZETA V1 STARTING\n"
+        "Connecting to IQ Option...\n"
+        "Mode: PRACTICE\n"
+        "Expiry: 2 minutes"
+    )
+
+    socket.setdefaulttimeout(SOCKET_TIMEOUT)
+
+    try:
+        api = IQ_Option(
+            IQ_EMAIL,
+            IQ_PASSWORD
+        )
+    except Exception as e:
+        log("IQ Option object creation failed:")
+        log(str(e))
+        return False
+
+    result = {
+        "connected": False,
+        "message": ""
+    }
+
+    def worker():
 
         try:
-            socket.setdefaulttimeout(SOCKET_TIMEOUT)
+            ok, reason = api.connect()
 
-            telegram(
-                "🟡 <b>ZETA V1 CONNECTING</b>\n"
-                "━━━━━━━━━━━━━━━━━━\n"
-                "Connecting to IQ Option..."
-            )
-
-            new_api = IQ_Option(
-                IQ_EMAIL,
-                IQ_PASSWORD
-            )
-
-            result = {
-                "success": False,
-                "error": None
-            }
-
-            def worker():
-                try:
-                    result["success"] = bool(
-                        new_api.connect()
-                    )
-                except Exception as e:
-                    result["error"] = str(e)
-
-            thread = threading.Thread(
-                target=worker,
-                daemon=True
-            )
-
-            thread.start()
-
-            thread.join(
-                timeout=LOGIN_TIMEOUT
-            )
-
-            if thread.is_alive():
-
-                telegram(
-                    "🔴 <b>ZETA V1 CONNECTION TIMEOUT</b>\n"
-                    "━━━━━━━━━━━━━━━━━━\n"
-                    f"IQ Option did not complete login within "
-                    f"{LOGIN_TIMEOUT} seconds."
-                )
-
-                return False
-
-            if not result["success"]:
-
-                error_text = result["error"]
-
-                telegram(
-                    "🔴 <b>ZETA V1 CONNECTION FAILED</b>\n"
-                    "━━━━━━━━━━━━━━━━━━\n"
-                    f"{error_text or 'IQ Option rejected the connection.'}"
-                )
-
-                return False
-
-            api = new_api
-
-            try:
-                api.change_balance(BALANCE_MODE)
-            except Exception:
-                pass
-
-            telegram(
-                "🟢 <b>IQ OPTION CONNECTION SUCCESSFUL</b>\n"
-                "━━━━━━━━━━━━━━━━━━\n"
-                f"Account: {BALANCE_MODE}\n"
-                "Auto-trading: ON\n"
-                "Mode: PRACTICE"
-            )
-
-            return True
+            result["connected"] = bool(ok)
+            result["message"] = str(reason)
 
         except Exception as e:
+            result["message"] = str(e)
 
-            telegram(
-                "🔴 <b>ZETA V1 CONNECTION ERROR</b>\n"
-                "━━━━━━━━━━━━━━━━━━\n"
-                f"{str(e)}"
-            )
+    thread = threading.Thread(
+        target=worker,
+        daemon=True
+    )
 
-            return False
+    thread.start()
 
+    thread.join(LOGIN_TIMEOUT)
 
-# ============================================================
-# CONNECTION CHECK
-# ============================================================
+    if thread.is_alive():
 
-def connection_alive():
-    global api
+        log("Connection timeout.")
 
-    if api is None:
+        telegram(
+            "🔴 ZETA V1 CONNECTION TIMEOUT\n"
+            "IQ Option did not complete connection."
+        )
+
+        return False
+
+    if not result["connected"]:
+
+        log(
+            "Connection failed: "
+            + result["message"]
+        )
+
+        telegram(
+            "🔴 ZETA V1 CONNECTION FAILED\n"
+            + result["message"]
+        )
+
         return False
 
     try:
-        return bool(
-            api.check_connect()
-        )
+        api.change_balance(BALANCE_MODE)
     except Exception:
-        return False
+        pass
+
+    log("IQ Option connection: OK")
+
+    telegram(
+        "🟢 ZETA V1 CONNECTED\n"
+        "IQ Option connection: OK\n"
+        "Mode: PRACTICE\n"
+        "Auto-trading: ON\n"
+        "Expiry: 2 minutes"
+    )
+
+    return True
 
 
 # ============================================================
@@ -534,146 +318,126 @@ def connection_alive():
 # ============================================================
 
 def discover_otc_assets():
+
     global otc_assets
 
-    if api is None:
-        return []
+    log("")
+    log("Discovering IQ Option OTC markets...")
 
     discovered = {}
 
     try:
 
-        # First initialization method
-        try:
-            api.get_all_init_v2()
-        except Exception:
-            pass
-
-        time.sleep(2)
-
-        # Second initialization method
-        try:
-            api.get_all_init()
-        except Exception:
-            pass
-
-        time.sleep(2)
-
         data = None
 
-        # Different iqoptionapi versions expose data differently
-        candidates = [
-            getattr(api, "all_init", None),
-            getattr(api, "all_init_v2", None),
-        ]
+        try:
+            data = api.get_all_init_v2()
+        except Exception as e:
+            log("get_all_init_v2 failed: " + str(e))
 
-        for candidate in candidates:
+        if not data:
 
-            if isinstance(candidate, dict):
-                data = candidate
-                break
+            try:
+                data = api.get_all_init()
+            except Exception as e:
+                log("get_all_init failed: " + str(e))
 
-        if data is None:
-            return []
+        if not data:
+            log("No market data received.")
+            return False
 
-        # ----------------------------------------------
-        # Binary / Turbo OTC discovery
-        # ----------------------------------------------
-
-        for market_type in [
+        market_groups = [
             "binary",
             "turbo",
             "digital"
-        ]:
+        ]
 
-            section = data.get(
-                market_type,
-                {}
-            )
+        for group in market_groups:
 
-            if not isinstance(section, dict):
+            group_data = data.get(group, {})
+
+            if not isinstance(group_data, dict):
                 continue
 
-            for asset, info in section.items():
+            for asset_name, info in group_data.items():
 
-                if not isinstance(asset, str):
+                name = str(asset_name)
+
+                if "OTC" not in name.upper():
                     continue
 
-                upper = asset.upper()
-
-                if (
-                    "-OTC" not in upper
-                    and "_OTC" not in upper
-                    and "OTC" not in upper
-                ):
+                if not isinstance(info, dict):
                     continue
 
-                active_id = None
-
-                if isinstance(info, dict):
-
-                    for key in [
-                        "active_id",
-                        "activeId",
-                        "id"
-                    ]:
-
-                        if key in info:
-                            try:
-                                active_id = int(
-                                    info[key]
-                                )
-                                break
-                            except Exception:
-                                pass
+                active_id = (
+                    info.get("active_id")
+                    or info.get("id")
+                )
 
                 if active_id is None:
                     continue
 
-                discovered[asset] = active_id
+                try:
+                    active_id = int(active_id)
+                except Exception:
+                    continue
 
-        # ----------------------------------------------
-        # Register active IDs
-        # ----------------------------------------------
+                discovered[name] = active_id
 
+                if len(discovered) >= MAX_OTC_ASSETS:
+                    break
+
+            if len(discovered) >= MAX_OTC_ASSETS:
+                break
+
+        if not discovered:
+
+            log("OTC markets discovered: 0")
+
+            telegram(
+                "🟠 ZETA V1 STATUS\n"
+                "IQ Option connected\n"
+                "OTC markets discovered: 0"
+            )
+
+            return False
+
+        otc_assets = discovered
+
+        # Register active IDs for candle streaming/access
         try:
-            for asset, active_id in discovered.items():
-                OP_code.ACTIVES[asset] = active_id
+            ids = list(discovered.values())
+
+            if ids:
+                api.subscribe_instrument(
+                    "candle-generated",
+                    ids
+                )
+
         except Exception:
             pass
 
-        assets = list(
-            discovered.keys()
-        )[:MAX_OTC_ASSETS]
-
-        otc_assets = assets
-
-        telegram(
-            "🟢 <b>OTC DISCOVERY COMPLETE</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"OTC markets discovered: {len(assets)}"
+        log(
+            "OTC markets discovered: "
+            + str(len(otc_assets))
         )
 
-        return assets
+        return True
 
     except Exception as e:
 
-        telegram(
-            "🟠 <b>OTC DISCOVERY ERROR</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"{str(e)}"
-        )
+        log("OTC discovery error:")
+        log(str(e))
+        traceback.print_exc()
 
-        return []
+        return False
 
 
 # ============================================================
-# CANDLE DATA
+# GET CANDLES
 # ============================================================
 
 def get_candles(asset):
-    if api is None:
-        return None
 
     try:
 
@@ -685,238 +449,393 @@ def get_candles(asset):
         )
 
         if not candles:
-            return None
+            return []
+
+        candles = list(candles)
+
+        candles.sort(
+            key=lambda x: safe_float(x.get("from"))
+        )
+
+        # Remove current/open candle
+        if len(candles) > 2:
+            candles = candles[:-1]
 
         return candles
 
-    except Exception:
+    except Exception as e:
+
+        log(
+            f"Candle error {asset}: {e}"
+        )
+
+        return []
+
+
+# ============================================================
+# SIGNAL ANALYSIS
+# ============================================================
+
+def analyze(asset, candles):
+
+    if len(candles) < max(
+        SLOW_LENGTH + 10,
+        ATR_PERIOD + 10
+    ):
         return None
 
+    closes = [
+        safe_float(c.get("close"))
+        for c in candles
+    ]
+
+    fast = ema(
+        closes,
+        FAST_LENGTH
+    )
+
+    slow = ema(
+        closes,
+        SLOW_LENGTH
+    )
+
+    if len(fast) < 5 or len(slow) < 5:
+        return None
+
+    fast_now = fast[-1]
+    fast_previous = fast[-2]
+
+    slow_now = slow[-1]
+    slow_previous = slow[-2]
+
+    price = closes[-1]
+
+    current_candle = candles[-1]
+
+    current_atr = atr(
+        candles,
+        ATR_PERIOD
+    )
+
+    if current_atr <= 0:
+        return None
+
+    distance = abs(
+        fast_now - slow_now
+    )
+
+    normalized_distance = (
+        distance / current_atr
+    )
+
+    bullish_trend = (
+        fast_now > slow_now
+    )
+
+    bearish_trend = (
+        fast_now < slow_now
+    )
+
+    bullish_slope = (
+        fast_now > fast_previous
+        and slow_now >= slow_previous
+    )
+
+    bearish_slope = (
+        fast_now < fast_previous
+        and slow_now <= slow_previous
+    )
+
+    bullish_candle_ok = bullish_candle(
+        current_candle
+    )
+
+    bearish_candle_ok = bearish_candle(
+        current_candle
+    )
+
+    previous_fast = fast[-2]
+    previous_slow = slow[-2]
+
+    bullish_flip = (
+        previous_fast <= previous_slow
+        and fast_now > slow_now
+    )
+
+    bearish_flip = (
+        previous_fast >= previous_slow
+        and fast_now < slow_now
+    )
+
+    # --------------------------------------------------------
+    # CALL
+    # --------------------------------------------------------
+
+    call_conditions = 0
+
+    if bullish_trend:
+        call_conditions += 1
+
+    if price > fast_now:
+        call_conditions += 1
+
+    if bullish_candle_ok:
+        call_conditions += 1
+
+    if bullish_slope:
+        call_conditions += 1
+
+    if bullish_flip:
+        call_conditions += 1
+
+    if (
+        call_conditions >= 4
+        and normalized_distance >= NORMALIZED_DISTANCE_MIN
+    ):
+
+        return {
+            "direction": "CALL",
+            "price": price,
+            "atr": current_atr,
+            "distance": normalized_distance,
+            "conditions": call_conditions,
+        }
+
+    # --------------------------------------------------------
+    # PUT
+    # --------------------------------------------------------
+
+    put_conditions = 0
+
+    if bearish_trend:
+        put_conditions += 1
+
+    if price < fast_now:
+        put_conditions += 1
+
+    if bearish_candle_ok:
+        put_conditions += 1
+
+    if bearish_slope:
+        put_conditions += 1
+
+    if bearish_flip:
+        put_conditions += 1
+
+    if (
+        put_conditions >= 4
+        and normalized_distance >= NORMALIZED_DISTANCE_MIN
+    ):
+
+        return {
+            "direction": "PUT",
+            "price": price,
+            "atr": current_atr,
+            "distance": normalized_distance,
+            "conditions": put_conditions,
+        }
+
+    return None
+
 
 # ============================================================
-# SIGNAL MESSAGE
+# OPEN DEMO TRADE
 # ============================================================
 
-def signal_message(signal):
+def open_trade(asset, signal):
 
     direction = signal["direction"]
 
-    emoji = (
-        "🟢"
-        if direction == "CALL"
-        else "🔴"
-    )
-
-    return (
-        f"{emoji} <b>ZETA V1 SIGNAL</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"<b>Asset:</b> {signal['asset']}\n"
-        f"<b>Direction:</b> {direction}\n"
-        f"<b>Expiry:</b> {EXPIRY_MINUTES} minutes\n"
-        f"<b>Price:</b> {signal['price']:.8f}\n"
-        f"<b>EMA 9:</b> {signal['ema_fast']:.8f}\n"
-        f"<b>EMA 21:</b> {signal['ema_slow']:.8f}\n"
-        f"<b>ATR:</b> {signal['atr']:.8f}\n"
-        f"<b>EMA distance:</b> "
-        f"{signal['distance']:.2f} ATR\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "<b>Account:</b> PRACTICE"
-    )
-
-
-# ============================================================
-# DEMO ORDER
-# ============================================================
-
-def place_demo_trade(signal):
-
-    global total_trades
-
-    if api is None:
-        return False
-
-    if len(active_trades) >= MAX_ACTIVE_TRADES:
-        return False
-
-    asset = signal["asset"]
-    direction = signal["direction"]
-
-    order_direction = (
+    iq_direction = (
         "call"
         if direction == "CALL"
         else "put"
     )
 
+    signal_id = (
+        "ZETA-"
+        + asset.replace("/", "")
+        .replace("(", "")
+        .replace(")", "")
+        .replace(" ", "")
+        + "-"
+        + direction
+        + "-"
+        + str(int(time.time()))
+    )
+
+    log("")
+    log("==============================================")
+    log("NEW ZETA V1 SIGNAL")
+    log("Asset: " + asset)
+    log("Direction: " + direction)
+    log(
+        "Conditions: "
+        + str(signal["conditions"])
+        + "/5"
+    )
+    log(
+        "Expiry: "
+        + str(EXPIRY_MINUTES)
+        + " minutes"
+    )
+    log("==============================================")
+
+    telegram(
+        "🟡 ZETA V1 SIGNAL\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"Asset: {asset}\n"
+        f"Direction: {direction}\n"
+        f"Conditions: {signal['conditions']}/5\n"
+        f"Expiry: {EXPIRY_MINUTES} minutes\n"
+        f"Stake: ${STAKE:.2f}\n"
+        f"Signal ID: {signal_id}\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Sending DEMO order..."
+    )
+
     try:
 
-        telegram(
-            "🟡 <b>ZETA V1 SENDING DEMO ORDER</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"<b>Asset:</b> {asset}\n"
-            f"<b>Direction:</b> {direction}\n"
-            f"<b>Stake:</b> ${STAKE:.2f}\n"
-            f"<b>Expiry:</b> {EXPIRY_MINUTES} minutes"
-        )
-
-        success, trade_id = api.buy(
+        success, order_id = api.buy(
             STAKE,
             asset,
-            order_direction,
+            iq_direction,
             EXPIRY_MINUTES
         )
 
         if not success:
 
+            log(
+                "DEMO order failed: "
+                + str(order_id)
+            )
+
             telegram(
-                "🔴 <b>DEMO ORDER FAILED</b>\n"
-                "━━━━━━━━━━━━━━━━━━\n"
-                f"Asset: {asset}"
+                "🔴 ZETA V1 ORDER FAILED\n"
+                f"Asset: {asset}\n"
+                f"Direction: {direction}\n"
+                f"Reason: {order_id}"
             )
 
             return False
 
-        total_trades += 1
+        order_id = str(order_id)
 
-        signal_id = (
-            f"ZETA-{asset.replace('-', '')}-"
-            f"{direction}-"
-            f"{int(time.time())}"
-        )
-
-        active_trades[str(trade_id)] = {
-            "trade_id": str(trade_id),
-            "signal_id": signal_id,
+        active_trades[order_id] = {
             "asset": asset,
             "direction": direction,
+            "signal_id": signal_id,
+            "opened": time.time(),
             "stake": STAKE,
-            "opened_at": time.time(),
-            "signal": signal,
         }
 
+        log(
+            "DEMO trade opened: "
+            + order_id
+        )
+
         telegram(
-            "🚀 <b>ZETA V1 DEMO TRADE OPENED</b>\n"
+            "🟢 ZETA V1 DEMO TRADE OPENED\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            f"<b>Asset:</b> {asset}\n"
-            f"<b>Direction:</b> {direction}\n"
-            f"<b>Stake:</b> ${STAKE:.2f}\n"
-            f"<b>Expiry:</b> {EXPIRY_MINUTES} minutes\n"
-            f"<b>Signal ID:</b> {signal_id}\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "<b>Account:</b> PRACTICE"
+            f"Asset: {asset}\n"
+            f"Direction: {direction}\n"
+            f"Stake: ${STAKE:.2f}\n"
+            f"Expiry: {EXPIRY_MINUTES} minutes\n"
+            f"Order ID: {order_id}\n"
+            f"Signal ID: {signal_id}\n"
+            "━━━━━━━━━━━━━━━━━━"
         )
 
         return True
 
     except Exception as e:
 
+        log("Order error:")
+        log(str(e))
+
         telegram(
-            "🔴 <b>DEMO ORDER ERROR</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"{str(e)}"
+            "🔴 ZETA V1 ORDER ERROR\n"
+            + str(e)
         )
 
         return False
 
 
 # ============================================================
-# TRADE RESULT MONITOR
+# CHECK TRADE RESULTS
 # ============================================================
 
 def check_trade_results():
 
-    global wins
-    global losses
-    global draws
-    global net_profit
-
-    if api is None:
-        return
-
     if not active_trades:
         return
 
-    completed = []
+    finished = []
 
-    for trade_id, trade in list(
+    for order_id, trade in list(
         active_trades.items()
     ):
 
         try:
 
             result = api.check_win_v4(
-                trade_id
+                order_id
             )
 
             if result is None:
                 continue
 
-            # iqoptionapi can return numeric result
-            profit = float(result)
-
-            # Some API states may not be final
-            if math.isnan(profit):
-                continue
-
-            if profit > 0:
-                outcome = "WIN"
-                wins += 1
-
-            elif profit < 0:
-                outcome = "LOSS"
-                losses += 1
-
-            else:
-                outcome = "DRAW"
-                draws += 1
-
-            net_profit += profit
-
-            win_rate = (
-                (wins / total_trades) * 100
-                if total_trades > 0
-                else 0
+            result_value = safe_float(
+                result,
+                None
             )
 
-            emoji = {
-                "WIN": "🟢",
-                "LOSS": "🔴",
-                "DRAW": "🟡"
-            }.get(
-                outcome,
-                "⚪"
+            if result_value is None:
+                continue
+
+            if result_value > 0:
+
+                outcome = "WIN"
+                emoji = "🟢"
+
+            elif result_value < 0:
+
+                outcome = "LOSS"
+                emoji = "🔴"
+
+            else:
+
+                outcome = "DRAW"
+                emoji = "🟡"
+
+            asset = trade["asset"]
+
+            log(
+                f"{emoji} {outcome} | "
+                f"{asset} | "
+                f"${result_value:.2f}"
             )
 
             telegram(
-                f"{emoji} <b>ZETA V1 TRADE RESULT</b>\n"
+                f"{emoji} ZETA V1 TRADE RESULT\n"
                 "━━━━━━━━━━━━━━━━━━\n"
-                f"<b>Signal ID:</b> "
-                f"{trade['signal_id']}\n"
-                f"<b>Asset:</b> "
-                f"{trade['asset']}\n"
-                f"<b>Direction:</b> "
-                f"{trade['direction']}\n"
-                f"<b>Result:</b> {outcome}\n"
-                f"<b>P/L:</b> ${profit:.2f}\n"
-                "━━━━━━━━━━━━━━━━━━\n"
-                f"<b>Total:</b> {total_trades}\n"
-                f"<b>Wins:</b> {wins}\n"
-                f"<b>Losses:</b> {losses}\n"
-                f"<b>Draws:</b> {draws}\n"
-                f"<b>Win rate:</b> {win_rate:.2f}%\n"
-                f"<b>Net demo P/L:</b> "
-                f"${net_profit:.2f}"
+                f"Asset: {asset}\n"
+                f"Direction: {trade['direction']}\n"
+                f"Result: {outcome}\n"
+                f"P/L: ${result_value:.2f}\n"
+                f"Signal ID: {trade['signal_id']}\n"
+                "━━━━━━━━━━━━━━━━━━"
             )
 
-            completed.append(
-                trade_id
-            )
+            finished.append(order_id)
 
         except Exception:
             continue
 
-    for trade_id in completed:
+    for order_id in finished:
+
         active_trades.pop(
-            trade_id,
+            order_id,
             None
         )
 
@@ -925,7 +844,7 @@ def check_trade_results():
 # HEARTBEAT
 # ============================================================
 
-def send_status():
+def heartbeat():
 
     global last_status_time
 
@@ -939,57 +858,31 @@ def send_status():
 
     last_status_time = now
 
-    runtime_seconds = (
-        now - bot_started_at
-    )
-
-    runtime_hours = (
-        runtime_seconds / 3600
-    )
-
-    win_rate = (
-        (wins / total_trades) * 100
-        if total_trades > 0
-        else 0
-    )
-
-    telegram(
-        "🟡 <b>ZETA V1 STATUS</b>\n"
+    message = (
+        "🟢 ZETA V1 HEARTBEAT\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"<b>OTC assets:</b> {len(otc_assets)}\n"
-        f"<b>Trades:</b> {total_trades}\n"
-        f"<b>Wins:</b> {wins}\n"
-        f"<b>Losses:</b> {losses}\n"
-        f"<b>Draws:</b> {draws}\n"
-        f"<b>Win rate:</b> {win_rate:.2f}%\n"
-        f"<b>Net demo P/L:</b> ${net_profit:.2f}\n"
-        f"<b>Active trades:</b> {len(active_trades)}\n"
-        f"<b>Runtime:</b> {runtime_hours:.2f}h\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "<b>Account:</b> PRACTICE\n"
-        f"<b>Expiry:</b> {EXPIRY_MINUTES} minutes\n"
-        "<b>Scanner:</b> RUNNING"
+        f"OTC markets: {len(otc_assets)}\n"
+        f"Active trades: {len(active_trades)}\n"
+        "Strategy: EMA 9/21\n"
+        "Timeframe: 1M\n"
+        f"Expiry: {EXPIRY_MINUTES} minutes\n"
+        "Mode: PRACTICE\n"
+        "Auto-trading: ON\n"
+        "Status: RUNNING\n"
+        "━━━━━━━━━━━━━━━━━━"
     )
+
+    log(message)
+    telegram(message)
 
 
 # ============================================================
-# MAIN SCANNER LOOP
+# MAIN SCANNER
 # ============================================================
 
 def scanner_loop():
 
     global last_otc_refresh
-
-    telegram(
-        "🟢 <b>ZETA V1 SCANNER STARTED</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "Strategy: EMA 9/21 Trend Flip\n"
-        "Chart: 1M\n"
-        "Expiry: 2 minutes\n"
-        "Mode: PRACTICE\n"
-        "Auto-trading: ON\n"
-        "Scanning OTC markets..."
-    )
 
     last_otc_refresh = 0
 
@@ -997,29 +890,11 @@ def scanner_loop():
 
         try:
 
-            # --------------------------------------------
-            # Connection
-            # --------------------------------------------
-
-            if not connection_alive():
-
-                telegram(
-                    "🟠 <b>ZETA V1 CONNECTION LOST</b>\n"
-                    "━━━━━━━━━━━━━━━━━━\n"
-                    f"Retrying in {RECONNECT_INTERVAL} seconds."
-                )
-
-                time.sleep(
-                    RECONNECT_INTERVAL
-                )
-
-                continue
-
-            # --------------------------------------------
-            # OTC refresh
-            # --------------------------------------------
-
             now = time.time()
+
+            # ------------------------------------------------
+            # Refresh OTC markets
+            # ------------------------------------------------
 
             if (
                 not otc_assets
@@ -1027,74 +902,91 @@ def scanner_loop():
                 >= OTC_REFRESH_INTERVAL
             ):
 
-                assets = discover_otc_assets()
+                if discover_otc_assets():
+                    last_otc_refresh = now
 
-                last_otc_refresh = now
-
-                if not assets:
-
-                    telegram(
-                        "🟠 <b>NO OTC MARKETS FOUND</b>\n"
-                        "━━━━━━━━━━━━━━━━━━\n"
-                        "Will retry OTC discovery."
-                    )
-
-                    time.sleep(
-                        SCAN_INTERVAL
-                    )
-
-                    continue
-
-            # --------------------------------------------
-            # Check trade results
-            # --------------------------------------------
+            # ------------------------------------------------
+            # Check results
+            # ------------------------------------------------
 
             check_trade_results()
 
-            # --------------------------------------------
-            # Scan assets
-            # --------------------------------------------
-
-            for asset in list(otc_assets):
-
-                if not connection_alive():
-                    break
-
-                candles = get_candles(
-                    asset
-                )
-
-                if not candles:
-                    continue
-
-                signal = analyze_asset(
-                    asset,
-                    candles
-                )
-
-                if signal is None:
-                    continue
-
-                telegram(
-                    signal_message(
-                        signal
-                    )
-                )
-
-                # Automatically places a DEMO/PRACTICE
-                # order only.
-                place_demo_trade(
-                    signal
-                )
-
-                # Give API a moment before next order
-                time.sleep(0.5)
-
-            # --------------------------------------------
+            # ------------------------------------------------
             # Heartbeat
-            # --------------------------------------------
+            # ------------------------------------------------
 
-            send_status()
+            heartbeat()
+
+            # ------------------------------------------------
+            # Scan OTC assets
+            # ------------------------------------------------
+
+            if otc_assets:
+
+                for asset in list(
+                    otc_assets.keys()
+                ):
+
+                    try:
+
+                        candles = get_candles(
+                            asset
+                        )
+
+                        if not candles:
+                            continue
+
+                        signal = analyze(
+                            asset,
+                            candles
+                        )
+
+                        if signal is None:
+                            continue
+
+                        # ------------------------------------
+                        # Prevent repeated signals
+                        # ------------------------------------
+
+                        latest_bar = safe_float(
+                            candles[-1].get("from")
+                        )
+
+                        previous_bar = last_signal_bar.get(
+                            asset,
+                            0
+                        )
+
+                        if (
+                            latest_bar
+                            <= previous_bar
+                        ):
+                            continue
+
+                        last_signal_bar[asset] = (
+                            latest_bar
+                        )
+
+                        # ------------------------------------
+                        # Open demo trade
+                        # ------------------------------------
+
+                        if (
+                            len(active_trades)
+                            >= MAX_ACTIVE_TRADES
+                        ):
+                            continue
+
+                        open_trade(
+                            asset,
+                            signal
+                        )
+
+                    except Exception as e:
+
+                        log(
+                            f"Scan error {asset}: {e}"
+                        )
 
             time.sleep(
                 SCAN_INTERVAL
@@ -1102,69 +994,63 @@ def scanner_loop():
 
         except KeyboardInterrupt:
 
-            telegram(
-                "🛑 <b>ZETA V1 STOPPED</b>"
-            )
-
+            log("Scanner stopped.")
             break
 
         except Exception as e:
 
-            print(
-                traceback.format_exc()
-            )
-
-            telegram(
-                "🟠 <b>ZETA V1 LOOP ERROR</b>\n"
-                "━━━━━━━━━━━━━━━━━━\n"
-                f"{str(e)}\n"
-                "Scanner will continue."
-            )
-
-            time.sleep(
-                SCAN_INTERVAL
-            )
-
-
-# ============================================================
-# STARTUP
-# ============================================================
-
-def main():
-
-    telegram(
-        "🟡 <b>ZETA V1 STARTING</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "IQ Option OTC scanner initializing...\n"
-        "Account: PRACTICE\n"
-        "Expiry: 2 minutes"
-    )
-
-    connected = connect_iq()
-
-    if not connected:
-
-        telegram(
-            "🔴 <b>ZETA V1 STARTUP HALTED</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "IQ Option connection was not established.\n"
-            "The bot will retry without starting the strategy."
-        )
-
-        while True:
+            log("Scanner loop error:")
+            log(str(e))
+            traceback.print_exc()
 
             time.sleep(
                 RECONNECT_INTERVAL
             )
 
-            if connect_iq():
-                break
 
-        scanner_loop()
+# ============================================================
+# MAIN
+# ============================================================
 
-    else:
+def main():
 
-        scanner_loop()
+    log("")
+    log("================================================")
+    log("ZETA V1 BOT")
+    log("================================================")
+    log("Strategy: EMA 9/21")
+    log("Chart: 1 Minute")
+    log("Expiry: 2 Minutes")
+    log("Mode: PRACTICE")
+    log("Auto-trading: ON")
+    log("================================================")
+
+    if not connect_iq():
+
+        log("Unable to connect to IQ Option.")
+
+        return
+
+    if not discover_otc_assets():
+
+        log(
+            "WARNING: No OTC assets discovered."
+        )
+
+    telegram(
+        "🔵 ZETA V1 SCANNER STARTED\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"OTC markets: {len(otc_assets)}\n"
+        "Strategy: EMA 9/21\n"
+        "Chart: 1M\n"
+        "Expiry: 2M\n"
+        "Mode: PRACTICE\n"
+        "Auto-trading: ON\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Scanning..."
+    )
+
+    scanner_loop()
 
 
 if __name__ == "__main__":
