@@ -1,6 +1,5 @@
 import os
 import time
-import math
 import traceback
 from datetime import datetime, timezone
 
@@ -14,62 +13,39 @@ from candlestick_patterns import evaluate_confirmation_context
 # ============================================================
 # ZETA V1 — DEMO / PRACTICE TRADING BOT
 # ============================================================
-# REAL IQ OPTION OTC FEEDS
 # 5M TREND / STRUCTURE
 # 1M ENTRY
 # 2-MINUTE EXPIRY
-#
-# Candle confirmation is handled by:
-# candlestick_patterns.py
-#
-# IMPORTANT:
-# This bot is intended for PRACTICE/DEMO testing.
-# It does not guarantee profitable results.
-# ============================================================
-
-
-# ============================================================
-# CONFIGURATION
+# CANDLE CONFIRMATION
+# 50-TRADE DEMO TEST
 # ============================================================
 
 BALANCE_MODE = "PRACTICE"
 
 STAKE = 1.0
 
-# Trade expiry
 EXPIRY_MINUTES = 2
 
-# Main execution timeframe
 TIMEFRAME = 60
 CANDLE_COUNT = 180
 
-# Higher timeframe
 TIMEFRAME_5M = 300
 CANDLE_COUNT_5M = 120
 
-# OTC discovery
 MAX_OTC_ASSETS = 60
 
-# Scan loop
 SCAN_INTERVAL = 5
-
-# Telegram heartbeat
 STATUS_INTERVAL = 300
-
-# Reconnection
 RECONNECT_INTERVAL = 30
+
 
 # ============================================================
 # 50-TRADE TEST
 # ============================================================
 
-# The experiment stops opening NEW trades after 50 tracked trades.
 TEST_TRADE_TARGET = 50
-
-# This is NOT the total lifetime trade limit.
-# It prevents more than 50 tracked trades from being opened
-# during this controlled experiment.
 MAX_ACTIVE_TRADES = 50
+
 
 # ============================================================
 # ZETA TREND SETTINGS
@@ -83,14 +59,13 @@ NORMALIZED_DISTANCE_MIN = 0.05
 
 USE_TREND_SLOPE = True
 
-# Number of bars to wait before another signal
 SIGNAL_COOLDOWN_BARS = 3
+
 
 # ============================================================
 # ZETA FLIP SETTINGS
 # ============================================================
 
-# Keep False as requested.
 REQUIRE_ZETA_FLIP = False
 
 ZETA_FLIP_MAX_AGE_BARS = 10
@@ -100,6 +75,7 @@ ZETA_REQUIRE_CLOSE_BEYOND_FAST_EMA = False
 ZETA_REQUIRE_FAST_SLOPE = False
 
 ZETA_CLOSE_VS_SLOW_TOLERANCE_ATR = 0.15
+
 
 # ============================================================
 # CANDLE LIBRARY
@@ -151,9 +127,7 @@ total_profit = 0.0
 start_time = time.time()
 
 last_status_time = 0
-
 last_discovery_time = 0
-
 last_connection_check = 0
 
 final_report_sent = False
@@ -164,6 +138,7 @@ final_report_sent = False
 # ============================================================
 
 def send_telegram(message):
+
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return False
 
@@ -180,6 +155,7 @@ def send_telegram(message):
     }
 
     try:
+
         response = requests.post(
             url,
             data=payload,
@@ -189,6 +165,7 @@ def send_telegram(message):
         return response.ok
 
     except Exception:
+
         return False
 
 
@@ -201,6 +178,7 @@ def server_now():
 
 
 def utc_text(timestamp=None):
+
     if timestamp is None:
         timestamp = server_now()
 
@@ -215,14 +193,16 @@ def utc_text(timestamp=None):
 # ============================================================
 
 def connect_iq():
+
     global api
 
     if not IQ_EMAIL or not IQ_PASSWORD:
+
         raise RuntimeError(
             "IQ_EMAIL or IQ_PASSWORD is missing."
         )
 
-    print("Connecting to IQ Option...")
+    print("Connecting to IQ Option...", flush=True)
 
     api = IQ_Option(
         IQ_EMAIL,
@@ -232,11 +212,15 @@ def connect_iq():
     connected, reason = api.connect()
 
     if not connected:
+
         raise RuntimeError(
             f"IQ Option connection failed: {reason}"
         )
 
-    print("IQ Option connection: OK")
+    print(
+        "IQ Option connection: OK",
+        flush=True
+    )
 
     try:
         api.change_balance(BALANCE_MODE)
@@ -251,6 +235,7 @@ def connect_iq():
 # ============================================================
 
 def ensure_connection():
+
     global api
     global last_connection_check
 
@@ -262,24 +247,31 @@ def ensure_connection():
     last_connection_check = now
 
     try:
+
         if api is None:
             return connect_iq()
 
-        check = api.check_connect()
-
-        if check:
+        if api.check_connect():
             return True
 
     except Exception:
         pass
 
-    print("Connection lost. Reconnecting...")
+    print(
+        "Connection lost. Reconnecting...",
+        flush=True
+    )
 
     try:
+
         connected, reason = api.connect()
 
         if connected:
-            print("Reconnected to IQ Option.")
+
+            print(
+                "Reconnected to IQ Option.",
+                flush=True
+            )
 
             try:
                 api.change_balance(BALANCE_MODE)
@@ -288,24 +280,34 @@ def ensure_connection():
 
             return True
 
-        print(f"Reconnect failed: {reason}")
+        print(
+            f"Reconnect failed: {reason}",
+            flush=True
+        )
 
     except Exception as exc:
-        print(f"Reconnect error: {exc}")
+
+        print(
+            f"Reconnect error: {exc}",
+            flush=True
+        )
 
     return False
 
 
 # ============================================================
-# SAFE ACTIVE REGISTRATION
+# ACTIVE REGISTRATION
 # ============================================================
 
 def register_active(asset):
+
     try:
+
         active_id = OP_code.ACTIVES.get(asset)
 
         if active_id is not None:
             return active_id
+
     except Exception:
         pass
 
@@ -313,10 +315,11 @@ def register_active(asset):
 
 
 # ============================================================
-# RECURSIVE ACTIVE EXTRACTION
+# RECURSIVE OTC EXTRACTION
 # ============================================================
 
 def extract_otc_assets(obj, output=None):
+
     if output is None:
         output = set()
 
@@ -330,6 +333,7 @@ def extract_otc_assets(obj, output=None):
                 "-OTC" in key_text.upper()
                 or key_text.upper().endswith("OTC")
             ):
+
                 output.add(key_text)
 
             extract_otc_assets(
@@ -340,6 +344,7 @@ def extract_otc_assets(obj, output=None):
     elif isinstance(obj, list):
 
         for item in obj:
+
             extract_otc_assets(
                 item,
                 output
@@ -353,36 +358,50 @@ def extract_otc_assets(obj, output=None):
 # ============================================================
 
 def discover_otc_assets():
+
     global otc_assets
     global last_discovery_time
 
-    print("Discovering IQ Option OTC instruments...")
+    print(
+        "Discovering IQ Option OTC instruments...",
+        flush=True
+    )
 
     discovered = set()
 
     try:
+
         data = None
 
-        # First attempt
         try:
+
             data = api.get_all_init_v2()
+
         except Exception:
+
             data = None
 
-        # Fallback
         if not data:
+
             try:
+
                 data = api.get_all_init()
+
             except Exception:
+
                 data = None
 
         if data:
+
             discovered = extract_otc_assets(data)
 
     except Exception as exc:
-        print(f"OTC discovery error: {exc}")
 
-    # Clean up names
+        print(
+            f"OTC discovery error: {exc}",
+            flush=True
+        )
+
     cleaned = []
 
     for asset in discovered:
@@ -398,7 +417,6 @@ def discover_otc_assets():
         if "-OTC" not in asset.upper():
             continue
 
-        # Confirm active ID exists
         active_id = register_active(asset)
 
         if active_id is None:
@@ -411,6 +429,7 @@ def discover_otc_assets():
     )
 
     if MAX_OTC_ASSETS:
+
         cleaned = cleaned[:MAX_OTC_ASSETS]
 
     otc_assets = cleaned
@@ -419,27 +438,32 @@ def discover_otc_assets():
 
     print(
         f"OTC instruments discovered: "
-        f"{len(otc_assets)}"
+        f"{len(otc_assets)}",
+        flush=True
     )
 
     if otc_assets:
+
         print(
-            "Sample OTC assets:",
-            ", ".join(otc_assets[:10])
+            "Sample OTC assets: "
+            + ", ".join(otc_assets[:10]),
+            flush=True
         )
 
     return otc_assets
 
 
 # ============================================================
-# CANDLE CLEANING
+# CANDLE NORMALIZATION
 # ============================================================
 
 def normalize_candle(candle):
+
     if not isinstance(candle, dict):
         return None
 
     try:
+
         return {
             "from": int(
                 candle.get(
@@ -447,18 +471,21 @@ def normalize_candle(candle):
                     candle.get("at", 0)
                 )
             ),
+
             "open": float(
                 candle.get(
                     "open",
                     candle.get("open_price", 0)
                 )
             ),
+
             "close": float(
                 candle.get(
                     "close",
                     candle.get("close_price", 0)
                 )
             ),
+
             "high": float(
                 candle.get(
                     "max",
@@ -468,6 +495,7 @@ def normalize_candle(candle):
                     )
                 )
             ),
+
             "low": float(
                 candle.get(
                     "min",
@@ -477,6 +505,7 @@ def normalize_candle(candle):
                     )
                 )
             ),
+
             "volume": float(
                 candle.get(
                     "volume",
@@ -486,14 +515,16 @@ def normalize_candle(candle):
         }
 
     except Exception:
+
         return None
 
 
 # ============================================================
-# CLOSED CANDLE FILTER
+# CLOSED CANDLES ONLY
 # ============================================================
 
 def get_closed_candles(candles, timeframe):
+
     if not candles:
         return []
 
@@ -526,7 +557,6 @@ def get_closed_candles(candles, timeframe):
         if candle["from"] + timeframe <= now
     ]
 
-    # Remove duplicate timestamps
     unique = []
 
     seen = set()
@@ -554,6 +584,7 @@ def get_candles_safe(
     timeframe,
     count
 ):
+
     try:
 
         candles = api.get_candles(
@@ -576,18 +607,20 @@ def get_candles_safe(
         key = f"candles:{asset}:{timeframe}"
 
         if key not in logged_once:
+
             logged_once[key] = True
 
             print(
                 f"Candle error {asset} "
-                f"{timeframe}s: {exc}"
+                f"{timeframe}s: {exc}",
+                flush=True
             )
 
         return []
 
 
 # ============================================================
-# 5M CANDLE CACHE
+# 5M CACHE
 # ============================================================
 
 def get_5m_candles(asset):
@@ -597,6 +630,7 @@ def get_5m_candles(asset):
     cached = cache_5m.get(asset)
 
     if cached and cached[0] == bucket:
+
         return cached[1]
 
     candles = get_candles_safe(
@@ -606,6 +640,7 @@ def get_5m_candles(asset):
     )
 
     if candles:
+
         cache_5m[asset] = (
             bucket,
             candles
@@ -619,6 +654,7 @@ def get_5m_candles(asset):
 # ============================================================
 
 def ema(values, period):
+
     if not values:
         return []
 
@@ -714,7 +750,7 @@ def atr_wilder(candles, period=14):
 
 
 # ============================================================
-# TREND CALCULATION
+# ZETA STATE
 # ============================================================
 
 def calculate_zeta_state(candles):
@@ -782,23 +818,28 @@ def calculate_zeta_state(candles):
         fast > slow
         and fast_slope > 0
         and slow_slope > 0
-        and normalized_distance >= NORMALIZED_DISTANCE_MIN
+        and normalized_distance
+        >= NORMALIZED_DISTANCE_MIN
     )
 
     bearish = (
         fast < slow
         and fast_slope < 0
         and slow_slope < 0
-        and normalized_distance >= NORMALIZED_DISTANCE_MIN
+        and normalized_distance
+        >= NORMALIZED_DISTANCE_MIN
     )
 
     if bullish:
+
         direction = "CALL"
 
     elif bearish:
+
         direction = "PUT"
 
     else:
+
         direction = None
 
     return {
@@ -826,10 +867,6 @@ def evaluate_zeta(asset, candles):
     if len(candles) < 60:
         return None
 
-    # --------------------------------------------------------
-    # Evaluate each closed candle only once.
-    # --------------------------------------------------------
-
     candle = candles[-1]
 
     candle_time = candle["from"]
@@ -841,10 +878,6 @@ def evaluate_zeta(asset, candles):
 
     evaluated_candles[asset] = candle_time
 
-    # --------------------------------------------------------
-    # Calculate ZETA state.
-    # --------------------------------------------------------
-
     state = calculate_zeta_state(
         candles
     )
@@ -855,17 +888,21 @@ def evaluate_zeta(asset, candles):
     direction = state["direction"]
 
     if direction is None:
+
         if LOG_ZETA_REJECTIONS:
+
             print(
                 f"[NO TRADE] {asset} "
-                f"ZETA trend not aligned."
+                f"ZETA trend not aligned.",
+                flush=True
             )
+
         return None
 
     current_atr = state["atr"]
 
     # --------------------------------------------------------
-    # Basic EMA structure.
+    # CALL STRUCTURE
     # --------------------------------------------------------
 
     if direction == "CALL":
@@ -879,7 +916,6 @@ def evaluate_zeta(asset, candles):
         if state["slow_slope"] <= 0:
             return None
 
-        # Do not allow a large bearish break below EMA21.
         if (
             candle["close"]
             <
@@ -903,6 +939,10 @@ def evaluate_zeta(asset, candles):
         ):
             return None
 
+    # --------------------------------------------------------
+    # PUT STRUCTURE
+    # --------------------------------------------------------
+
     else:
 
         if not (
@@ -914,7 +954,6 @@ def evaluate_zeta(asset, candles):
         if state["slow_slope"] >= 0:
             return None
 
-        # Do not allow a large bullish break above EMA21.
         if (
             candle["close"]
             >
@@ -939,7 +978,7 @@ def evaluate_zeta(asset, candles):
             return None
 
     # --------------------------------------------------------
-    # Cooldown.
+    # SIGNAL COOLDOWN
     # --------------------------------------------------------
 
     previous_signal_time = (
@@ -957,7 +996,7 @@ def evaluate_zeta(asset, candles):
             return None
 
     # --------------------------------------------------------
-    # Get 5M market structure.
+    # 5M STRUCTURE
     # --------------------------------------------------------
 
     candles_5m = get_5m_candles(
@@ -965,27 +1004,19 @@ def evaluate_zeta(asset, candles):
     )
 
     if len(candles_5m) < 30:
+
         if LOG_ZETA_REJECTIONS:
+
             print(
                 f"[NO TRADE] {asset} "
-                f"not enough 5M candles."
+                f"not enough 5M candles.",
+                flush=True
             )
+
         return None
 
     # --------------------------------------------------------
-    # CONNECT THE CANDLE LIBRARY.
-    #
-    # This is the important part.
-    #
-    # The candle library now checks:
-    # - 5M structure
-    # - 1M alignment
-    # - pullback
-    # - support/resistance
-    # - candle patterns
-    # - pattern quality
-    # - room
-    # - entry timing
+    # CANDLE LIBRARY
     # --------------------------------------------------------
 
     try:
@@ -1005,7 +1036,8 @@ def evaluate_zeta(asset, candles):
 
         print(
             f"Candle library error "
-            f"{asset}: {exc}"
+            f"{asset}: {exc}",
+            flush=True
         )
 
         traceback.print_exc()
@@ -1016,7 +1048,7 @@ def evaluate_zeta(asset, candles):
         return None
 
     # --------------------------------------------------------
-    # Candle library must explicitly approve.
+    # LIBRARY MUST APPROVE
     # --------------------------------------------------------
 
     if not decision.get("approved", False):
@@ -1031,13 +1063,14 @@ def evaluate_zeta(asset, candles):
             print(
                 f"[NO TRADE] {asset} "
                 f"{direction} | "
-                f"{'; '.join(map(str, reasons))}"
+                f"{'; '.join(map(str, reasons))}",
+                flush=True
             )
 
         return None
 
     # --------------------------------------------------------
-    # Safety: require a valid candle confirmation.
+    # REQUIRE PATTERN
     # --------------------------------------------------------
 
     patterns = decision.get(
@@ -1046,14 +1079,17 @@ def evaluate_zeta(asset, candles):
     )
 
     if not patterns:
+
         print(
             f"[NO TRADE] {asset} "
-            f"approved without pattern."
+            f"approved without pattern.",
+            flush=True
         )
+
         return None
 
     # --------------------------------------------------------
-    # Safety: confirmation must be meaningful.
+    # REQUIRE QUALITY
     # --------------------------------------------------------
 
     quality = float(
@@ -1064,15 +1100,18 @@ def evaluate_zeta(asset, candles):
     )
 
     if quality < 0.45:
+
         print(
             f"[NO TRADE] {asset} "
             f"pattern quality too low: "
-            f"{quality:.2f}"
+            f"{quality:.2f}",
+            flush=True
         )
+
         return None
 
     # --------------------------------------------------------
-    # Prevent duplicate signal on same candle.
+    # SAVE SIGNAL
     # --------------------------------------------------------
 
     last_signal_time[asset] = candle_time
@@ -1097,39 +1136,50 @@ def evaluate_zeta(asset, candles):
         ],
         "candle_time": candle_time,
         "timestamp": server_now(),
+
         "confirmation": decision.get(
             "confirmation_text",
             ""
         ),
+
         "confirmation_quality": quality,
+
         "structure_5m": decision.get(
             "structure_5m",
             ""
         ),
+
         "alignment_1m": decision.get(
             "alignment_1m",
             ""
         ),
+
         "zone": decision.get(
             "zone"
         ),
+
         "zone_source": decision.get(
             "zone_source",
             ""
         ),
+
         "pullback": decision.get(
             "pullback"
         ),
+
         "room": decision.get(
             "room"
         ),
+
         "timing": decision.get(
             "timing"
         ),
+
         "all_detected": decision.get(
             "all_detected",
             patterns
         ),
+
         "approval_reason": decision.get(
             "approval_reason",
             ""
@@ -1151,11 +1201,14 @@ def format_signal(signal):
     )
 
     if isinstance(patterns, list):
+
         pattern_text = ", ".join(
             str(x)
             for x in patterns
         )
+
     else:
+
         pattern_text = str(patterns)
 
     return (
@@ -1196,27 +1249,21 @@ def execute_demo_trade(signal):
 
     global total_trades
 
-    # --------------------------------------------------------
-    # HARD 50-TRADE LIMIT
-    # --------------------------------------------------------
-
     if total_trades >= TEST_TRADE_TARGET:
 
         print(
-            "50-trade target already reached. "
-            "No new trade will be opened."
+            "50-trade target reached. "
+            "No new trade.",
+            flush=True
         )
 
         return False
 
-    # --------------------------------------------------------
-    # Safety active trade limit.
-    # --------------------------------------------------------
-
     if len(active_trades) >= MAX_ACTIVE_TRADES:
 
         print(
-            "Maximum active trade limit reached."
+            "Maximum active trade limit reached.",
+            flush=True
         )
 
         return False
@@ -1238,8 +1285,8 @@ def execute_demo_trade(signal):
         if active_id is None:
 
             print(
-                f"Active ID unavailable "
-                f"for {asset}"
+                f"Active ID unavailable for {asset}",
+                flush=True
             )
 
             return False
@@ -1247,15 +1294,16 @@ def execute_demo_trade(signal):
     except Exception:
 
         print(
-            f"Could not resolve active ID "
-            f"for {asset}"
+            f"Could not resolve active ID for {asset}",
+            flush=True
         )
 
         return False
 
     print(
         f"Sending DEMO order: "
-        f"{asset} {signal['direction']}"
+        f"{asset} {signal['direction']}",
+        flush=True
     )
 
     try:
@@ -1270,7 +1318,8 @@ def execute_demo_trade(signal):
     except Exception as exc:
 
         print(
-            f"Order error {asset}: {exc}"
+            f"Order error {asset}: {exc}",
+            flush=True
         )
 
         send_telegram(
@@ -1285,14 +1334,10 @@ def execute_demo_trade(signal):
     success = False
     trade_id = None
 
-    # IQ Option normally returns:
-    # (True, trade_id)
     if isinstance(result, tuple):
 
         if len(result) >= 1:
-            success = bool(
-                result[0]
-            )
+            success = bool(result[0])
 
         if len(result) >= 2:
             trade_id = result[1]
@@ -1306,7 +1351,8 @@ def execute_demo_trade(signal):
         print(
             f"❌ DEMO order rejected: "
             f"{asset} "
-            f"{signal['direction']}"
+            f"{signal['direction']}",
+            flush=True
         )
 
         send_telegram(
@@ -1322,18 +1368,15 @@ def execute_demo_trade(signal):
         return False
 
     # --------------------------------------------------------
-    # IMPORTANT:
-    # We need a trade ID to track WIN/LOSS.
-    #
-    # If IQ Option says accepted but gives no usable ID,
-    # do NOT count it as one of the 50 tracked trades.
+    # REQUIRE TRADE ID
     # --------------------------------------------------------
 
     if trade_id is None:
 
         print(
             f"⚠️ Order accepted but "
-            f"no trade ID returned: {asset}"
+            f"no trade ID returned: {asset}",
+            flush=True
         )
 
         send_telegram(
@@ -1351,7 +1394,7 @@ def execute_demo_trade(signal):
         return False
 
     # --------------------------------------------------------
-    # SUCCESSFULLY TRACKED TRADE
+    # TRACK TRADE
     # --------------------------------------------------------
 
     total_trades += 1
@@ -1375,7 +1418,8 @@ def execute_demo_trade(signal):
         f"Asset: {asset}\n"
         f"Direction: {signal['direction']}\n"
         f"Trade ID: {trade_id}\n"
-        f"Trade #{total_trades}/{TEST_TRADE_TARGET}"
+        f"Trade #{total_trades}/{TEST_TRADE_TARGET}",
+        flush=True
     )
 
     send_telegram(
@@ -1423,27 +1467,32 @@ def check_trade_result(trade):
         )
 
     except Exception:
+
         return None
 
-    # Still pending
     if result is None:
         return None
 
     try:
+
         profit = float(result)
+
     except Exception:
+
         return None
 
-    # IQ Option returns 0 for a draw in many cases.
     if profit > 0:
+
         outcome = "WIN"
         wins += 1
 
     elif profit < 0:
+
         outcome = "LOSS"
         losses += 1
 
     else:
+
         outcome = "DRAW"
         draws += 1
 
@@ -1486,7 +1535,8 @@ def update_active_trades():
             f"{trade['asset']} | "
             f"{trade['direction']} | "
             f"{result['outcome']} | "
-            f"{result['profit']:+.2f}"
+            f"{result['profit']:+.2f}",
+            flush=True
         )
 
         send_telegram(
@@ -1602,7 +1652,7 @@ def send_status():
 
 
 # ============================================================
-# FINAL 50-TRADE REPORT
+# FINAL REPORT
 # ============================================================
 
 def send_final_report():
@@ -1614,8 +1664,6 @@ def send_final_report():
 
     completed = total_completed_trades()
 
-    # Do not send the final report until every opened
-    # tracked trade has a result.
     if total_trades < TEST_TRADE_TARGET:
         return
 
@@ -1653,7 +1701,8 @@ def send_final_report():
         "\n"
         "========================================\n"
         "50-TRADE TEST COMPLETE\n"
-        "========================================"
+        "========================================",
+        flush=True
     )
 
     print(
@@ -1662,11 +1711,13 @@ def send_final_report():
         f"Losses: {losses}\n"
         f"Draws: {draws}\n"
         f"Win rate: {win_rate():.2f}%\n"
-        f"Net P/L: ${total_profit:+.2f}"
+        f"Net P/L: ${total_profit:+.2f}",
+        flush=True
     )
 
     print(
-        "========================================"
+        "========================================",
+        flush=True
     )
 
     send_telegram(message)
@@ -1678,17 +1729,8 @@ def send_final_report():
 
 def scan_asset(asset):
 
-    # --------------------------------------------------------
-    # Once 50 tracked trades have been opened, do not open
-    # another one.
-    # --------------------------------------------------------
-
     if total_trades >= TEST_TRADE_TARGET:
         return None
-
-    # --------------------------------------------------------
-    # Wait until the asset is ready for a new closed candle.
-    # --------------------------------------------------------
 
     if server_now() < ready_at.get(
         asset,
@@ -1704,17 +1746,6 @@ def scan_asset(asset):
 
     if len(candles) < 60:
         return None
-
-    # --------------------------------------------------------
-    # IMPORTANT CORRECTION:
-    #
-    # Previous version waited:
-    # last_candle + 2 * TIMEFRAME
-    #
-    # That delayed evaluation unnecessarily.
-    #
-    # Now we wait only one timeframe.
-    # --------------------------------------------------------
 
     ready_at[asset] = (
         candles[-1]["from"]
@@ -1733,7 +1764,8 @@ def scan_asset(asset):
         "\n"
         "========================================\n"
         "QUALIFIED SETUP\n"
-        "========================================"
+        "========================================",
+        flush=True
     )
 
     print(
@@ -1747,11 +1779,13 @@ def scan_asset(asset):
         f"Zone Source: "
         f"{signal['zone_source']}\n"
         f"Reason: "
-        f"{signal['approval_reason']}"
+        f"{signal['approval_reason']}",
+        flush=True
     )
 
     print(
-        "========================================"
+        "========================================",
+        flush=True
     )
 
     send_telegram(
@@ -1811,44 +1845,53 @@ def main():
         "\n"
         "==================================================\n"
         "ZETA V1 BOT STARTING\n"
-        "=================================================="
+        "==================================================",
+        flush=True
     )
 
     print(
-        f"Mode: {BALANCE_MODE}"
+        f"Mode: {BALANCE_MODE}",
+        flush=True
     )
 
     print(
-        f"Stake: ${STAKE:.2f}"
+        f"Stake: ${STAKE:.2f}",
+        flush=True
     )
 
     print(
-        f"Expiry: {EXPIRY_MINUTES} minutes"
+        f"Expiry: {EXPIRY_MINUTES} minutes",
+        flush=True
     )
 
     print(
-        "Trend timeframe: 5M"
+        "Trend timeframe: 5M",
+        flush=True
     )
 
     print(
-        "Entry timeframe: 1M"
+        "Entry timeframe: 1M",
+        flush=True
     )
 
     print(
-        "Candle confirmation: ACTIVE"
+        "Candle confirmation: ACTIVE",
+        flush=True
     )
 
     print(
-        "Auto-trading: ON"
+        "Auto-trading: ON",
+        flush=True
     )
 
     print(
-        f"50-trade target: "
-        f"{TEST_TRADE_TARGET}"
+        f"50-trade target: {TEST_TRADE_TARGET}",
+        flush=True
     )
 
     print(
-        "=================================================="
+        "==================================================",
+        flush=True
     )
 
     # --------------------------------------------------------
@@ -1865,8 +1908,8 @@ def main():
         except Exception as exc:
 
             print(
-                f"Initial connection error: "
-                f"{exc}"
+                f"Initial connection error: {exc}",
+                flush=True
             )
 
             time.sleep(
@@ -1886,14 +1929,16 @@ def main():
         except Exception as exc:
 
             print(
-                f"Discovery error: {exc}"
+                f"Discovery error: {exc}",
+                flush=True
             )
 
         if not otc_assets:
 
             print(
                 "No OTC assets discovered. "
-                "Retrying..."
+                "Retrying...",
+                flush=True
             )
 
             time.sleep(
@@ -1930,10 +1975,6 @@ def main():
 
         try:
 
-            # ------------------------------------------------
-            # Connection
-            # ------------------------------------------------
-
             if not ensure_connection():
 
                 time.sleep(
@@ -1943,13 +1984,13 @@ def main():
                 continue
 
             # ------------------------------------------------
-            # Update existing trades first.
+            # CHECK EXISTING TRADES
             # ------------------------------------------------
 
             update_active_trades()
 
             # ------------------------------------------------
-            # Final test condition.
+            # FINISH AFTER 50 TRADES
             # ------------------------------------------------
 
             if (
@@ -1961,13 +2002,14 @@ def main():
 
                 print(
                     "50-trade test complete. "
-                    "Stopping scanner."
+                    "Stopping scanner.",
+                    flush=True
                 )
 
                 break
 
             # ------------------------------------------------
-            # Refresh OTC periodically.
+            # REFRESH OTC EVERY 30 MINUTES
             # ------------------------------------------------
 
             if (
@@ -1977,16 +2019,19 @@ def main():
             ):
 
                 try:
+
                     discover_otc_assets()
+
                 except Exception as exc:
+
                     print(
-                        f"Refresh discovery "
-                        f"error: {exc}"
+                        f"Refresh discovery error: "
+                        f"{exc}",
+                        flush=True
                     )
 
             # ------------------------------------------------
-            # Stop opening trades after 50.
-            # Continue checking existing trades.
+            # OPEN NEW TRADES UNTIL 50
             # ------------------------------------------------
 
             if total_trades < TEST_TRADE_TARGET:
@@ -2013,18 +2058,17 @@ def main():
 
                         print(
                             f"Scan error "
-                            f"{asset}: {exc}"
+                            f"{asset}: {exc}",
+                            flush=True
                         )
 
                         if LOG_ZETA_REJECTIONS:
                             traceback.print_exc()
 
-                    # Small delay prevents hammering
-                    # IQ Option.
                     time.sleep(0.15)
 
             # ------------------------------------------------
-            # Heartbeat every 5 minutes.
+            # HEARTBEAT
             # ------------------------------------------------
 
             now = server_now()
@@ -2039,7 +2083,7 @@ def main():
                 last_status_time = now
 
             # ------------------------------------------------
-            # Loop delay.
+            # LOOP DELAY
             # ------------------------------------------------
 
             time.sleep(
@@ -2049,7 +2093,8 @@ def main():
         except KeyboardInterrupt:
 
             print(
-                "Scanner stopped manually."
+                "Scanner stopped manually.",
+                flush=True
             )
 
             break
@@ -2057,7 +2102,8 @@ def main():
         except Exception as exc:
 
             print(
-                f"MAIN LOOP ERROR: {exc}"
+                f"MAIN LOOP ERROR: {exc}",
+                flush=True
             )
 
             traceback.print_exc()
@@ -2067,52 +2113,60 @@ def main():
             )
 
     # --------------------------------------------------------
-    # Final local output
+    # FINAL LOCAL OUTPUT
     # --------------------------------------------------------
 
     print(
         "\n"
-        "=================================================="
+        "==================================================",
+        flush=True
     )
 
     print(
-        "ZETA V1 TEST FINISHED"
+        "ZETA V1 TEST FINISHED",
+        flush=True
     )
 
     print(
-        f"Opened trades: "
-        f"{total_trades}"
+        f"Opened trades: {total_trades}",
+        flush=True
     )
 
     print(
         f"Completed trades: "
-        f"{total_completed_trades()}"
+        f"{total_completed_trades()}",
+        flush=True
     )
 
     print(
-        f"Wins: {wins}"
+        f"Wins: {wins}",
+        flush=True
     )
 
     print(
-        f"Losses: {losses}"
+        f"Losses: {losses}",
+        flush=True
     )
 
     print(
-        f"Draws: {draws}"
+        f"Draws: {draws}",
+        flush=True
     )
 
     print(
-        f"Win rate: "
-        f"{win_rate():.2f}%"
+        f"Win rate: {win_rate():.2f}%",
+        flush=True
     )
 
     print(
         f"Net demo P/L: "
-        f"${total_profit:+.2f}"
+        f"${total_profit:+.2f}",
+        flush=True
     )
 
     print(
-        "=================================================="
+        "==================================================",
+        flush=True
     )
 
 
