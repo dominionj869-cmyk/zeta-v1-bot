@@ -1323,5 +1323,5 @@ def main():
 # CORRECT ENTRY POINT
 # ============================================================
 
-if __name__ == "__main__":
-    main()ain()
+ if __name__ == "__main__":
+    main()
