@@ -1,9 +1,7 @@
+import os
 import csv
 import json
-import os
-import sys
 import time
-import traceback
 from datetime import datetime, timezone
 
 from iqoptionapi.stable_api import IQ_Option
@@ -11,36 +9,9 @@ from iqoptionapi.stable_api import IQ_Option
 
 # ============================================================
 # VIDEO BOT V1
+# ONE-CANDLE OPEN/CLOSE STRATEGY
+# PRACTICE / DEMO ONLY
 # ============================================================
-# This bot reproduces the behavior described in the video.
-#
-# STRATEGY:
-#   One completed 1-minute candle
-#
-#   CLOSE > OPEN  -> CALL
-#   CLOSE < OPEN  -> PUT
-#   CLOSE == OPEN -> NO TRADE
-#
-# NO:
-#   EMA
-#   RSI
-#   MACD
-#   ADX
-#   ATR
-#   Support/resistance
-#   Multi-timeframe analysis
-#   Candlestick patterns
-#   Martingale
-#   Recovery
-#   AI prediction
-#
-# DEMO/PRACTICE ONLY
-# ============================================================
-
-
-# -----------------------------
-# Configuration
-# -----------------------------
 
 BALANCE_MODE = "PRACTICE"
 
@@ -49,502 +20,318 @@ ASSET = "EURGBP-OTC"
 STAKE = 10.0
 
 EXPIRY_MINUTES = 1
-
 TIMEFRAME = 60
 
-# Number of completed trades to collect.
 TRADE_TARGET = 50
 
-# Seconds after the beginning of a new minute before
-# requesting the candle data.
 CANDLE_READ_DELAY = 5
 
-# How often to print status while waiting for a result.
 RESULT_POLL_SECONDS = 2
-
-# Maximum time allowed to wait for a result.
 RESULT_TIMEOUT_SECONDS = 180
 
-# Files used to preserve the experiment.
 CSV_FILE = "video_bot_trade_history.csv"
 JSON_FILE = "video_bot_trade_history.json"
 
 
-# -----------------------------
-# Global API object
-# -----------------------------
+# ============================================================
+# GLOBAL STATS
+# ============================================================
 
-api = None
-
-
-# -----------------------------
-# Statistics
-# -----------------------------
-
-total_trades = 0
-completed_trades = 0
-wins = 0
-losses = 0
-draws = 0
-net_profit_loss = 0.0
-
-trade_history = []
+stats = {
+    "trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "draws": 0,
+    "net_pnl": 0.0,
+}
 
 
 # ============================================================
-# Utility
+# TIME
 # ============================================================
 
-def now_utc():
+def utc_now():
     return datetime.now(timezone.utc)
 
 
-def timestamp_string():
-    return now_utc().strftime("%Y-%m-%d %H:%M:%S UTC")
+def timestamp():
+    return utc_now().strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def safe_float(value, default=None):
+# ============================================================
+# HISTORY
+# ============================================================
+
+def load_history():
+    if not os.path.exists(JSON_FILE):
+        return []
+
     try:
-        return float(value)
-    except Exception:
-        return default
+        with open(JSON_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if isinstance(data, list):
+            return data
+
+    except Exception as e:
+        print(f"Could not load history: {e}")
+
+    return []
 
 
-# ============================================================
-# File handling
-# ============================================================
-
-def save_history():
+def save_history(history):
     try:
         with open(JSON_FILE, "w", encoding="utf-8") as f:
-            json.dump(
-                trade_history,
-                f,
-                indent=2,
-                ensure_ascii=False
-            )
-    except Exception as exc:
-        print(
-            f"JSON save warning: {exc}",
-            flush=True
-        )
+            json.dump(history, f, indent=2)
+
+    except Exception as e:
+        print(f"JSON save error: {e}")
+
+
+def append_csv(record):
+    file_exists = os.path.exists(CSV_FILE)
 
     try:
-        fieldnames = [
-            "trade_number",
-            "timestamp",
-            "asset",
-            "direction",
-            "amount",
-            "expiry_minutes",
-            "candle_time",
-            "candle_open",
-            "candle_close",
-            "change_percent",
-            "order_id",
-            "outcome",
-            "profit_loss",
-            "balance_after",
-        ]
-
         with open(
             CSV_FILE,
-            "w",
+            "a",
             newline="",
             encoding="utf-8"
         ) as f:
 
             writer = csv.DictWriter(
                 f,
-                fieldnames=fieldnames
+                fieldnames=[
+                    "trade_number",
+                    "timestamp",
+                    "asset",
+                    "direction",
+                    "stake",
+                    "expiry_minutes",
+                    "candle_open",
+                    "candle_close",
+                    "candle_time",
+                    "order_id",
+                    "result",
+                    "pnl",
+                ],
             )
 
-            writer.writeheader()
+            if not file_exists:
+                writer.writeheader()
 
-            for row in trade_history:
-                writer.writerow(row)
+            writer.writerow(record)
 
-    except Exception as exc:
-        print(
-            f"CSV save warning: {exc}",
-            flush=True
-        )
+    except Exception as e:
+        print(f"CSV save error: {e}")
 
 
 # ============================================================
-# Statistics
+# STATS
 # ============================================================
 
 def print_stats():
-    if completed_trades > 0:
-        win_rate = (
-            wins / completed_trades
-        ) * 100.0
+    completed = stats["trades"]
+
+    if completed > 0:
+        win_rate = (stats["wins"] / completed) * 100
     else:
         win_rate = 0.0
 
-    print(
-        "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "VIDEO BOT SESSION STATS\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Target:       {TRADE_TARGET}\n"
-        f"Opened:       {total_trades}\n"
-        f"Completed:    {completed_trades}\n"
-        f"Wins:         {wins}\n"
-        f"Losses:       {losses}\n"
-        f"Draws:        {draws}\n"
-        f"Win Rate:     {win_rate:.2f}%\n"
-        f"Net Demo P/L: ${net_profit_loss:+.2f}\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
-        flush=True
-    )
+    print()
+    print("=" * 50)
+    print("VIDEO BOT STATUS")
+    print("=" * 50)
+    print(f"Completed trades: {completed}/{TRADE_TARGET}")
+    print(f"Wins:             {stats['wins']}")
+    print(f"Losses:           {stats['losses']}")
+    print(f"Draws:            {stats['draws']}")
+    print(f"Win rate:         {win_rate:.2f}%")
+    print(f"Net demo P/L:     ${stats['net_pnl']:+.2f}")
+    print("=" * 50)
+    print()
 
 
 # ============================================================
-# Connection
+# IQ OPTION CONNECTION
 # ============================================================
 
 def connect_iq_option():
-
-    global api
 
     email = os.getenv("IQ_EMAIL")
     password = os.getenv("IQ_PASSWORD")
 
     if not email or not password:
-        print(
-            "ERROR: IQ_EMAIL and IQ_PASSWORD "
-            "environment variables are required.",
-            flush=True
-        )
-        return False
+        print("ERROR: IQ_EMAIL or IQ_PASSWORD is missing.")
+        return None
 
-    print(
-        "Connecting to IQ Option...",
-        flush=True
-    )
+    print("Connecting to IQ Option...")
+
+    api = IQ_Option(email, password)
 
     try:
 
-        api = IQ_Option(
-            email,
-            password
-        )
-
-        api.set_max_reconnect(5)
+        # IMPORTANT:
+        # Do NOT call set_max_reconnect().
+        # The installed iqoptionapi version does not provide it.
 
         connected, reason = api.connect()
 
         if not connected:
+            print(f"Connection failed: {reason}")
+            return None
 
-            print(
-                f"IQ Option connection failed: {reason}",
-                flush=True
-            )
+        print("IQ Option connection: OK")
 
-            return False
-
-        print(
-            "IQ Option connection: OK",
-            flush=True
-        )
-
-        try:
-            api.update_ACTIVES_OPCODE()
-        except Exception as exc:
-            print(
-                f"Active-ID refresh warning: {exc}",
-                flush=True
-            )
-
-        try:
-            api.change_balance(
-                BALANCE_MODE
-            )
-        except Exception as exc:
-            print(
-                f"Balance mode warning: {exc}",
-                flush=True
-            )
+        # Use PRACTICE/DEMO account.
+        api.change_balance(BALANCE_MODE)
 
         time.sleep(2)
 
-        balance = api.get_balance()
+        print(f"Account mode: {BALANCE_MODE}")
 
-        print(
-            f"Account: {BALANCE_MODE}",
-            flush=True
-        )
+        # Refresh active/instrument information.
+        try:
+            api.update_ACTIVES_OPCODE()
+            print("Active instruments refreshed.")
+        except Exception as e:
+            print(f"Active refresh warning: {e}")
 
-        print(
-            f"Balance: ${float(balance):.2f}",
-            flush=True
-        )
+        return api
 
-        return True
+    except Exception as e:
 
-    except Exception as exc:
+        print(f"Connection error: {e}")
 
-        print(
-            f"Connection error: {exc}",
-            flush=True
-        )
-
-        traceback.print_exc()
-
-        return False
-
-
-# ============================================================
-# Connection check
-# ============================================================
-
-def ensure_connection():
-
-    global api
-
-    try:
-
-        if api is None:
-            return connect_iq_option()
-
-        if api.check_connect():
-            return True
-
-        print(
-            "IQ Option connection lost. Reconnecting...",
-            flush=True
-        )
-
-        connected, reason = api.connect()
-
-        if connected:
-            try:
-                api.change_balance(
-                    BALANCE_MODE
-                )
-            except Exception:
-                pass
-
-            print(
-                "Reconnected successfully.",
-                flush=True
-            )
-
-            return True
-
-        print(
-            f"Reconnect failed: {reason}",
-            flush=True
-        )
-
-        return False
-
-    except Exception as exc:
-
-        print(
-            f"Connection check error: {exc}",
-            flush=True
-        )
-
-        return False
-
-
-# ============================================================
-# Wait for beginning of a new minute
-# ============================================================
-
-def wait_for_minute_start():
-
-    current = time.time()
-
-    next_minute = (
-        int(current // 60) + 1
-    ) * 60
-
-    wait_seconds = (
-        next_minute - current
-    )
-
-    print(
-        f"Waiting {wait_seconds:.1f}s "
-        "for next minute...",
-        flush=True
-    )
-
-    time.sleep(
-        max(0.0, wait_seconds)
-    )
-
-    time.sleep(
-        CANDLE_READ_DELAY
-    )
-
-
-# ============================================================
-# Get ONE completed candle
-# ============================================================
-
-def get_latest_completed_candle():
-
-    if not ensure_connection():
         return None
 
-    try:
 
-        current_time = time.time()
+# ============================================================
+# COMPLETED CANDLE
+# ============================================================
+
+def get_latest_completed_candle(api):
+
+    now = int(time.time())
+
+    try:
 
         candles = api.get_candles(
             ASSET,
             TIMEFRAME,
             5,
-            current_time
+            now
         )
 
-        if not candles:
-            print(
-                "No candle data received.",
-                flush=True
-            )
-            return None
+    except Exception as e:
 
-        completed = []
+        print(f"Candle request error: {e}")
+        return None
 
-        for candle in candles:
+    if not candles:
+        print("No candle data received.")
+        return None
 
-            candle_from = safe_float(
-                candle.get("from")
-            )
+    completed = []
 
-            if candle_from is None:
-                continue
+    for candle in candles:
 
-            candle_end = (
-                candle_from + TIMEFRAME
-            )
+        try:
 
-            # Only use a candle that has fully closed.
-            if candle_end <= current_time:
+            candle_from = int(candle["from"])
+
+            candle_close_time = candle_from + TIMEFRAME
+
+            # Only accept fully closed candles.
+            if candle_close_time <= now:
                 completed.append(candle)
 
-        if not completed:
+        except Exception:
+            continue
 
-            print(
-                "No completed candle available yet.",
-                flush=True
-            )
-
-            return None
-
-        completed.sort(
-            key=lambda x: x.get("from", 0)
-        )
-
-        return completed[-1]
-
-    except Exception as exc:
-
-        print(
-            f"Candle error: {exc}",
-            flush=True
-        )
-
+    if not completed:
+        print("No completed candle available.")
         return None
+
+    completed.sort(
+        key=lambda x: int(x["from"])
+    )
+
+    return completed[-1]
 
 
 # ============================================================
-# Generate signal
+# SIGNAL
 # ============================================================
 
 def get_signal(candle):
 
-    candle_open = safe_float(
-        candle.get("open")
-    )
-
-    candle_close = safe_float(
-        candle.get("close")
-    )
-
-    if candle_open is None:
-        return None, None
-
-    if candle_close is None:
-        return None, None
-
-    if candle_open == 0:
-        return None, None
-
-    change_percent = (
-        (candle_close - candle_open)
-        / candle_open
-    ) * 100.0
-
-    print(
-        "\n"
-        "SIGNAL GENERATED\n"
-        "----------------\n"
-        f"Open:  {candle_open}\n"
-        f"Close: {candle_close}\n"
-        f"1 MIN Change: "
-        f"{change_percent:+.4f}%\n",
-        flush=True
-    )
+    candle_open = float(candle["open"])
+    candle_close = float(candle["close"])
 
     if candle_close > candle_open:
-
-        print(
-            "Direction: CALL (Bullish)",
-            flush=True
-        )
-
-        return "call", change_percent
+        return "call"
 
     if candle_close < candle_open:
+        return "put"
 
-        print(
-            "Direction: PUT (Bearish)",
-            flush=True
-        )
-
-        return "put", change_percent
-
-    print(
-        "Direction: INDECISION",
-        flush=True
-    )
-
-    return None, change_percent
+    return None
 
 
 # ============================================================
-# Place binary trade
+# WAIT FOR NEXT MINUTE
+# ============================================================
+
+def wait_for_new_minute():
+
+    while True:
+
+        now = time.time()
+
+        seconds_into_minute = int(now) % 60
+
+        remaining = 60 - seconds_into_minute
+
+        # We want the previous candle to be completely closed.
+        if remaining <= CANDLE_READ_DELAY:
+            time.sleep(remaining + CANDLE_READ_DELAY)
+            return
+
+        time.sleep(1)
+
+
+# ============================================================
+# PLACE TRADE
 # ============================================================
 
 def execute_trade(
+    api,
     direction,
     candle,
-    change_percent
+    trade_number,
 ):
 
-    global total_trades
+    print()
+    print("=" * 50)
+    print(f"TRADE #{trade_number}")
+    print("=" * 50)
 
-    if not ensure_connection():
-        return None
+    candle_open = float(candle["open"])
+    candle_close = float(candle["close"])
 
-    print(
-        "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "PLACING TRADE\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Asset:     {ASSET}\n"
-        f"Direction: {direction.upper()}\n"
-        f"Amount:    ${STAKE:.2f}\n"
-        f"Expiry:    {EXPIRY_MINUTES} minute\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        flush=True
-    )
+    if direction == "call":
+        display_direction = "CALL / HIGHER"
+    else:
+        display_direction = "PUT / LOWER"
+
+    print(f"Asset:          {ASSET}")
+    print(f"Direction:      {display_direction}")
+    print(f"Stake:          ${STAKE:.2f}")
+    print(f"Expiry:         {EXPIRY_MINUTES} minute")
+    print(f"Candle open:    {candle_open}")
+    print(f"Candle close:   {candle_close}")
+    print(f"Candle time:    {candle['from']}")
+    print("Sending order...")
 
     try:
 
@@ -555,429 +342,303 @@ def execute_trade(
             EXPIRY_MINUTES
         )
 
-        if not success or not order_id:
+    except Exception as e:
 
-            print(
-                "Trade was NOT opened.",
-                flush=True
-            )
-
-            print(
-                f"API response: "
-                f"success={success}, "
-                f"order_id={order_id}",
-                flush=True
-            )
-
-            return None
-
-        total_trades += 1
-
-        candle_time = candle.get(
-            "from"
-        )
-
-        if candle_time:
-
-            try:
-                candle_time_text = (
-                    datetime.fromtimestamp(
-                        float(candle_time),
-                        tz=timezone.utc
-                    ).strftime(
-                        "%Y-%m-%d %H:%M:%S UTC"
-                    )
-                )
-            except Exception:
-                candle_time_text = str(
-                    candle_time
-                )
-
-        else:
-            candle_time_text = ""
-
-        record = {
-            "trade_number": total_trades,
-            "timestamp": timestamp_string(),
-            "asset": ASSET,
-            "direction": direction.upper(),
-            "amount": STAKE,
-            "expiry_minutes": EXPIRY_MINUTES,
-            "candle_time": candle_time_text,
-            "candle_open": safe_float(
-                candle.get("open"),
-                0
-            ),
-            "candle_close": safe_float(
-                candle.get("close"),
-                0
-            ),
-            "change_percent": change_percent,
-            "order_id": str(order_id),
-            "outcome": "PENDING",
-            "profit_loss": None,
-            "balance_after": None,
-        }
-
-        trade_history.append(record)
-
-        save_history()
-
-        print(
-            "\n"
-            "🚀 TRADE PLACED\n"
-            "----------------\n"
-            f"Trade #: {total_trades}\n"
-            f"Order ID: {order_id}\n"
-            f"Asset: {ASSET}\n"
-            f"Direction: {direction.upper()}\n"
-            f"Amount: ${STAKE:.2f}\n"
-            f"Expiry: {EXPIRY_MINUTES} minute\n"
-            f"Time: {timestamp_string()}",
-            flush=True
-        )
-
-        return record
-
-    except Exception as exc:
-
-        print(
-            f"Trade execution error: {exc}",
-            flush=True
-        )
-
-        traceback.print_exc()
-
+        print(f"Order error: {e}")
         return None
 
+    if not success:
+
+        print("Order was rejected.")
+        print(f"Order ID: {order_id}")
+        return None
+
+    if not order_id:
+
+        print("Order accepted but no order ID was returned.")
+        return None
+
+    print("ORDER OPENED")
+    print(f"Order ID: {order_id}")
+
+    return order_id
+
 
 # ============================================================
-# Wait for trade result
+# CHECK RESULT
 # ============================================================
 
-def wait_for_trade_result(record):
+def wait_for_trade_result(api, order_id):
 
-    global completed_trades
-    global wins
-    global losses
-    global draws
-    global net_profit_loss
+    print("Waiting for actual trade result...")
 
-    order_id = record["order_id"]
-
-    print(
-        "\nWaiting for trade result...",
-        flush=True
-    )
-
-    started = time.time()
+    start_time = time.time()
 
     while True:
 
-        if (
-            time.time() - started
-            > RESULT_TIMEOUT_SECONDS
-        ):
+        elapsed = time.time() - start_time
 
-            print(
-                "WARNING: Result timeout.",
-                flush=True
-            )
+        if elapsed >= RESULT_TIMEOUT_SECONDS:
 
-            print(
-                "The trade will NOT be counted "
-                "as WIN/LOSS/DRAW until an actual "
-                "P/L is obtained.",
-                flush=True
-            )
+            print("Result timeout reached.")
 
-            return False
+            return None
 
         try:
 
-            # The community API provides check_win_v4
-            # for binary option results.
-            pnl = api.check_win_v4(
-                order_id
-            )
+            pnl = api.check_win_v4(order_id)
 
+            # Some API versions return None while trade is still open.
             if pnl is None:
-                time.sleep(
-                    RESULT_POLL_SECONDS
-                )
+                time.sleep(RESULT_POLL_SECONDS)
                 continue
 
-            pnl = safe_float(
-                pnl
-            )
-
-            if pnl is None:
-                time.sleep(
-                    RESULT_POLL_SECONDS
-                )
-                continue
-
-            completed_trades += 1
-
-            record["profit_loss"] = pnl
+            pnl = float(pnl)
 
             if pnl > 0:
-
-                wins += 1
-
-                record["outcome"] = "WIN"
+                result = "WIN"
 
             elif pnl < 0:
-
-                losses += 1
-
-                record["outcome"] = "LOSS"
+                result = "LOSS"
 
             else:
+                result = "DRAW"
 
-                draws += 1
+            return {
+                "result": result,
+                "pnl": pnl,
+            }
 
-                record["outcome"] = "DRAW"
+        except Exception as e:
 
-            net_profit_loss += pnl
-
-            try:
-
-                balance = api.get_balance()
-
-                record["balance_after"] = safe_float(
-                    balance
-                )
-
-            except Exception:
-
-                record["balance_after"] = None
-
-            save_history()
-
-            print(
-                "\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "TRADE RESULT\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"Order ID: {order_id}\n"
-                f"Asset: {ASSET}\n"
-                f"Direction: {record['direction']}\n"
-                f"Outcome: {record['outcome']}\n"
-                f"P/L: ${pnl:+.2f}\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                flush=True
-            )
-
-            print_stats()
-
-            return True
-
-        except Exception as exc:
-
-            print(
-                f"Result check warning: {exc}",
-                flush=True
-            )
-
-            time.sleep(
-                RESULT_POLL_SECONDS
-            )
+            print(f"Result check warning: {e}")
+            time.sleep(RESULT_POLL_SECONDS)
 
 
 # ============================================================
-# Final report
+# RECORD RESULT
 # ============================================================
 
-def final_report():
+def record_result(
+    history,
+    trade_number,
+    candle,
+    order_id,
+    direction,
+    result_data,
+):
 
-    print(
-        "\n"
-        "==================================================\n"
-        "VIDEO BOT TEST COMPLETE\n"
-        "==================================================",
-        flush=True
-    )
+    result = result_data["result"]
+    pnl = result_data["pnl"]
+
+    candle_open = float(candle["open"])
+    candle_close = float(candle["close"])
+
+    record = {
+        "trade_number": trade_number,
+        "timestamp": timestamp(),
+        "asset": ASSET,
+        "direction": direction.upper(),
+        "stake": STAKE,
+        "expiry_minutes": EXPIRY_MINUTES,
+        "candle_open": candle_open,
+        "candle_close": candle_close,
+        "candle_time": candle["from"],
+        "order_id": order_id,
+        "result": result,
+        "pnl": pnl,
+    }
+
+    history.append(record)
+
+    save_history(history)
+    append_csv(record)
+
+    stats["trades"] += 1
+
+    if result == "WIN":
+        stats["wins"] += 1
+
+    elif result == "LOSS":
+        stats["losses"] += 1
+
+    else:
+        stats["draws"] += 1
+
+    stats["net_pnl"] += pnl
+
+    print()
+    print("=" * 50)
+    print(f"TRADE #{trade_number} RESULT")
+    print("=" * 50)
+    print(f"Result:       {result}")
+    print(f"P/L:          ${pnl:+.2f}")
+    print("=" * 50)
 
     print_stats()
 
-    print(
-        f"CSV history:  {CSV_FILE}",
-        flush=True
-    )
-
-    print(
-        f"JSON history: {JSON_FILE}",
-        flush=True
-    )
-
-    print(
-        "==================================================",
-        flush=True
-    )
-
 
 # ============================================================
-# Main loop
+# MAIN LOOP
 # ============================================================
 
 def run():
 
-    global api
+    print()
+    print("=" * 50)
+    print("VIDEO BOT V1 STARTING")
+    print("=" * 50)
+    print(f"Account:      {BALANCE_MODE}")
+    print(f"Asset:        {ASSET}")
+    print(f"Stake:        ${STAKE:.2f}")
+    print(f"Expiry:       {EXPIRY_MINUTES} minute")
+    print(f"Timeframe:    {TIMEFRAME // 60} minute")
+    print("Strategy:     ONE CANDLE OPEN/CLOSE")
+    print(f"Trade target: {TRADE_TARGET}")
+    print("=" * 50)
 
-    print(
-        "\n"
-        "==================================================\n"
-        "VIDEO BOT V1 STARTING\n"
-        "==================================================\n"
-        f"Account:      {BALANCE_MODE}\n"
-        f"Asset:        {ASSET}\n"
-        f"Stake:        ${STAKE:.2f}\n"
-        f"Expiry:       {EXPIRY_MINUTES} minute\n"
-        f"Timeframe:    1 minute\n"
-        f"Strategy:     ONE CANDLE OPEN/CLOSE\n"
-        f"Trade target: {TRADE_TARGET}\n"
-        "==================================================",
-        flush=True
-    )
+    history = load_history()
 
-    if not connect_iq_option():
+    api = connect_iq_option()
 
-        print(
-            "Unable to connect. Exiting.",
-            flush=True
-        )
-
+    if api is None:
+        print("Unable to connect. Exiting.")
         return
 
-    print(
-        "\n"
-        "🟢 VIDEO BOT ONLINE\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Asset: {ASSET}\n"
-        "Feed: IQ Option\n"
-        "Signal: 1 completed candle\n"
-        "CALL: Close > Open\n"
-        "PUT: Close < Open\n"
-        "No trade: Close == Open\n"
-        f"Stake: ${STAKE:.2f}\n"
-        f"Expiry: {EXPIRY_MINUTES} minute\n"
-        f"Target: {TRADE_TARGET} completed trades\n"
-        "Mode: PRACTICE\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        flush=True
-    )
+    print()
+    print("VIDEO BOT ONLINE")
+    print("Scanning for completed 1-minute candles.")
+    print()
 
     try:
 
-        while completed_trades < TRADE_TARGET:
+        while stats["trades"] < TRADE_TARGET:
 
-            if not ensure_connection():
-
-                print(
-                    "Connection unavailable. "
-                    "Waiting 10 seconds...",
-                    flush=True
-                )
-
-                time.sleep(10)
-                continue
-
-            wait_for_minute_start()
-
-            candle = (
-                get_latest_completed_candle()
+            print(
+                f"Waiting for next completed "
+                f"{TIMEFRAME // 60}-minute candle..."
             )
+
+            wait_for_new_minute()
+
+            candle = get_latest_completed_candle(api)
 
             if candle is None:
-
-                print(
-                    "No usable completed candle. "
-                    "Skipping this minute.",
-                    flush=True
-                )
-
+                print("No valid completed candle. Retrying.")
+                time.sleep(5)
                 continue
 
-            direction, change_percent = (
-                get_signal(candle)
-            )
+            candle_open = float(candle["open"])
+            candle_close = float(candle["close"])
+
+            print()
+            print("-" * 50)
+            print("NEW COMPLETED CANDLE")
+            print("-" * 50)
+            print(f"Open:   {candle_open}")
+            print(f"Close:  {candle_close}")
+
+            direction = get_signal(candle)
+
+            # ==================================================
+            # DOJI / INDECISION
+            # ==================================================
 
             if direction is None:
 
-                print(
-                    "NO TRADE — waiting for "
-                    "next minute.",
-                    flush=True
-                )
+                print("Signal: INDECISION")
+                print("Open equals close.")
+                print("NO TRADE.")
+                print("-" * 50)
 
                 continue
 
-            record = execute_trade(
+            # ==================================================
+            # SIGNAL
+            # ==================================================
+
+            if direction == "call":
+                print("Signal: CALL / HIGHER")
+            else:
+                print("Signal: PUT / LOWER")
+
+            order_id = execute_trade(
+                api,
                 direction,
                 candle,
-                change_percent
+                stats["trades"] + 1,
             )
 
-            if record is None:
+            if order_id is None:
+
+                print("Trade was not counted.")
+                print("Retrying on the next completed candle.")
+                continue
+
+            result_data = wait_for_trade_result(
+                api,
+                order_id
+            )
+
+            if result_data is None:
 
                 print(
-                    "Trade was not opened. "
-                    "Waiting for next minute.",
-                    flush=True
+                    "Trade result could not be confirmed."
+                )
+
+                print(
+                    "Trade will NOT be counted "
+                    "as a completed test trade."
                 )
 
                 continue
 
-            wait_for_trade_result(
-                record
+            record_result(
+                history,
+                stats["trades"] + 1,
+                candle,
+                order_id,
+                direction,
+                result_data,
             )
 
-            if completed_trades >= TRADE_TARGET:
-
+            if stats["trades"] >= TRADE_TARGET:
                 break
-
-            print(
-                "\nNext trade cycle...",
-                flush=True
-            )
 
     except KeyboardInterrupt:
 
-        print(
-            "\nBot stopped manually.",
-            flush=True
-        )
+        print()
+        print("Bot stopped manually.")
 
-    except Exception as exc:
+    except Exception as e:
 
-        print(
-            f"\nFatal runtime error: {exc}",
-            flush=True
-        )
-
-        traceback.print_exc()
+        print()
+        print("=" * 50)
+        print("BOT ERROR")
+        print("=" * 50)
+        print(e)
+        print("=" * 50)
 
     finally:
 
-        final_report()
+        print()
+        print("=" * 50)
+        print("VIDEO BOT FINAL REPORT")
+        print("=" * 50)
+
+        print_stats()
 
         try:
-
-            if api is not None:
-                api.close()
-
+            api.close_connect()
         except Exception:
             pass
 
-        print(
-            "Disconnected.",
-            flush=True
-        )
+        print("IQ Option connection closed.")
+        print("Video Bot stopped.")
 
 
 # ============================================================
-# Entry point
+# ENTRY POINT
 # ============================================================
 
 if __name__ == "__main__":
