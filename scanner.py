@@ -38,6 +38,10 @@ TARGET_COMPLETED_TRADES = 50
 
 ASSET_LOCK_SECONDS = 300
 
+# Result settlement
+SETTLEMENT_BUFFER_SECONDS = 10
+
+
 # ============================================================
 # STRATEGY SETTINGS
 # ============================================================
@@ -232,10 +236,6 @@ def clean_active_name(raw_name):
 
     name = str(raw_name).strip()
 
-    # Examples:
-    # 1.EURUSD-OTC
-    # 76.EURUSD-OTC
-
     if "." in name:
         parts = name.split(".")
 
@@ -287,10 +287,6 @@ def get_raw_initialization():
     print("IQ OPTION MARKET INITIALIZATION")
     print("=" * 70)
 
-    # --------------------------------------------------------
-    # METHOD 1 — PROVEN METHOD
-    # --------------------------------------------------------
-
     try:
         print(
             "[RAW] Requesting get_all_init_v2()..."
@@ -317,10 +313,6 @@ def get_raw_initialization():
             "[RAW V2 ERROR]",
             repr(e),
         )
-
-    # --------------------------------------------------------
-    # METHOD 2 — LEGACY FALLBACK
-    # --------------------------------------------------------
 
     try:
 
@@ -379,20 +371,12 @@ def discover_otc_from_initialization(data):
     found = []
     seen = set()
 
-    # --------------------------------------------------------
-    # RECURSIVE WALKER
-    # --------------------------------------------------------
-
     def walk(node, market_type="unknown"):
 
         if len(found) >= MAX_OTC_ASSETS:
             return
 
         if isinstance(node, dict):
-
-            # ------------------------------------------------
-            # ACTIVE DICTIONARY
-            # ------------------------------------------------
 
             if "actives" in node:
 
@@ -467,10 +451,6 @@ def discover_otc_from_initialization(data):
                             }
                         )
 
-            # ------------------------------------------------
-            # RECURSION
-            # ------------------------------------------------
-
             for key, value in node.items():
 
                 child_market = market_type
@@ -510,10 +490,6 @@ def discover_otc_from_initialization(data):
                     market_type,
                 )
 
-    # --------------------------------------------------------
-    # RESULT WRAPPER
-    # --------------------------------------------------------
-
     root = data
 
     if isinstance(
@@ -538,15 +514,7 @@ def discover_otc_from_initialization(data):
             key,
         )
 
-    # --------------------------------------------------------
-    # WALK
-    # --------------------------------------------------------
-
     walk(root)
-
-    # --------------------------------------------------------
-    # SORT
-    # --------------------------------------------------------
 
     found.sort(
         key=lambda item: (
@@ -898,8 +866,11 @@ def rsi_values(
 
     if avg_loss == 0:
         result[index] = 100.0
+
     else:
+
         rs = avg_gain / avg_loss
+
         result[index] = (
             100.0
             - (
@@ -1325,10 +1296,6 @@ def evaluate_zeta_v2(
     if len(candles_1m) < 80:
         return None
 
-    # --------------------------------------------------------
-    # 5M DATA
-    # --------------------------------------------------------
-
     closes_5m = [
         c["close"]
         for c in candles_5m
@@ -1387,10 +1354,6 @@ def evaluate_zeta_v2(
     if current_atr5 <= 0:
         return None
 
-    # --------------------------------------------------------
-    # TREND
-    # --------------------------------------------------------
-
     bullish_trend = (
         fast5 > slow5
         and previous_fast5
@@ -1415,10 +1378,6 @@ def evaluate_zeta_v2(
 
     if current_adx < MIN_ADX:
         return None
-
-    # --------------------------------------------------------
-    # 1M INDICATORS
-    # --------------------------------------------------------
 
     closes_1m = [
         c["close"]
@@ -1483,10 +1442,6 @@ def evaluate_zeta_v2(
 
     price = current["close"]
 
-    # --------------------------------------------------------
-    # PULLBACK MEASUREMENT
-    # --------------------------------------------------------
-
     distance_from_fast = abs(
         price - fast1
     )
@@ -1519,10 +1474,6 @@ def evaluate_zeta_v2(
     ):
         return None
 
-    # --------------------------------------------------------
-    # SUPPORT / RESISTANCE
-    # --------------------------------------------------------
-
     support = recent_support(
         candles_1m,
         30,
@@ -1539,10 +1490,6 @@ def evaluate_zeta_v2(
     if resistance is None:
         return None
 
-    # --------------------------------------------------------
-    # ZONE
-    # --------------------------------------------------------
-
     zone_tolerance = (
         current_atr1
         * ZONE_TOLERANCE_ATR
@@ -1558,10 +1505,6 @@ def evaluate_zeta_v2(
         <= zone_tolerance
     )
 
-    # --------------------------------------------------------
-    # REJECTION
-    # --------------------------------------------------------
-
     bull_rejection = (
         bullish_rejection(current)
     )
@@ -1569,10 +1512,6 @@ def evaluate_zeta_v2(
     bear_rejection = (
         bearish_rejection(current)
     )
-
-    # --------------------------------------------------------
-    # 1M EMA STRUCTURE
-    # --------------------------------------------------------
 
     bullish_1m_structure = (
         fast1 >= slow1
@@ -1583,10 +1522,6 @@ def evaluate_zeta_v2(
         fast1 <= slow1
         and fast1 <= previous_fast1
     )
-
-    # --------------------------------------------------------
-    # CONFIRMATION
-    # --------------------------------------------------------
 
     bull_confirm = (
         is_bullish(current)
@@ -1630,10 +1565,6 @@ def evaluate_zeta_v2(
         )
     )
 
-    # --------------------------------------------------------
-    # MOMENTUM
-    # --------------------------------------------------------
-
     momentum_bull = (
         current["close"]
         > previous["close"]
@@ -1643,10 +1574,6 @@ def evaluate_zeta_v2(
         current["close"]
         < previous["close"]
     )
-
-    # --------------------------------------------------------
-    # ROOM
-    # --------------------------------------------------------
 
     room_up = (
         resistance - price
@@ -1668,19 +1595,11 @@ def evaluate_zeta_v2(
         else 0
     )
 
-    # --------------------------------------------------------
-    # SCORE
-    # --------------------------------------------------------
-
     score = 0
 
     direction = None
 
     reasons = []
-
-    # --------------------------------------------------------
-    # CALL
-    # --------------------------------------------------------
 
     if bullish_trend:
 
@@ -1784,10 +1703,6 @@ def evaluate_zeta_v2(
 
             direction = "CALL"
 
-    # --------------------------------------------------------
-    # PUT
-    # --------------------------------------------------------
-
     elif bearish_trend:
 
         score += 20
@@ -1890,19 +1805,11 @@ def evaluate_zeta_v2(
 
             direction = "PUT"
 
-    # --------------------------------------------------------
-    # FINAL FILTER
-    # --------------------------------------------------------
-
     if direction is None:
         return None
 
     if score < MIN_SCORE:
         return None
-
-    # --------------------------------------------------------
-    # COOLDOWN
-    # --------------------------------------------------------
 
     candle_time = current["from"]
 
@@ -1939,10 +1846,6 @@ def evaluate_zeta_v2(
         ):
 
             return None
-
-    # --------------------------------------------------------
-    # SIGNAL ID
-    # --------------------------------------------------------
 
     signal_id = (
         "ZETA2-"
@@ -2028,10 +1931,10 @@ def format_signal(signal):
 
 
 # ============================================================
-# TRADE RESULT
+# TRADE SETTLEMENT
 # ============================================================
 
-def check_trade_result(trade):
+def settle_trade(trade, profit):
 
     global wins
     global losses
@@ -2039,98 +1942,292 @@ def check_trade_result(trade):
     global total_profit
     global completed_trades
 
-    trade_id = trade["trade_id"]
+    if trade.get("settled", False):
+        return "ALREADY_SETTLED"
+
+    profit = safe_float(
+        profit,
+        None,
+    )
+
+    if profit is None:
+        return None
+
+    trade["settled"] = True
+
+    total_profit += profit
+    completed_trades += 1
+
+    if profit > 0:
+
+        outcome = "WIN"
+        wins += 1
+        emoji = "✅"
+
+    elif profit < 0:
+
+        outcome = "LOSS"
+        losses += 1
+        emoji = "❌"
+
+    else:
+
+        outcome = "DRAW"
+        draws += 1
+        emoji = "⚪"
+
+    settled = (
+        wins
+        + losses
+        + draws
+    )
+
+    win_rate = (
+        wins
+        / settled
+        * 100
+        if settled > 0
+        else 0.0
+    )
+
+    message = (
+        f"{emoji} *ZETA V2 {outcome}*\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"*Asset:* {trade['asset']}\n"
+        f"*Direction:* {trade['direction']}\n"
+        f"*Signal ID:* {trade['signal_id']}\n"
+        f"*Result:* {profit:+.2f}\n"
+        f"*Completed:* "
+        f"{completed_trades}/"
+        f"{TARGET_COMPLETED_TRADES}\n"
+        f"*Wins:* {wins}\n"
+        f"*Losses:* {losses}\n"
+        f"*Draws:* {draws}\n"
+        f"*Win rate:* {win_rate:.2f}%\n"
+        f"*Net P/L:* "
+        f"${total_profit:+.2f}\n"
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    send_telegram(message)
+
+    print(
+        "[TRADE RESULT]",
+        outcome,
+        trade["asset"],
+        profit,
+    )
+
+    return outcome
+
+
+def check_trade_result(trade):
+
+    trade_id = trade.get(
+        "trade_id"
+    )
+
+    if trade.get(
+        "settled",
+        False,
+    ):
+
+        return "ALREADY_SETTLED"
+
+    if trade_id is None:
+        return None
+
+    opened_at = safe_float(
+        trade.get(
+            "opened_at",
+            time.time(),
+        ),
+        time.time(),
+    )
+
+    expiry_seconds = int(
+        trade.get(
+            "expiry_seconds",
+            EXPIRY_MINUTES * 60,
+        )
+    )
+
+    settlement_time = (
+        opened_at
+        + expiry_seconds
+        + SETTLEMENT_BUFFER_SECONDS
+    )
+
+    # --------------------------------------------------------
+    # DO NOT CHECK BEFORE EXPIRY
+    # --------------------------------------------------------
+
+    if time.time() < settlement_time:
+        return None
 
     try:
 
-        result = api.check_win_v4(
+        numeric_trade_id = int(
             trade_id
         )
 
-        if result is None:
-            return None
-
-        result = safe_float(
-            result,
-            None,
-        )
-
-        if result is None:
-            return None
-
-        profit = result
-
-        total_profit += profit
-        completed_trades += 1
-
-        if profit > 0:
-
-            outcome = "WIN"
-            wins += 1
-            emoji = "✅"
-
-        elif profit < 0:
-
-            outcome = "LOSS"
-            losses += 1
-            emoji = "❌"
-
-        else:
-
-            outcome = "DRAW"
-            draws += 1
-            emoji = "⚪"
-
-        settled = (
-            wins
-            + losses
-            + draws
-        )
-
-        win_rate = (
-            wins
-            / settled
-            * 100
-            if settled > 0
-            else 0
-        )
-
-        message = (
-            f"{emoji} *ZETA V2 {outcome}*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"*Asset:* {trade['asset']}\n"
-            f"*Direction:* {trade['direction']}\n"
-            f"*Signal ID:* {trade['signal_id']}\n"
-            f"*Result:* {profit:+.2f}\n"
-            f"*Completed:* {completed_trades}/{TARGET_COMPLETED_TRADES}\n"
-            f"*Wins:* {wins}\n"
-            f"*Losses:* {losses}\n"
-            f"*Draws:* {draws}\n"
-            f"*Win rate:* {win_rate:.2f}%\n"
-            f"*Net P/L:* ${total_profit:+.2f}\n"
-            "━━━━━━━━━━━━━━━━━━"
-        )
-
-        send_telegram(message)
+    except Exception:
 
         print(
-            "[TRADE RESULT]",
-            outcome,
-            trade["asset"],
-            profit,
+            "[RESULT] Invalid trade ID:",
+            trade_id,
         )
 
-        return outcome
+        return None
+
+    # ========================================================
+    # METHOD 1 — NON-BLOCKING ASYNC ORDER
+    # ========================================================
+
+    try:
+
+        if hasattr(
+            api,
+            "get_async_order",
+        ):
+
+            order = api.get_async_order(
+                numeric_trade_id
+            )
+
+            if isinstance(
+                order,
+                dict,
+            ):
+
+                option_closed = (
+                    order.get(
+                        "option-closed"
+                    )
+                )
+
+                if option_closed:
+
+                    msg = (
+                        option_closed.get(
+                            "msg",
+                            {},
+                        )
+                    )
+
+                    if isinstance(
+                        msg,
+                        dict,
+                    ):
+
+                        profit_amount = (
+                            safe_float(
+                                msg.get(
+                                    "profit_amount"
+                                ),
+                                None,
+                            )
+                        )
+
+                        amount = (
+                            safe_float(
+                                msg.get(
+                                    "amount"
+                                ),
+                                None,
+                            )
+                        )
+
+                        if (
+                            profit_amount
+                            is not None
+                            and amount
+                            is not None
+                        ):
+
+                            profit = (
+                                profit_amount
+                                - amount
+                            )
+
+                            return settle_trade(
+                                trade,
+                                profit,
+                            )
 
     except Exception as e:
 
         print(
-            "[RESULT ERROR]",
+            "[RESULT] Async order check error",
             trade_id,
             repr(e),
         )
 
-        return None
+    # ========================================================
+    # METHOD 2 — CHECK WIN V4
+    # ========================================================
+
+    try:
+
+        result = api.check_win_v4(
+            numeric_trade_id
+        )
+
+        if result is not None:
+
+            profit = safe_float(
+                result,
+                None,
+            )
+
+            if profit is not None:
+
+                return settle_trade(
+                    trade,
+                    profit,
+                )
+
+    except Exception as e:
+
+        print(
+            "[RESULT] check_win_v4 error",
+            trade_id,
+            repr(e),
+        )
+
+    # ========================================================
+    # METHOD 3 — CHECK WIN V3
+    # ========================================================
+
+    try:
+
+        result = api.check_win_v3(
+            numeric_trade_id
+        )
+
+        if result is not None:
+
+            profit = safe_float(
+                result,
+                None,
+            )
+
+            if profit is not None:
+
+                return settle_trade(
+                    trade,
+                    profit,
+                )
+
+    except Exception as e:
+
+        print(
+            "[RESULT] check_win_v3 error",
+            trade_id,
+            repr(e),
+        )
+
+    return None
 
 
 def update_active_trades():
@@ -2144,14 +2241,29 @@ def update_active_trades():
         active_trades.items()
     ):
 
-        result = check_trade_result(
-            trade
-        )
+        try:
 
-        if result is not None:
+            result = check_trade_result(
+                trade
+            )
 
-            finished.append(
-                trade_id
+            if result in (
+                "WIN",
+                "LOSS",
+                "DRAW",
+                "ALREADY_SETTLED",
+            ):
+
+                finished.append(
+                    trade_id
+                )
+
+        except Exception as e:
+
+            print(
+                "[RESULT UPDATE ERROR]",
+                trade_id,
+                repr(e),
             )
 
     for trade_id in finished:
@@ -2345,9 +2457,11 @@ def execute_demo_trade(signal):
 
     total_trades += 1
 
+    opened_at = time.time()
+
     last_trade_time[
         asset
-    ] = time.time()
+    ] = opened_at
 
     active_trades[
         trade_id
@@ -2357,7 +2471,9 @@ def execute_demo_trade(signal):
         "asset": asset,
         "direction": direction,
         "stake": STAKE,
-        "opened_at": time.time(),
+        "opened_at": opened_at,
+        "expiry_seconds": EXPIRY_MINUTES * 60,
+        "settled": False,
     }
 
     print(
@@ -2573,7 +2689,8 @@ def send_heartbeat():
         f"*OTC feeds:* {len(otc_assets)}\n"
         f"*Opened trades:* {total_trades}\n"
         f"*Completed:* "
-        f"{completed_trades}/{TARGET_COMPLETED_TRADES}\n"
+        f"{completed_trades}/"
+        f"{TARGET_COMPLETED_TRADES}\n"
         f"*Wins:* {wins}\n"
         f"*Losses:* {losses}\n"
         f"*Draws:* {draws}\n"
@@ -2698,10 +2815,6 @@ def run_trader():
 
         return
 
-    # --------------------------------------------------------
-    # CONNECT
-    # --------------------------------------------------------
-
     while not connect_iq():
 
         send_telegram(
@@ -2735,10 +2848,6 @@ def run_trader():
         "━━━━━━━━━━━━━━━━━━\n"
         "🔎 Using real IQ Option OTC initialization..."
     )
-
-    # --------------------------------------------------------
-    # INITIAL OTC DISCOVERY
-    # --------------------------------------------------------
 
     while not otc_assets:
 
@@ -2780,10 +2889,6 @@ def run_trader():
 
     last_scan_cycle = 0
 
-    # --------------------------------------------------------
-    # CONTINUOUS LOOP
-    # --------------------------------------------------------
-
     while True:
 
         try:
@@ -2807,10 +2912,6 @@ def run_trader():
                 break
 
             current_time = time.time()
-
-            # ------------------------------------------------
-            # CONNECTION
-            # ------------------------------------------------
 
             if not connection_is_alive():
 
@@ -2850,7 +2951,7 @@ def run_trader():
                     continue
 
             # ------------------------------------------------
-            # RESULTS
+            # TRADE RESULTS
             # ------------------------------------------------
 
             update_active_trades()
@@ -3138,4 +3239,4 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
-    main()
+    main()n()
