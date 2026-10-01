@@ -2,49 +2,32 @@ import os
 import time
 import math
 import traceback
+import requests
 from datetime import datetime, timezone
 
-import requests
 from iqoptionapi.stable_api import IQ_Option
 
 
 # ============================================================
-# ZETA V2 — HIGH QUALITY TREND PULLBACK SCANNER
-# ============================================================
-#
-# Strategy:
-#   5M = trend
-#   1M = pullback + rejection + confirmation
-#   Expiry = 2 minutes
-#
-# IMPORTANT:
-#   This version does NOT treat a candlestick pattern by itself
-#   as a valid trade.
-#
-#   A trade must pass the complete setup and score >= 80/100.
-#
+# ZETA V2 - HIGH QUALITY TREND PULLBACK SCANNER
 # ============================================================
 
+VERSION = "ZETA V2.1"
 
 # -----------------------------
 # ENVIRONMENT
 # -----------------------------
+IQ_EMAIL = os.getenv("IQ_EMAIL", "").strip()
+IQ_PASSWORD = os.getenv("IQ_PASSWORD", "").strip()
 
-IQ_EMAIL = os.getenv("IQ_EMAIL", "")
-IQ_PASSWORD = os.getenv("IQ_PASSWORD", "")
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 
 # -----------------------------
 # ACCOUNT / EXECUTION
 # -----------------------------
-
 PRACTICE = True
-
-# Keep this True if you want the bot to actually open PRACTICE
-# trades after the signal passes all filters.
 AUTO_TRADE = True
 
 STAKE = 1.0
@@ -56,7 +39,6 @@ TEST_TARGET = 50
 # -----------------------------
 # MARKET
 # -----------------------------
-
 MAX_OTC_ASSETS = 60
 
 TF_5M = 300
@@ -67,11 +49,9 @@ CANDLES_1M = 180
 
 
 # -----------------------------
-# QUALITY
+# SCORE
 # -----------------------------
-
 MIN_SCORE = 80
-
 STRONG_SCORE = 85
 VERY_STRONG_SCORE = 90
 
@@ -79,19 +59,16 @@ VERY_STRONG_SCORE = 90
 # -----------------------------
 # TREND
 # -----------------------------
-
 EMA_FAST = 20
 EMA_SLOW = 50
 
 MIN_TREND_SEPARATION_ATR = 0.12
-
-MIN_ADX = 18.0
+MIN_ADX = 18
 
 
 # -----------------------------
 # RSI
 # -----------------------------
-
 RSI_PERIOD = 14
 
 CALL_RSI_MIN = 45
@@ -104,31 +81,23 @@ PUT_RSI_MAX = 55
 # -----------------------------
 # ATR
 # -----------------------------
-
 ATR_PERIOD = 14
 
-MIN_ATR = 0.0
-
-# Don't chase candles that have already moved too far.
 MAX_ENTRY_EXTENSION_ATR = 1.80
 
 
 # -----------------------------
 # PULLBACK
 # -----------------------------
-
 PULLBACK_MIN_ATR = 0.20
 PULLBACK_MAX_ATR = 1.50
 
 
 # -----------------------------
-# CANDLE QUALITY
+# REJECTION
 # -----------------------------
-
 MIN_REJECTION_WICK_RATIO = 0.35
-
 MIN_TRIGGER_BODY_ATR = 0.15
-
 MIN_TRIGGER_BODY_RATIO = 0.40
 
 MAX_TRIGGER_RANGE_ATR = 1.80
@@ -137,43 +106,32 @@ MAX_TRIGGER_RANGE_ATR = 1.80
 # -----------------------------
 # SUPPORT / RESISTANCE
 # -----------------------------
-
 SWING_LOOKBACK = 30
-
 ZONE_TOLERANCE_ATR = 0.35
-
 MIN_ZONE_TOUCHES = 2
-
-
-# -----------------------------
-# ROOM
-# -----------------------------
 
 MIN_ROOM_ATR = 0.80
 
 
 # -----------------------------
-# DUPLICATE PROTECTION
+# LOCK
 # -----------------------------
-
 ASSET_LOCK_SECONDS = 300
 
 
-# ============================================================
+# -----------------------------
 # GLOBAL STATE
-# ============================================================
-
+# -----------------------------
 iq = None
 
 asset_last_trade = {}
 
-opened_trades = []
-completed_trades = []
+opened_trades = {}
+completed_trades = {}
 
 wins = 0
 losses = 0
 draws = 0
-
 net_pl = 0.0
 
 start_time = time.time()
@@ -184,781 +142,519 @@ seen_trade_ids = set()
 
 
 # ============================================================
-# TELEGRAM
-# ============================================================
-
-def telegram(message):
-
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        return
-
-    try:
-
-        url = (
-            f"https://api.telegram.org/bot"
-            f"{TELEGRAM_TOKEN}/sendMessage"
-        )
-
-        requests.post(
-            url,
-            data={
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": message
-            },
-            timeout=15
-        )
-
-    except Exception as e:
-        print("Telegram error:", e)
-
-
-# ============================================================
-# HELPERS
+# BASIC HELPERS
 # ============================================================
 
 def now_text():
-
-    return datetime.now(
-        timezone.utc
-    ).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def safe_float(value, default=0.0):
-
     try:
-        value = float(value)
-
-        if math.isfinite(value):
-            return value
-
+        return float(value)
     except Exception:
-        pass
-
-    return default
+        return default
 
 
 def clamp(value, low, high):
-
     return max(low, min(high, value))
+
+
+def send_telegram(message):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+
+    try:
+        response = requests.post(
+            url,
+            data=payload,
+            timeout=15
+        )
+
+        return response.ok
+
+    except Exception as e:
+        print(f"Telegram error: {e}")
+        return False
 
 
 # ============================================================
 # MATH
 # ============================================================
 
-def ema(values, period):
-
-    if not values:
-        return []
-
+def sma(values, period):
     if len(values) < period:
-        return [None] * len(values)
+        return None
 
-    result = [None] * len(values)
+    return sum(values[-period:]) / period
+
+
+def ema(values, period):
+    if len(values) < period:
+        return None
 
     multiplier = 2 / (period + 1)
 
-    initial = sum(values[:period]) / period
+    result = sum(values[:period]) / period
 
-    result[period - 1] = initial
-
-    for i in range(period, len(values)):
-
-        previous = result[i - 1]
-
-        result[i] = (
-            (values[i] - previous) * multiplier
-            + previous
-        )
+    for value in values[period:]:
+        result = (value - result) * multiplier + result
 
     return result
 
 
-def sma(values, period):
+def true_ranges(candles):
+    trs = []
 
-    result = [None] * len(values)
+    for i, candle in enumerate(candles):
+        high = safe_float(candle["max"])
+        low = safe_float(candle["min"])
 
-    if len(values) < period:
-        return result
+        if i == 0:
+            previous_close = safe_float(candle["close"])
+        else:
+            previous_close = safe_float(candles[i - 1]["close"])
 
-    for i in range(period - 1, len(values)):
-
-        window = values[
-            i - period + 1:
-            i + 1
-        ]
-
-        result[i] = sum(window) / period
-
-    return result
-
-
-def atr(candles, period=14):
-
-    if len(candles) < period + 1:
-        return [None] * len(candles)
-
-    tr = [None]
-
-    for i in range(1, len(candles)):
-
-        high = candles[i]["max"]
-        low = candles[i]["min"]
-
-        previous_close = candles[i - 1]["close"]
-
-        value = max(
+        tr = max(
             high - low,
             abs(high - previous_close),
             abs(low - previous_close)
         )
 
-        tr.append(value)
+        trs.append(tr)
 
-    result = [None] * len(candles)
-
-    initial = sum(
-        x for x in tr[1:period + 1]
-        if x is not None
-    ) / period
-
-    result[period] = initial
-
-    for i in range(period + 1, len(candles)):
-
-        result[i] = (
-            (result[i - 1] * (period - 1))
-            + tr[i]
-        ) / period
-
-    return result
+    return trs
 
 
-def rsi(closes, period=14):
+def atr(candles, period=14):
+    trs = true_ranges(candles)
 
-    result = [None] * len(closes)
+    if len(trs) < period:
+        return None
 
-    if len(closes) <= period:
-        return result
+    return sum(trs[-period:]) / period
+
+
+def rsi(candles, period=14):
+    closes = [safe_float(c["close"]) for c in candles]
+
+    if len(closes) < period + 1:
+        return None
 
     gains = []
     losses_ = []
 
     for i in range(1, len(closes)):
-
         change = closes[i] - closes[i - 1]
 
-        gains.append(max(change, 0))
-        losses_.append(max(-change, 0))
+        if change > 0:
+            gains.append(change)
+            losses_.append(0)
+        else:
+            gains.append(0)
+            losses_.append(abs(change))
 
-    avg_gain = sum(
-        gains[:period]
-    ) / period
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses_[:period]) / period
 
-    avg_loss = sum(
-        losses_[:period]
-    ) / period
+    for i in range(period, len(gains)):
+        avg_gain = ((avg_gain * (period - 1)) + gains[i]) / period
+        avg_loss = ((avg_loss * (period - 1)) + losses_[i]) / period
 
     if avg_loss == 0:
-        result[period] = 100
-    else:
-        rs = avg_gain / avg_loss
-        result[period] = 100 - (100 / (1 + rs))
+        return 100
 
-    for i in range(period + 1, len(closes)):
+    rs = avg_gain / avg_loss
 
-        gain = gains[i - 1]
-        loss = losses_[i - 1]
-
-        avg_gain = (
-            (avg_gain * (period - 1))
-            + gain
-        ) / period
-
-        avg_loss = (
-            (avg_loss * (period - 1))
-            + loss
-        ) / period
-
-        if avg_loss == 0:
-            result[i] = 100
-        else:
-            rs = avg_gain / avg_loss
-            result[i] = 100 - (100 / (1 + rs))
-
-    return result
+    return 100 - (100 / (1 + rs))
 
 
 def adx(candles, period=14):
+    if len(candles) < period * 2 + 1:
+        return None
 
-    if len(candles) < period * 2:
-        return [None] * len(candles)
+    highs = [safe_float(c["max"]) for c in candles]
+    lows = [safe_float(c["min"]) for c in candles]
+    closes = [safe_float(c["close"]) for c in candles]
 
-    tr_values = [None]
-
-    plus_dm = [None]
-    minus_dm = [None]
+    tr_values = []
+    plus_dm = []
+    minus_dm = []
 
     for i in range(1, len(candles)):
+        up_move = highs[i] - highs[i - 1]
+        down_move = lows[i - 1] - lows[i]
 
-        high = candles[i]["max"]
-        low = candles[i]["min"]
-
-        prev_high = candles[i - 1]["max"]
-        prev_low = candles[i - 1]["min"]
-        prev_close = candles[i - 1]["close"]
-
-        tr_value = max(
-            high - low,
-            abs(high - prev_close),
-            abs(low - prev_close)
+        tr = max(
+            highs[i] - lows[i],
+            abs(highs[i] - closes[i - 1]),
+            abs(lows[i] - closes[i - 1])
         )
 
-        up_move = high - prev_high
-        down_move = prev_low - low
+        tr_values.append(tr)
 
         if up_move > down_move and up_move > 0:
-            p_dm = up_move
+            plus_dm.append(up_move)
         else:
-            p_dm = 0
+            plus_dm.append(0)
 
         if down_move > up_move and down_move > 0:
-            m_dm = down_move
+            minus_dm.append(down_move)
         else:
-            m_dm = 0
+            minus_dm.append(0)
 
-        tr_values.append(tr_value)
-        plus_dm.append(p_dm)
-        minus_dm.append(m_dm)
+    if len(tr_values) < period:
+        return None
 
-    atr_s = [None] * len(candles)
-    p_s = [None] * len(candles)
-    m_s = [None] * len(candles)
+    dx_values = []
 
-    if len(candles) <= period:
-        return [None] * len(candles)
+    for i in range(period, len(tr_values)):
+        tr_sum = sum(tr_values[i - period:i])
+        plus_sum = sum(plus_dm[i - period:i])
+        minus_sum = sum(minus_dm[i - period:i])
 
-    atr_s[period] = sum(
-        tr_values[1:period + 1]
-    )
-
-    p_s[period] = sum(
-        plus_dm[1:period + 1]
-    )
-
-    m_s[period] = sum(
-        minus_dm[1:period + 1]
-    )
-
-    dx = [None] * len(candles)
-
-    for i in range(period, len(candles)):
-
-        if i > period:
-
-            atr_s[i] = (
-                atr_s[i - 1]
-                - (atr_s[i - 1] / period)
-                + tr_values[i]
-            )
-
-            p_s[i] = (
-                p_s[i - 1]
-                - (p_s[i - 1] / period)
-                + plus_dm[i]
-            )
-
-            m_s[i] = (
-                m_s[i - 1]
-                - (m_s[i - 1] / period)
-                + minus_dm[i]
-            )
-
-        if atr_s[i] == 0:
+        if tr_sum == 0:
             continue
 
-        plus_di = (
-            100 * p_s[i] / atr_s[i]
-        )
-
-        minus_di = (
-            100 * m_s[i] / atr_s[i]
-        )
+        plus_di = 100 * plus_sum / tr_sum
+        minus_di = 100 * minus_sum / tr_sum
 
         denominator = plus_di + minus_di
 
         if denominator == 0:
             continue
 
-        dx[i] = (
-            100
-            * abs(plus_di - minus_di)
-            / denominator
-        )
+        dx = 100 * abs(plus_di - minus_di) / denominator
 
-    result = [None] * len(candles)
+        dx_values.append(dx)
 
-    valid_dx = [
-        x for x in dx
-        if x is not None
-    ]
+    if len(dx_values) < period:
+        return None
 
-    if len(valid_dx) < period:
-        return result
-
-    first_index = None
-
-    for i in range(len(dx)):
-
-        if dx[i] is not None:
-
-            possible = [
-                x for x in dx[
-                    i:i + period
-                ]
-                if x is not None
-            ]
-
-            if len(possible) == period:
-                first_index = i + period - 1
-                break
-
-    if first_index is None:
-        return result
-
-    result[first_index] = sum(
-        dx[
-            first_index - period + 1:
-            first_index + 1
-        ]
-    ) / period
-
-    for i in range(
-        first_index + 1,
-        len(candles)
-    ):
-
-        if dx[i] is None:
-            continue
-
-        result[i] = (
-            (
-                result[i - 1]
-                * (period - 1)
-            )
-            + dx[i]
-        ) / period
-
-    return result
+    return sum(dx_values[-period:]) / period
 
 
 # ============================================================
 # CANDLE HELPERS
 # ============================================================
 
-def candle_parts(c):
+def candle_parts(candle):
+    o = safe_float(candle["open"])
+    c = safe_float(candle["close"])
+    h = safe_float(candle["max"])
+    l = safe_float(candle["min"])
 
-    high = c["max"]
-    low = c["min"]
-    open_ = c["open"]
-    close = c["close"]
+    body = abs(c - o)
+    rng = max(h - l, 0.00000001)
 
-    total = max(high - low, 1e-12)
+    upper = h - max(o, c)
+    lower = min(o, c) - l
 
-    body = abs(close - open_)
+    body_ratio = body / rng
 
-    upper = high - max(open_, close)
-    lower = min(open_, close) - low
-
-    return {
-        "range": total,
-        "body": body,
-        "upper": upper,
-        "lower": lower,
-        "body_ratio": body / total,
-        "bull": close > open_,
-        "bear": close < open_
-    }
+    return o, c, h, l, body, rng, upper, lower, body_ratio
 
 
 def bullish_engulfing(previous, current):
+    po, pc, ph, pl, pb, pr, pu, plow, pbr = candle_parts(previous)
+    co, cc, ch, cl, cb, cr, cu, clow, cbr = candle_parts(current)
 
-    p = candle_parts(previous)
-    c = candle_parts(current)
+    previous_bear = pc < po
+    current_bull = cc > co
+
+    engulf = (
+        co <= pc and
+        cc >= po
+    )
 
     return (
-        p["bear"]
-        and c["bull"]
-        and current["open"] <= previous["close"]
-        and current["close"] >= previous["open"]
-        and c["body_ratio"] >= 0.45
+        previous_bear and
+        current_bull and
+        engulf and
+        cbr >= 0.45
     )
 
 
 def bearish_engulfing(previous, current):
+    po, pc, ph, pl, pb, pr, pu, plow, pbr = candle_parts(previous)
+    co, cc, ch, cl, cb, cr, cu, clow, cbr = candle_parts(current)
 
-    p = candle_parts(previous)
-    c = candle_parts(current)
+    previous_bull = pc > po
+    current_bear = cc < co
+
+    engulf = (
+        co >= pc and
+        cc <= po
+    )
 
     return (
-        p["bull"]
-        and c["bear"]
-        and current["open"] >= previous["close"]
-        and current["close"] <= previous["open"]
-        and c["body_ratio"] >= 0.45
+        previous_bull and
+        current_bear and
+        engulf and
+        cbr >= 0.45
     )
 
 
-def hammer(c):
-
-    x = candle_parts(c)
+def hammer(candle):
+    o, c, h, l, body, rng, upper, lower, body_ratio = candle_parts(candle)
 
     return (
-        x["lower"] >= x["body"] * 1.8
-        and x["upper"] <= x["range"] * 0.30
-        and x["body_ratio"] >= 0.20
+        lower >= body * 1.8 and
+        upper <= rng * 0.30 and
+        body_ratio >= 0.20
     )
 
 
-def shooting_star(c):
-
-    x = candle_parts(c)
+def shooting_star(candle):
+    o, c, h, l, body, rng, upper, lower, body_ratio = candle_parts(candle)
 
     return (
-        x["upper"] >= x["body"] * 1.8
-        and x["lower"] <= x["range"] * 0.30
-        and x["body_ratio"] >= 0.20
+        upper >= body * 1.8 and
+        lower <= rng * 0.30 and
+        body_ratio >= 0.20
     )
 
 
-def bullish_pin_bar(c):
-
-    x = candle_parts(c)
+def bullish_pin_bar(candle):
+    o, c, h, l, body, rng, upper, lower, body_ratio = candle_parts(candle)
 
     return (
-        x["lower"] >= x["range"] * 0.45
-        and x["upper"] <= x["range"] * 0.25
+        lower >= rng * 0.45 and
+        upper <= rng * 0.25
     )
 
 
-def bearish_pin_bar(c):
-
-    x = candle_parts(c)
+def bearish_pin_bar(candle):
+    o, c, h, l, body, rng, upper, lower, body_ratio = candle_parts(candle)
 
     return (
-        x["upper"] >= x["range"] * 0.45
-        and x["lower"] <= x["range"] * 0.25
+        upper >= rng * 0.45 and
+        lower <= rng * 0.25
     )
 
 
-def morning_star(a, b, c):
+def morning_star(candles):
+    if len(candles) < 3:
+        return False
 
-    x1 = candle_parts(a)
-    x2 = candle_parts(b)
-    x3 = candle_parts(c)
+    first = candles[-3]
+    second = candles[-2]
+    third = candles[-1]
 
-    midpoint = (
-        a["open"] + a["close"]
-    ) / 2
+    fo, fc, fh, fl, fb, fr, fu, flo, fbr = candle_parts(first)
+    so, sc, sh, sl, sb, sr, su, slo, sbr = candle_parts(second)
+    to, tc, th, tl, tb, tr, tu, tlo, tbr = candle_parts(third)
+
+    first_bear = fc < fo
+    third_bull = tc > to
+
+    first_mid = (fo + fc) / 2
 
     return (
-        x1["bear"]
-        and x1["body_ratio"] >= 0.45
-        and x2["body_ratio"] <= 0.40
-        and x3["bull"]
-        and x3["body_ratio"] >= 0.45
-        and c["close"] > midpoint
+        first_bear and
+        third_bull and
+        fbr >= 0.45 and
+        sbr <= 0.40 and
+        tbr >= 0.45 and
+        tc > first_mid
     )
 
 
-def evening_star(a, b, c):
+def evening_star(candles):
+    if len(candles) < 3:
+        return False
 
-    x1 = candle_parts(a)
-    x2 = candle_parts(b)
-    x3 = candle_parts(c)
+    first = candles[-3]
+    second = candles[-2]
+    third = candles[-1]
 
-    midpoint = (
-        a["open"] + a["close"]
-    ) / 2
+    fo, fc, fh, fl, fb, fr, fu, flo, fbr = candle_parts(first)
+    so, sc, sh, sl, sb, sr, su, slo, sbr = candle_parts(second)
+    to, tc, th, tl, tb, tr, tu, tlo, tbr = candle_parts(third)
+
+    first_bull = fc > fo
+    third_bear = tc < to
+
+    first_mid = (fo + fc) / 2
 
     return (
-        x1["bull"]
-        and x1["body_ratio"] >= 0.45
-        and x2["body_ratio"] <= 0.40
-        and x3["bear"]
-        and x3["body_ratio"] >= 0.45
-        and c["close"] < midpoint
+        first_bull and
+        third_bear and
+        fbr >= 0.45 and
+        sbr <= 0.40 and
+        tbr >= 0.45 and
+        tc < first_mid
     )
 
-
-# ============================================================
-# PATTERN DETECTION
-# ============================================================
 
 def detect_bullish_patterns(candles):
-
     patterns = []
 
-    if len(candles) < 4:
-        return patterns
+    if len(candles) >= 3 and morning_star(candles):
+        patterns.append(("Morning Star", 0.90))
 
-    a = candles[-4]
-    b = candles[-3]
-    c = candles[-2]
+    if len(candles) >= 2 and bullish_engulfing(candles[-2], candles[-1]):
+        patterns.append(("Bullish Engulfing", 0.88))
 
-    if morning_star(a, b, c):
+    if hammer(candles[-1]):
+        patterns.append(("Hammer", 0.78))
 
-        patterns.append({
-            "name": "Morning Star",
-            "bias": "bullish",
-            "quality": 0.90
-        })
-
-    if bullish_engulfing(b, c):
-
-        patterns.append({
-            "name": "Bullish Engulfing",
-            "bias": "bullish",
-            "quality": 0.88
-        })
-
-    if hammer(c):
-
-        patterns.append({
-            "name": "Hammer",
-            "bias": "bullish",
-            "quality": 0.78
-        })
-
-    if bullish_pin_bar(c):
-
-        patterns.append({
-            "name": "Bullish Pin Bar",
-            "bias": "bullish",
-            "quality": 0.78
-        })
+    if bullish_pin_bar(candles[-1]):
+        patterns.append(("Bullish Pin Bar", 0.78))
 
     return patterns
 
 
 def detect_bearish_patterns(candles):
-
     patterns = []
 
-    if len(candles) < 4:
-        return patterns
+    if len(candles) >= 3 and evening_star(candles):
+        patterns.append(("Evening Star", 0.90))
 
-    a = candles[-4]
-    b = candles[-3]
-    c = candles[-2]
+    if len(candles) >= 2 and bearish_engulfing(candles[-2], candles[-1]):
+        patterns.append(("Bearish Engulfing", 0.88))
 
-    if evening_star(a, b, c):
+    if shooting_star(candles[-1]):
+        patterns.append(("Shooting Star", 0.78))
 
-        patterns.append({
-            "name": "Evening Star",
-            "bias": "bearish",
-            "quality": 0.90
-        })
-
-    if bearish_engulfing(b, c):
-
-        patterns.append({
-            "name": "Bearish Engulfing",
-            "bias": "bearish",
-            "quality": 0.88
-        })
-
-    if shooting_star(c):
-
-        patterns.append({
-            "name": "Shooting Star",
-            "bias": "bearish",
-            "quality": 0.78
-        })
-
-    if bearish_pin_bar(c):
-
-        patterns.append({
-            "name": "Bearish Pin Bar",
-            "bias": "bearish",
-            "quality": 0.78
-        })
+    if bearish_pin_bar(candles[-1]):
+        patterns.append(("Bearish Pin Bar", 0.78))
 
     return patterns
 
 
 # ============================================================
-# CLOSED CANDLES
+# REMOVE OPEN CANDLE
 # ============================================================
 
 def remove_open_candle(candles, timeframe):
-
     if not candles:
-        return []
+        return candles
 
-    current_time = int(time.time())
+    current_time = time.time()
 
     last = candles[-1]
 
-    candle_time = int(
-        last.get("from", 0)
-    )
+    candle_start = safe_float(last.get("from", 0))
 
-    if (
-        candle_time
-        + timeframe
-        > current_time
-    ):
+    if candle_start + timeframe > current_time:
         return candles[:-1]
 
     return candles
 
 
 # ============================================================
-# ZONES
+# SUPPORT / RESISTANCE
 # ============================================================
 
-def recent_support(candles, current_price, current_atr):
-
-    lookback = candles[
-        -SWING_LOOKBACK:
-    ]
-
-    if not lookback:
+def recent_support(candles, atr_value):
+    if not candles or not atr_value:
         return None, 0
 
-    lows = [
-        c["min"]
-        for c in lookback
-    ]
+    sample = candles[-SWING_LOOKBACK:]
 
-    candidate = min(lows)
-
-    tolerance = (
-        current_atr
-        * ZONE_TOLERANCE_ATR
+    lowest = min(
+        safe_float(c["min"])
+        for c in sample
     )
 
-    touches = sum(
-        1
-        for x in lows
-        if abs(x - candidate)
-        <= tolerance
-    )
+    tolerance = atr_value * ZONE_TOLERANCE_ATR
 
-    return candidate, touches
+    touches = 0
+
+    for candle in sample:
+        low = safe_float(candle["min"])
+
+        if abs(low - lowest) <= tolerance:
+            touches += 1
+
+    return lowest, touches
 
 
-def recent_resistance(candles, current_price, current_atr):
-
-    lookback = candles[
-        -SWING_LOOKBACK:
-    ]
-
-    if not lookback:
+def recent_resistance(candles, atr_value):
+    if not candles or not atr_value:
         return None, 0
 
-    highs = [
-        c["max"]
-        for c in lookback
-    ]
+    sample = candles[-SWING_LOOKBACK:]
 
-    candidate = max(highs)
-
-    tolerance = (
-        current_atr
-        * ZONE_TOLERANCE_ATR
+    highest = max(
+        safe_float(c["max"])
+        for c in sample
     )
 
-    touches = sum(
-        1
-        for x in highs
-        if abs(x - candidate)
-        <= tolerance
-    )
+    tolerance = atr_value * ZONE_TOLERANCE_ATR
 
-    return candidate, touches
+    touches = 0
+
+    for candle in sample:
+        high = safe_float(candle["max"])
+
+        if abs(high - highest) <= tolerance:
+            touches += 1
+
+    return highest, touches
 
 
 # ============================================================
-# TREND
+# 5M TREND
 # ============================================================
 
 def analyze_5m_trend(candles):
-
-    if len(candles) < EMA_SLOW + 10:
+    if len(candles) < EMA_SLOW + 20:
         return None
 
     closes = [
-        c["close"]
+        safe_float(c["close"])
         for c in candles
     ]
 
-    fast = ema(
-        closes,
-        EMA_FAST
-    )
+    ema_fast = ema(closes, EMA_FAST)
+    ema_slow = ema(closes, EMA_SLOW)
+    atr_value = atr(candles, ATR_PERIOD)
+    adx_value = adx(candles, 14)
 
-    slow = ema(
-        closes,
-        EMA_SLOW
-    )
-
-    atr_values = atr(
-        candles,
-        ATR_PERIOD
-    )
-
-    adx_values = adx(
-        candles,
-        14
-    )
-
-    i = len(candles) - 1
-
-    current = closes[i]
-
-    ema_fast = fast[i]
-    ema_slow = slow[i]
-
-    current_atr = atr_values[i]
-    current_adx = adx_values[i]
-
-    if any(
-        x is None
-        for x in [
-            ema_fast,
-            ema_slow,
-            current_atr,
-            current_adx
-        ]
+    if (
+        ema_fast is None or
+        ema_slow is None or
+        atr_value is None or
+        adx_value is None or
+        atr_value <= 0
     ):
         return None
 
-    separation = abs(
-        ema_fast - ema_slow
-    ) / max(current_atr, 1e-12)
+    price = closes[-1]
+
+    separation = abs(ema_fast - ema_slow)
+
+    separation_atr = separation / atr_value
 
     bullish = (
-        ema_fast > ema_slow
-        and current > ema_fast
-        and separation >= MIN_TREND_SEPARATION_ATR
-        and current_adx >= MIN_ADX
+        ema_fast > ema_slow and
+        price > ema_fast and
+        separation_atr >= MIN_TREND_SEPARATION_ATR and
+        adx_value >= MIN_ADX
     )
 
     bearish = (
-        ema_fast < ema_slow
-        and current < ema_fast
-        and separation >= MIN_TREND_SEPARATION_ATR
-        and current_adx >= MIN_ADX
+        ema_fast < ema_slow and
+        price < ema_fast and
+        separation_atr >= MIN_TREND_SEPARATION_ATR and
+        adx_value >= MIN_ADX
     )
 
     if bullish:
         direction = "CALL"
-
     elif bearish:
         direction = "PUT"
-
     else:
         direction = None
 
@@ -966,9 +662,10 @@ def analyze_5m_trend(candles):
         "direction": direction,
         "ema_fast": ema_fast,
         "ema_slow": ema_slow,
-        "atr": current_atr,
-        "adx": current_adx,
-        "separation": separation
+        "atr": atr_value,
+        "adx": adx_value,
+        "separation_atr": separation_atr,
+        "price": price,
     }
 
 
@@ -976,97 +673,57 @@ def analyze_5m_trend(candles):
 # PULLBACK
 # ============================================================
 
-def calculate_pullback(
-    candles,
-    trend,
-    direction
-):
+def calculate_pullback(price, ema_fast, atr_value):
+    if not atr_value or atr_value <= 0:
+        return None
 
-    price = candles[-1]["close"]
-
-    current_atr = trend["atr"]
-
-    if direction == "CALL":
-
-        distance = (
-            price
-            - trend["ema_fast"]
-        )
-
-    else:
-
-        distance = (
-            trend["ema_fast"]
-            - price
-        )
-
-    distance_atr = (
-        distance
-        / max(current_atr, 1e-12)
-    )
-
-    return distance_atr
+    return abs(price - ema_fast) / atr_value
 
 
 # ============================================================
 # REJECTION
 # ============================================================
 
-def rejection_score(
-    candle,
-    direction,
-    atr_value
-):
+def rejection_score(candle, direction, atr_value):
+    o, c, h, l, body, rng, upper, lower, body_ratio = candle_parts(candle)
 
-    x = candle_parts(candle)
+    if not atr_value or atr_value <= 0:
+        return False, 0.0
 
-    range_atr = (
-        x["range"]
-        / max(atr_value, 1e-12)
-    )
-
-    if range_atr <= 0:
-        return False, 0
+    range_atr = rng / atr_value
 
     if range_atr > MAX_TRIGGER_RANGE_ATR:
-        return False, 0
+        return False, 0.0
 
     if direction == "CALL":
-
-        wick_ratio = (
-            x["lower"]
-            / x["range"]
-        )
+        wick_ratio = lower / rng
 
         valid = (
-            x["lower"]
-            >= x["range"]
-            * MIN_REJECTION_WICK_RATIO
-            and wick_ratio >= 0.35
+            wick_ratio >= MIN_REJECTION_WICK_RATIO and
+            c >= o
+        )
+
+        strength = clamp(
+            wick_ratio,
+            0,
+            1
         )
 
     else:
-
-        wick_ratio = (
-            x["upper"]
-            / x["range"]
-        )
+        wick_ratio = upper / rng
 
         valid = (
-            x["upper"]
-            >= x["range"]
-            * MIN_REJECTION_WICK_RATIO
-            and wick_ratio >= 0.35
+            wick_ratio >= MIN_REJECTION_WICK_RATIO and
+            c <= o
         )
 
-    if not valid:
-        return False, 0
+        strength = clamp(
+            wick_ratio,
+            0,
+            1
+        )
 
-    return True, clamp(
-        wick_ratio,
-        0,
-        1
-    )
+    return valid, strength
 
 
 # ============================================================
@@ -1074,61 +731,47 @@ def rejection_score(
 # ============================================================
 
 def confirmation_candle(
-    candles,
+    rejection_candle,
+    trigger_candle,
     direction,
     atr_value
 ):
-
-    if len(candles) < 3:
-        return False
-
-    rejection = candles[-3]
-    trigger = candles[-2]
-
-    r = candle_parts(rejection)
-    t = candle_parts(trigger)
-
-    trigger_range_atr = (
-        t["range"]
-        / max(atr_value, 1e-12)
+    ro, rc, rh, rl, rb, rr, ru, rlo, rbr = candle_parts(
+        rejection_candle
     )
 
-    trigger_body_atr = (
-        t["body"]
-        / max(atr_value, 1e-12)
+    to, tc, th, tl, tb, tr, tu, tlo, tbr = candle_parts(
+        trigger_candle
     )
 
-    if (
-        trigger_range_atr
-        > MAX_TRIGGER_RANGE_ATR
-    ):
+    if not atr_value or atr_value <= 0:
         return False
 
-    if (
-        trigger_body_atr
-        < MIN_TRIGGER_BODY_ATR
-    ):
+    trigger_range_atr = tr / atr_value
+    trigger_body_atr = tb / atr_value
+
+    if trigger_range_atr > MAX_TRIGGER_RANGE_ATR:
         return False
 
-    if (
-        t["body_ratio"]
-        < MIN_TRIGGER_BODY_RATIO
-    ):
+    if trigger_body_atr < MIN_TRIGGER_BODY_ATR:
+        return False
+
+    if tbr < MIN_TRIGGER_BODY_RATIO:
         return False
 
     if direction == "CALL":
 
         return (
-            t["bull"]
-            and trigger["close"]
-            > rejection["high"]
+            tc > to and
+            tc > rh
         )
 
-    return (
-        t["bear"]
-        and trigger["close"]
-        < rejection["low"]
-    )
+    else:
+
+        return (
+            tc < to and
+            tc < rl
+        )
 
 
 # ============================================================
@@ -1136,39 +779,66 @@ def confirmation_candle(
 # ============================================================
 
 def momentum_confirmation(
-    candles,
+    previous_candle,
+    trigger_candle,
     direction,
     atr_value
 ):
+    po, pc, ph, pl, pb, pr, pu, plo, pbr = candle_parts(
+        previous_candle
+    )
 
-    if len(candles) < 3:
+    to, tc, th, tl, tb, tr, tu, tlo, tbr = candle_parts(
+        trigger_candle
+    )
+
+    if not atr_value or atr_value <= 0:
         return False
 
-    previous = candles[-3]
-    current = candles[-2]
+    body_atr = tb / atr_value
 
-    p = candle_parts(previous)
-    c = candle_parts(current)
+    if body_atr < MIN_TRIGGER_BODY_ATR:
+        return False
 
     if direction == "CALL":
-
         return (
-            c["bull"]
-            and current["close"]
-            > previous["close"]
-            and c["body"]
-            >= atr_value
-            * MIN_TRIGGER_BODY_ATR
+            tc > to and
+            tc > pc
         )
 
     return (
-        c["bear"]
-        and current["close"]
-        < previous["close"]
-        and c["body"]
-        >= atr_value
-        * MIN_TRIGGER_BODY_ATR
+        tc < to and
+        tc < pc
     )
+
+
+# ============================================================
+# ROOM TO OPPOSING LEVEL
+# ============================================================
+
+def calculate_room(
+    price,
+    direction,
+    support,
+    resistance,
+    atr_value
+):
+    if not atr_value or atr_value <= 0:
+        return 0.0
+
+    if direction == "CALL":
+
+        if resistance is None:
+            return 999.0
+
+        return (resistance - price) / atr_value
+
+    else:
+
+        if support is None:
+            return 999.0
+
+        return (price - support) / atr_value
 
 
 # ============================================================
@@ -1180,142 +850,84 @@ def score_setup(
     trend,
     pullback_atr,
     zone_valid,
-    zone_touches,
-    rejection_valid,
-    confirmation_valid,
-    momentum_valid,
-    room_valid,
-    patterns
+    rejection_strength,
+    confirmation,
+    momentum,
+    room_atr,
+    pattern_quality
 ):
+    score = 0.0
 
-    score = 0
+    # ADX / trend strength: 20
+    adx_value = trend["adx"]
 
-    reasons = []
+    adx_score = clamp(
+        (adx_value - MIN_ADX) / 15,
+        0,
+        1
+    ) * 20
 
-    # --------------------------------
-    # 5M trend: 20
-    # --------------------------------
+    score += adx_score
 
-    if trend["adx"] >= 25:
-        score += 20
-        reasons.append("strong ADX")
-    elif trend["adx"] >= 22:
-        score += 18
-        reasons.append("good ADX")
-    elif trend["adx"] >= MIN_ADX:
-        score += 15
-        reasons.append("acceptable ADX")
+    # EMA separation: 10
+    separation_score = clamp(
+        trend["separation_atr"] / 0.50,
+        0,
+        1
+    ) * 10
 
-    # --------------------------------
-    # EMA structure: 10
-    # --------------------------------
+    score += separation_score
 
-    if trend["separation"] >= 0.30:
-        score += 10
-        reasons.append("strong EMA separation")
-
-    elif trend["separation"] >= 0.20:
-        score += 8
-        reasons.append("good EMA separation")
-
-    elif trend["separation"] >= MIN_TREND_SEPARATION_ATR:
-        score += 6
-        reasons.append("EMA trend structure")
-
-    # --------------------------------
     # Pullback: 15
-    # --------------------------------
-
     if (
-        PULLBACK_MIN_ATR
-        <= pullback_atr
-        <= PULLBACK_MAX_ATR
+        PULLBACK_MIN_ATR <=
+        pullback_atr <=
+        PULLBACK_MAX_ATR
     ):
-
-        score += 15
-        reasons.append("valid pullback")
-
-    # --------------------------------
-    # Zone: 15
-    # --------------------------------
-
-    if zone_valid:
-
-        if zone_touches >= 3:
+        if pullback_atr <= 0.80:
             score += 15
-            reasons.append("strong zone")
-
-        elif zone_touches >= 2:
+        else:
             score += 12
-            reasons.append("confirmed zone")
 
-    # --------------------------------
+    # Zone: 15
+    if zone_valid:
+        score += 15
+
     # Rejection: 20
-    # --------------------------------
+    score += clamp(
+        rejection_strength,
+        0,
+        1
+    ) * 20
 
-    if rejection_valid:
-
-        score += 20
-        reasons.append("fresh rejection")
-
-    # --------------------------------
     # Confirmation: 10
-    # --------------------------------
-
-    if confirmation_valid:
-
+    if confirmation:
         score += 10
-        reasons.append("1M confirmation")
 
-    # --------------------------------
-    # Momentum: 5
-    # --------------------------------
-
-    if momentum_valid:
-
+    # Immediate momentum: 5
+    if momentum:
         score += 5
-        reasons.append("immediate momentum")
 
-    # --------------------------------
     # Room: 5
-    # --------------------------------
-
-    if room_valid:
-
+    if room_atr >= MIN_ROOM_ATR:
         score += 5
-        reasons.append("enough room")
 
-    # --------------------------------
-    # Pattern bonus
-    # --------------------------------
+    # Pattern quality: up to 5
+    if pattern_quality:
+        score += clamp(
+            pattern_quality,
+            0,
+            1
+        ) * 5
 
-    if patterns:
-
-        best = max(
-            p["quality"]
-            for p in patterns
-        )
-
-        if best >= 0.90:
-            score += 5
-            reasons.append("strong candle pattern")
-
-        elif best >= 0.80:
-            score += 3
-            reasons.append("good candle pattern")
-
-    return min(score, 100), reasons
+    return min(score, 100)
 
 
 # ============================================================
-# SETUP ANALYSIS
+# ANALYZE ASSET
 # ============================================================
 
-def analyze_asset(
-    asset,
-    candles_5m,
-    candles_1m
-):
+def analyze_asset(asset, candles_5m, candles_1m):
 
     candles_5m = remove_open_candle(
         candles_5m,
@@ -1328,313 +940,318 @@ def analyze_asset(
     )
 
     if (
-        len(candles_5m)
-        < EMA_SLOW + 10
-        or len(candles_1m)
-        < 50
+        len(candles_5m) < 80 or
+        len(candles_1m) < 50
     ):
         return None
 
-    trend = analyze_5m_trend(
-        candles_5m
-    )
+    trend = analyze_5m_trend(candles_5m)
 
     if not trend:
         return None
 
     direction = trend["direction"]
 
-    if not direction:
+    if direction is None:
         return None
 
-    price = candles_1m[-1]["close"]
-
-    current_atr = trend["atr"]
-
-    # --------------------------------
-    # Pullback
-    # --------------------------------
-
-    pullback_atr = calculate_pullback(
+    atr_1m = atr(
         candles_1m,
-        trend,
-        direction
+        ATR_PERIOD
     )
 
-    if not (
-        PULLBACK_MIN_ATR
-        <= pullback_atr
-        <= PULLBACK_MAX_ATR
-    ):
-        return None
-
-    # --------------------------------
-    # Zones
-    # --------------------------------
-
-    support, support_touches = (
-        recent_support(
-            candles_1m,
-            price,
-            current_atr
-        )
-    )
-
-    resistance, resistance_touches = (
-        recent_resistance(
-            candles_1m,
-            price,
-            current_atr
-        )
-    )
-
-    tolerance = (
-        current_atr
-        * ZONE_TOLERANCE_ATR
-    )
-
-    if direction == "CALL":
-
-        zone_valid = (
-            support is not None
-            and abs(price - support)
-            <= tolerance
-            and support_touches
-            >= MIN_ZONE_TOUCHES
-        )
-
-        zone_touches = support_touches
-
-        # Do not accept ambiguous location.
-        if (
-            resistance is not None
-            and abs(price - resistance)
-            <= tolerance
-            and resistance_touches
-            >= MIN_ZONE_TOUCHES
-        ):
-            return None
-
-    else:
-
-        zone_valid = (
-            resistance is not None
-            and abs(price - resistance)
-            <= tolerance
-            and resistance_touches
-            >= MIN_ZONE_TOUCHES
-        )
-
-        zone_touches = resistance_touches
-
-        if (
-            support is not None
-            and abs(price - support)
-            <= tolerance
-            and support_touches
-            >= MIN_ZONE_TOUCHES
-        ):
-            return None
-
-    if not zone_valid:
-        return None
-
-    # --------------------------------
-    # Fresh rejection candle
-    # --------------------------------
-
-    rejection = candles_1m[-3]
-
-    rejection_valid, rejection_strength = (
-        rejection_score(
-            rejection,
-            direction,
-            current_atr
-        )
-    )
-
-    if not rejection_valid:
-        return None
-
-    # --------------------------------
-    # Candlestick patterns
-    # --------------------------------
-
-    if direction == "CALL":
-
-        patterns = detect_bullish_patterns(
-            candles_1m
-        )
-
-    else:
-
-        patterns = detect_bearish_patterns(
-            candles_1m
-        )
-
-    if not patterns:
-        return None
-
-    # --------------------------------
-    # Confirmation
-    # --------------------------------
-
-    confirmation_valid = (
-        confirmation_candle(
-            candles_1m,
-            direction,
-            current_atr
-        )
-    )
-
-    if not confirmation_valid:
-        return None
-
-    # --------------------------------
-    # Momentum
-    # --------------------------------
-
-    momentum_valid = (
-        momentum_confirmation(
-            candles_1m,
-            direction,
-            current_atr
-        )
-    )
-
-    if not momentum_valid:
-        return None
-
-    # --------------------------------
-    # Room to opposing level
-    # --------------------------------
-
-    if direction == "CALL":
-
-        if resistance is None:
-            room_valid = True
-        else:
-            room = (
-                resistance - price
-            )
-
-            room_valid = (
-                room
-                / max(current_atr, 1e-12)
-                >= MIN_ROOM_ATR
-            )
-
-    else:
-
-        if support is None:
-            room_valid = True
-        else:
-            room = (
-                price - support
-            )
-
-            room_valid = (
-                room
-                / max(current_atr, 1e-12)
-                >= MIN_ROOM_ATR
-            )
-
-    if not room_valid:
-        return None
-
-    # --------------------------------
-    # RSI
-    # --------------------------------
-
-    closes_1m = [
-        c["close"]
-        for c in candles_1m
-    ]
-
-    rsi_values = rsi(
-        closes_1m,
+    rsi_1m = rsi(
+        candles_1m,
         RSI_PERIOD
     )
 
-    current_rsi = rsi_values[-2]
-
-    if current_rsi is None:
+    if (
+        atr_1m is None or
+        rsi_1m is None or
+        atr_1m <= 0
+    ):
         return None
+
+    price = safe_float(
+        candles_1m[-1]["close"]
+    )
+
+    pullback_atr = calculate_pullback(
+        price,
+        trend["ema_fast"],
+        atr_1m
+    )
+
+    if pullback_atr is None:
+        return None
+
+    if (
+        pullback_atr <
+        PULLBACK_MIN_ATR or
+        pullback_atr >
+        PULLBACK_MAX_ATR
+    ):
+        return None
+
+    support, support_touches = recent_support(
+        candles_1m,
+        atr_1m
+    )
+
+    resistance, resistance_touches = recent_resistance(
+        candles_1m,
+        atr_1m
+    )
+
+    tolerance = atr_1m * ZONE_TOLERANCE_ATR
+
+    near_support = (
+        support is not None and
+        abs(price - support) <= tolerance and
+        support_touches >= MIN_ZONE_TOUCHES
+    )
+
+    near_resistance = (
+        resistance is not None and
+        abs(price - resistance) <= tolerance and
+        resistance_touches >= MIN_ZONE_TOUCHES
+    )
+
+    # --------------------------------------------------------
+    # CALL SETUP
+    # --------------------------------------------------------
 
     if direction == "CALL":
 
+        # Reject ambiguous zone
+        if near_support and near_resistance:
+            return None
+
+        if not near_support:
+            return None
+
+        zone_valid = True
+
+        rejection_candle = candles_1m[-2]
+        trigger_candle = candles_1m[-1]
+
+        valid_rejection, rejection_strength = rejection_score(
+            rejection_candle,
+            "CALL",
+            atr_1m
+        )
+
+        if not valid_rejection:
+            return None
+
+        patterns = detect_bullish_patterns(
+            candles_1m[-3:]
+        )
+
+        if not patterns:
+            return None
+
+        pattern_name, pattern_quality = max(
+            patterns,
+            key=lambda x: x[1]
+        )
+
+        confirmed = confirmation_candle(
+            rejection_candle,
+            trigger_candle,
+            "CALL",
+            atr_1m
+        )
+
+        if not confirmed:
+            return None
+
+        momentum = momentum_confirmation(
+            candles_1m[-2],
+            candles_1m[-1],
+            "CALL",
+            atr_1m
+        )
+
+        if not momentum:
+            return None
+
+        room_atr = calculate_room(
+            price,
+            "CALL",
+            support,
+            resistance,
+            atr_1m
+        )
+
+        if room_atr < MIN_ROOM_ATR:
+            return None
+
         if not (
-            CALL_RSI_MIN
-            <= current_rsi
-            <= CALL_RSI_MAX
+            CALL_RSI_MIN <=
+            rsi_1m <=
+            CALL_RSI_MAX
         ):
             return None
 
-    else:
+        extension_atr = abs(
+            price - trend["ema_fast"]
+        ) / atr_1m
+
+        if extension_atr > MAX_ENTRY_EXTENSION_ATR:
+            return None
+
+        score = score_setup(
+            "CALL",
+            trend,
+            pullback_atr,
+            zone_valid,
+            rejection_strength,
+            confirmed,
+            momentum,
+            room_atr,
+            pattern_quality
+        )
+
+        if score < MIN_SCORE:
+            return None
+
+        return {
+            "asset": asset,
+            "direction": "CALL",
+            "score": round(score, 1),
+            "pattern": pattern_name,
+            "pattern_quality": round(pattern_quality, 2),
+            "rsi": round(rsi_1m, 2),
+            "adx": round(trend["adx"], 2),
+            "pullback_atr": round(pullback_atr, 2),
+            "extension_atr": round(extension_atr, 2),
+            "room_atr": round(room_atr, 2),
+            "support": support,
+            "support_touches": support_touches,
+            "resistance": resistance,
+            "resistance_touches": resistance_touches,
+            "trend": "BULLISH",
+        }
+
+    # --------------------------------------------------------
+    # PUT SETUP
+    # --------------------------------------------------------
+
+    if direction == "PUT":
+
+        # Reject ambiguous zone
+        if near_support and near_resistance:
+            return None
+
+        if not near_resistance:
+            return None
+
+        zone_valid = True
+
+        rejection_candle = candles_1m[-2]
+        trigger_candle = candles_1m[-1]
+
+        valid_rejection, rejection_strength = rejection_score(
+            rejection_candle,
+            "PUT",
+            atr_1m
+        )
+
+        if not valid_rejection:
+            return None
+
+        patterns = detect_bearish_patterns(
+            candles_1m[-3:]
+        )
+
+        if not patterns:
+            return None
+
+        pattern_name, pattern_quality = max(
+            patterns,
+            key=lambda x: x[1]
+        )
+
+        confirmed = confirmation_candle(
+            rejection_candle,
+            trigger_candle,
+            "PUT",
+            atr_1m
+        )
+
+        if not confirmed:
+            return None
+
+        momentum = momentum_confirmation(
+            candles_1m[-2],
+            candles_1m[-1],
+            "PUT",
+            atr_1m
+        )
+
+        if not momentum:
+            return None
+
+        room_atr = calculate_room(
+            price,
+            "PUT",
+            support,
+            resistance,
+            atr_1m
+        )
+
+        if room_atr < MIN_ROOM_ATR:
+            return None
 
         if not (
-            PUT_RSI_MIN
-            <= current_rsi
-            <= PUT_RSI_MAX
+            PUT_RSI_MIN <=
+            rsi_1m <=
+            PUT_RSI_MAX
         ):
             return None
 
-    # --------------------------------
-    # Extension protection
-    # --------------------------------
+        extension_atr = abs(
+            price - trend["ema_fast"]
+        ) / atr_1m
 
-    extension = abs(
-        price - trend["ema_fast"]
-    ) / max(
-        current_atr,
-        1e-12
-    )
+        if extension_atr > MAX_ENTRY_EXTENSION_ATR:
+            return None
 
-    if extension > MAX_ENTRY_EXTENSION_ATR:
-        return None
+        score = score_setup(
+            "PUT",
+            trend,
+            pullback_atr,
+            zone_valid,
+            rejection_strength,
+            confirmed,
+            momentum,
+            room_atr,
+            pattern_quality
+        )
 
-    # --------------------------------
-    # SCORE
-    # --------------------------------
+        if score < MIN_SCORE:
+            return None
 
-    score, reasons = score_setup(
-        direction=direction,
-        trend=trend,
-        pullback_atr=pullback_atr,
-        zone_valid=zone_valid,
-        zone_touches=zone_touches,
-        rejection_valid=rejection_valid,
-        confirmation_valid=confirmation_valid,
-        momentum_valid=momentum_valid,
-        room_valid=room_valid,
-        patterns=patterns
-    )
+        return {
+            "asset": asset,
+            "direction": "PUT",
+            "score": round(score, 1),
+            "pattern": pattern_name,
+            "pattern_quality": round(pattern_quality, 2),
+            "rsi": round(rsi_1m, 2),
+            "adx": round(trend["adx"], 2),
+            "pullback_atr": round(pullback_atr, 2),
+            "extension_atr": round(extension_atr, 2),
+            "room_atr": round(room_atr, 2),
+            "support": support,
+            "support_touches": support_touches,
+            "resistance": resistance,
+            "resistance_touches": resistance_touches,
+            "trend": "BEARISH",
+        }
 
-    # --------------------------------
-    # HARD MINIMUM
-    # --------------------------------
-
-    if score < MIN_SCORE:
-        return None
-
-    return {
-        "asset": asset,
-        "direction": direction,
-        "score": score,
-        "price": price,
-        "ema_fast": trend["ema_fast"],
-        "ema_slow": trend["ema_slow"],
-        "atr": current_atr,
-        "adx": trend["adx"],
-        "rsi": current_rsi,
-        "pullback_atr": pullback_atr,
-        "extension_atr": extension,
-        "patterns": patterns,
-        "reasons": reasons,
-        "support": support,
-        "resistance": resistance,
-        "zone_touches": zone_touches
-    }
+    return None
 
 
 # ============================================================
@@ -1642,7 +1259,6 @@ def analyze_asset(
 # ============================================================
 
 def connect():
-
     global iq
 
     print("Connecting to IQ Option...")
@@ -1652,40 +1268,39 @@ def connect():
         IQ_PASSWORD
     )
 
-    iq.connect()
+    success, reason = iq.connect()
 
-    if not iq.check_connect():
-
+    if not success:
         raise RuntimeError(
-            "IQ Option connection failed."
+            f"IQ Option connection failed: {reason}"
         )
 
-    try:
+    if PRACTICE:
+        iq.change_balance("PRACTICE")
+        balance_type = "PRACTICE"
+    else:
+        iq.change_balance("REAL")
+        balance_type = "REAL"
 
-        if PRACTICE:
-            iq.change_balance("PRACTICE")
-        else:
-            iq.change_balance("REAL")
+    print("IQ Option connection: OK")
 
-    except Exception:
-        pass
-
-    print("IQ Option connection OK.")
-
-    telegram(
-        "🟢 ZETA V2 BOT ONLINE\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+    send_telegram(
+        f"🟢 <b>{VERSION} ONLINE</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"Connection: OK\n"
+        f"Account: {balance_type}\n"
+        f"Strategy: High Quality Trend Pullback\n"
+        f"Context: 5M\n"
+        f"Entry: 1M\n"
         f"Expiry: {EXPIRY_MINUTES} minutes\n"
-        "5M Trend: ON\n"
-        "1M Pullback: ON\n"
-        "Fresh Rejection: ON\n"
-        "Momentum Confirmation: ON\n"
-        "Quality Minimum: 80/100\n"
-        "Mode: PRACTICE\n"
-        "Auto-trading: ON\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "Scanning for HIGH QUALITY setups."
+        f"Minimum score: {MIN_SCORE}\n"
+        f"Stake: ${STAKE:.2f}\n"
+        f"Target: {TEST_TARGET} completed trades\n"
+        f"Auto-trading: {'ON' if AUTO_TRADE else 'OFF'}\n"
+        f"━━━━━━━━━━━━━━━━━━"
     )
+
+    return True
 
 
 # ============================================================
@@ -1695,112 +1310,66 @@ def connect():
 def discover_otc_assets():
 
     try:
-
-        data = iq.get_all_open_time()
-
+        open_time = iq.get_all_open_time()
     except Exception as e:
-
-        print(
-            "OTC discovery error:",
-            e
-        )
-
+        print(f"OTC discovery error: {e}")
         return []
 
     assets = []
 
-    for market_type in [
-        "binary",
-        "turbo",
-        "digital"
-    ]:
+    for market_type in ["binary", "turbo", "digital"]:
 
-        section = data.get(
+        market = open_time.get(
             market_type,
             {}
         )
 
-        for asset, info in section.items():
+        if not isinstance(market, dict):
+            continue
+
+        for asset, info in market.items():
+
+            if len(assets) >= MAX_OTC_ASSETS:
+                break
+
+            if "OTC" not in str(asset).upper():
+                continue
 
             if not isinstance(info, dict):
                 continue
 
-            if not info.get(
-                "open",
-                False
-            ):
-                continue
-
-            name = str(asset).upper()
-
-            if "OTC" not in name:
+            if info.get("open") is not True:
                 continue
 
             if asset not in assets:
-
                 assets.append(asset)
-
-            if len(assets) >= MAX_OTC_ASSETS:
-                return assets
 
     return assets
 
 
 # ============================================================
-# CANDLE FETCH
+# CANDLE DATA
 # ============================================================
 
-def get_candles(
-    asset,
-    timeframe,
-    count
-):
+def get_candles(asset, timeframe, count):
 
     try:
-
-        data = iq.get_candles(
+        candles = iq.get_candles(
             asset,
             timeframe,
             count,
             time.time()
         )
 
-        candles = []
-
-        for c in data:
-
-            candles.append({
-                "from": int(
-                    c.get("from", 0)
-                ),
-                "open": safe_float(
-                    c.get("open")
-                ),
-                "close": safe_float(
-                    c.get("close")
-                ),
-                "min": safe_float(
-                    c.get("min")
-                ),
-                "max": safe_float(
-                    c.get("max")
-                ),
-                "volume": safe_float(
-                    c.get("volume")
-                )
-            })
-
-        candles.sort(
-            key=lambda x: x["from"]
-        )
+        if not candles:
+            return []
 
         return candles
 
     except Exception as e:
-
         print(
-            f"Candle error {asset}:",
-            e
+            f"Candle error {asset} "
+            f"{timeframe}s: {e}"
         )
 
         return []
@@ -1810,79 +1379,63 @@ def get_candles(
 # TRADE EXECUTION
 # ============================================================
 
-def execute_trade(setup):
+def execute_trade(asset, setup):
 
-    asset = setup["asset"]
+    global asset_last_trade
+
+    now = time.time()
+
+    last_trade = asset_last_trade.get(
+        asset,
+        0
+    )
+
+    if now - last_trade < ASSET_LOCK_SECONDS:
+        return False
 
     direction = setup["direction"]
 
-    if asset in asset_last_trade:
-
-        elapsed = (
-            time.time()
-            - asset_last_trade[asset]
-        )
-
-        if elapsed < ASSET_LOCK_SECONDS:
-
-            return None
+    action = direction.lower()
 
     signal_id = (
         f"ZETA2-"
-        f"{asset.replace('-', '')}-"
+        f"{asset.replace('-', '').replace('/', '')}-"
         f"{direction}-"
-        f"{int(time.time())}"
-    )
-
-    pattern_names = ", ".join(
-        p["name"]
-        for p in setup["patterns"]
-    )
-
-    grade = (
-        "VERY STRONG"
-        if setup["score"] >= VERY_STRONG_SCORE
-        else
-        "STRONG"
-        if setup["score"] >= STRONG_SCORE
-        else
-        "QUALIFIED"
+        f"{int(now)}"
     )
 
     message = (
-        f"🟢 ZETA V2 {grade} SIGNAL\n"
+        f"🟢 <b>ZETA V2 QUALIFIED SIGNAL</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"Asset: {asset}\n"
-        f"Direction: {direction}\n"
-        f"Expiry: {EXPIRY_MINUTES} minutes\n"
-        f"Entry: {setup['price']}\n"
-        f"Quality: {setup['score']}/100\n"
-        f"5M ADX: {setup['adx']:.2f}\n"
-        f"RSI: {setup['rsi']:.2f}\n"
-        f"Pullback: {setup['pullback_atr']:.2f} ATR\n"
-        f"Extension: {setup['extension_atr']:.2f} ATR\n"
-        f"Patterns: {pattern_names}\n"
-        f"Zone touches: {setup['zone_touches']}\n"
-        f"Reason: {', '.join(setup['reasons'])}\n"
-        f"Signal ID: {signal_id}\n"
+        f"<b>Asset:</b> {asset}\n"
+        f"<b>Direction:</b> {direction}\n"
+        f"<b>Score:</b> {setup['score']}/100\n"
+        f"<b>Pattern:</b> {setup['pattern']}\n"
+        f"<b>Trend:</b> {setup['trend']}\n"
+        f"<b>RSI:</b> {setup['rsi']}\n"
+        f"<b>ADX:</b> {setup['adx']}\n"
+        f"<b>Pullback:</b> {setup['pullback_atr']} ATR\n"
+        f"<b>Room:</b> {setup['room_atr']} ATR\n"
+        f"<b>Extension:</b> {setup['extension_atr']} ATR\n"
+        f"<b>Expiry:</b> {EXPIRY_MINUTES}m\n"
+        f"<b>Stake:</b> ${STAKE:.2f}\n"
+        f"<b>Signal ID:</b> <code>{signal_id}</code>\n"
         f"━━━━━━━━━━━━━━━━━━"
     )
 
-    print(message)
+    send_telegram(message)
 
-    telegram(message)
+    print(
+        f"[SIGNAL] {asset} "
+        f"{direction} "
+        f"score={setup['score']} "
+        f"pattern={setup['pattern']}"
+    )
 
     if not AUTO_TRADE:
-        return None
+        return False
 
     try:
-
-        action = (
-            "call"
-            if direction == "CALL"
-            else
-            "put"
-        )
 
         success, trade_id = iq.buy(
             STAKE,
@@ -1892,78 +1445,76 @@ def execute_trade(setup):
         )
 
         if not success:
-
-            telegram(
-                f"❌ ZETA V2 ORDER FAILED\n"
-                f"Asset: {asset}\n"
-                f"Direction: {direction}\n"
-                f"Signal: {signal_id}"
+            send_telegram(
+                f"🔴 <b>ORDER FAILED</b>\n"
+                f"{asset} {direction}\n"
+                f"Signal: <code>{signal_id}</code>"
             )
 
-            return None
+            print(
+                f"[ORDER FAILED] "
+                f"{asset} {direction}"
+            )
 
-        asset_last_trade[asset] = time.time()
+            return False
 
-        trade = {
+        asset_last_trade[asset] = now
+
+        opened_trades[str(trade_id)] = {
+            "trade_id": str(trade_id),
             "signal_id": signal_id,
-            "trade_id": trade_id,
             "asset": asset,
             "direction": direction,
             "stake": STAKE,
             "score": setup["score"],
-            "patterns": pattern_names,
-            "opened_at": time.time()
+            "pattern": setup["pattern"],
+            "opened_at": now,
         }
 
-        opened_trades.append(trade)
+        print(
+            f"[TRADE OPENED] "
+            f"{asset} {direction} "
+            f"ID={trade_id}"
+        )
 
-        telegram(
-            f"🚀 ZETA V2 DEMO TRADE OPENED\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"Trade: #{len(opened_trades)}/{TEST_TARGET}\n"
+        send_telegram(
+            f"🚀 <b>DEMO TRADE OPENED</b>\n"
             f"Asset: {asset}\n"
             f"Direction: {direction}\n"
             f"Stake: ${STAKE:.2f}\n"
-            f"Expiry: {EXPIRY_MINUTES} minutes\n"
-            f"Quality: {setup['score']}/100\n"
-            f"Trade ID: {trade_id}\n"
-            f"Signal ID: {signal_id}\n"
-            f"━━━━━━━━━━━━━━━━━━"
+            f"Expiry: {EXPIRY_MINUTES}m\n"
+            f"Score: {setup['score']}/100\n"
+            f"Trade ID: <code>{trade_id}</code>"
         )
 
-        return trade
+        return True
 
     except Exception as e:
 
         print(
-            "Trade execution error:",
-            e
+            f"[ORDER ERROR] "
+            f"{asset}: {e}"
         )
 
-        telegram(
-            f"❌ ZETA V2 EXECUTION ERROR\n"
-            f"{asset} {direction}\n"
-            f"{e}"
+        send_telegram(
+            f"🔴 <b>ORDER ERROR</b>\n"
+            f"Asset: {asset}\n"
+            f"Error: <code>{str(e)[:400]}</code>"
         )
 
-        return None
+        return False
 
 
 # ============================================================
-# RESULT TRACKING
+# TRADE RESULT
 # ============================================================
 
-def check_trade_result(trade):
+def check_trade_result(trade_id, trade):
 
     global wins
     global losses
     global draws
     global net_pl
-
-    trade_id = trade["trade_id"]
-
-    if trade_id in seen_trade_ids:
-        return True
 
     try:
 
@@ -1971,260 +1522,311 @@ def check_trade_result(trade):
             trade_id
         )
 
+        if result is None:
+            return False
+
+        result = safe_float(result)
+
+        if result == 0:
+            outcome = "DRAW"
+            draws += 1
+
+        elif result > 0:
+            outcome = "WIN"
+            wins += 1
+
+        else:
+            outcome = "LOSS"
+            losses += 1
+
+        net_pl += result
+
+        completed_trades[str(trade_id)] = {
+            **trade,
+            "result": result,
+            "outcome": outcome,
+            "completed_at": time.time(),
+        }
+
+        if outcome == "WIN":
+            emoji = "🟢"
+        elif outcome == "LOSS":
+            emoji = "🔴"
+        else:
+            emoji = "🟡"
+
+        send_telegram(
+            f"{emoji} <b>TRADE {outcome}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Asset: {trade['asset']}\n"
+            f"Direction: {trade['direction']}\n"
+            f"Score: {trade['score']}/100\n"
+            f"Pattern: {trade['pattern']}\n"
+            f"Result: ${result:.2f}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Wins: {wins}\n"
+            f"Losses: {losses}\n"
+            f"Draws: {draws}\n"
+            f"Completed: {len(completed_trades)}/{TEST_TARGET}\n"
+            f"Net P/L: ${net_pl:.2f}"
+        )
+
+        print(
+            f"[RESULT] "
+            f"{trade['asset']} "
+            f"{trade['direction']} "
+            f"{outcome} "
+            f"${result:.2f}"
+        )
+
+        return True
+
     except Exception as e:
 
         print(
-            "Result error:",
-            e
+            f"Result check error "
+            f"{trade_id}: {e}"
         )
 
         return False
 
-    if result is None:
-        return False
 
-    try:
-        result = float(result)
-    except Exception:
-        return False
+# ============================================================
+# CHECK ALL OPEN TRADES
+# ============================================================
 
-    seen_trade_ids.add(trade_id)
+def check_open_trades():
 
-    if result > 0:
+    finished = []
 
-        outcome = "WIN"
-        wins += 1
+    for trade_id, trade in list(
+        opened_trades.items()
+    ):
 
-    elif result < 0:
+        if trade_id in seen_trade_ids:
+            finished.append(trade_id)
+            continue
 
-        outcome = "LOSS"
-        losses += 1
+        opened_at = trade.get(
+            "opened_at",
+            time.time()
+        )
 
-    else:
+        # Give IQ Option enough time to settle.
+        if (
+            time.time() -
+            opened_at <
+            (EXPIRY_MINUTES * 60) + 10
+        ):
+            continue
 
-        outcome = "DRAW"
-        draws += 1
+        completed = check_trade_result(
+            trade_id,
+            trade
+        )
 
-    net_pl += result
+        if completed:
+            seen_trade_ids.add(
+                trade_id
+            )
 
-    trade["result"] = result
-    trade["outcome"] = outcome
+            finished.append(
+                trade_id
+            )
 
-    completed_trades.append(
-        trade
-    )
-
-    win_rate = (
-        wins / len(completed_trades) * 100
-        if completed_trades
-        else 0
-    )
-
-    telegram(
-        f"{'🟢' if outcome == 'WIN' else '🔴' if outcome == 'LOSS' else '🟡'} "
-        f"ZETA V2 {outcome}\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"Asset: {trade['asset']}\n"
-        f"Direction: {trade['direction']}\n"
-        f"Quality: {trade['score']}/100\n"
-        f"Result: ${result:+.2f}\n"
-        f"Completed: {len(completed_trades)}/{TEST_TARGET}\n"
-        f"Wins: {wins}\n"
-        f"Losses: {losses}\n"
-        f"Draws: {draws}\n"
-        f"Win rate: {win_rate:.2f}%\n"
-        f"Net P/L: ${net_pl:+.2f}\n"
-        f"━━━━━━━━━━━━━━━━━━"
-    )
-
-    return True
+    for trade_id in finished:
+        opened_trades.pop(
+            trade_id,
+            None
+        )
 
 
 # ============================================================
 # STATUS
 # ============================================================
 
-def send_status():
+def send_status(force=False):
 
     global last_status_time
 
-    if time.time() - last_status_time < 300:
+    now = time.time()
+
+    if (
+        not force and
+        now - last_status_time < 300
+    ):
         return
 
-    last_status_time = time.time()
+    last_status_time = now
 
     completed = len(
         completed_trades
     )
 
-    active = (
-        len(opened_trades)
-        - completed
+    active = len(
+        opened_trades
     )
 
-    win_rate = (
-        wins / completed * 100
-        if completed
-        else 0
-    )
+    total = wins + losses + draws
+
+    if wins + losses > 0:
+        win_rate = (
+            wins /
+            (wins + losses)
+        ) * 100
+    else:
+        win_rate = 0.0
 
     runtime = int(
-        time.time() - start_time
+        now - start_time
     )
 
     hours = runtime // 3600
-
     minutes = (
         runtime % 3600
     ) // 60
 
-    seconds = runtime % 60
-
     message = (
-        f"🟡 ZETA V2 STATUS\n"
+        f"🟡 <b>{VERSION} STATUS</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"Opened: {len(opened_trades)}/{TEST_TARGET}\n"
         f"Completed: {completed}/{TEST_TARGET}\n"
+        f"Active: {active}\n"
         f"Wins: {wins}\n"
         f"Losses: {losses}\n"
         f"Draws: {draws}\n"
-        f"Win Rate: {win_rate:.2f}%\n"
-        f"Net Demo P/L: ${net_pl:+.2f}\n"
-        f"Active: {active}\n"
-        f"Runtime: {hours:02d}:{minutes:02d}:{seconds:02d}\n"
+        f"Win rate: {win_rate:.2f}%\n"
+        f"Net demo P/L: ${net_pl:.2f}\n"
+        f"Runtime: {hours}h {minutes}m\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"Quality minimum: {MIN_SCORE}/100\n"
-        f"Expiry: {EXPIRY_MINUTES} minutes\n"
-        f"5M Trend: ON\n"
-        f"1M Pullback: ON\n"
-        f"Fresh Rejection: ON\n"
-        f"Momentum: ON\n"
-        f"Room Filter: ON\n"
-        f"Mode: PRACTICE"
+        f"Account: {'PRACTICE' if PRACTICE else 'REAL'}\n"
+        f"Stake: ${STAKE:.2f}\n"
+        f"Expiry: {EXPIRY_MINUTES}m\n"
+        f"Auto-trading: {'ON' if AUTO_TRADE else 'OFF'}"
     )
 
-    telegram(message)
+    send_telegram(message)
+
+    print(
+        f"[STATUS] "
+        f"{completed}/{TEST_TARGET} "
+        f"W={wins} "
+        f"L={losses} "
+        f"D={draws} "
+        f"P/L=${net_pl:.2f}"
+    )
 
 
 # ============================================================
-# MAIN SCANNER
+# FINAL REPORT
+# ============================================================
+
+def send_final_report():
+
+    total = wins + losses + draws
+
+    if wins + losses > 0:
+        win_rate = (
+            wins /
+            (wins + losses)
+        ) * 100
+    else:
+        win_rate = 0.0
+
+    message = (
+        f"🏁 <b>{VERSION} TEST COMPLETE</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"Completed trades: {total}\n"
+        f"Wins: {wins}\n"
+        f"Losses: {losses}\n"
+        f"Draws: {draws}\n"
+        f"Win rate: {win_rate:.2f}%\n"
+        f"Net demo P/L: ${net_pl:.2f}\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"Stake: ${STAKE:.2f}\n"
+        f"Expiry: {EXPIRY_MINUTES}m\n"
+        f"Mode: {'PRACTICE' if PRACTICE else 'REAL'}"
+    )
+
+    send_telegram(message)
+
+    print(message)
+
+
+# ============================================================
+# SCANNER LOOP
 # ============================================================
 
 def scanner_loop():
 
-    global opened_trades
+    global start_time
+
+    start_time = time.time()
+
+    print(
+        f"🚀 {VERSION} scanner started"
+    )
 
     assets = discover_otc_assets()
 
+    if not assets:
+        raise RuntimeError(
+            "No currently open OTC instruments were discovered."
+        )
+
     print(
-        f"OTC assets discovered: "
+        f"OTC markets discovered: "
         f"{len(assets)}"
     )
 
-    telegram(
-        f"🔵 ZETA V2 SCANNER STARTED\n"
+    send_telegram(
+        f"🔵 <b>{VERSION} SCANNER STARTED</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
         f"OTC assets: {len(assets)}\n"
+        f"Context: 5M\n"
+        f"Entry: 1M\n"
+        f"Expiry: {EXPIRY_MINUTES}m\n"
+        f"Minimum score: {MIN_SCORE}\n"
         f"Target: {TEST_TARGET} completed trades\n"
-        f"Minimum quality: {MIN_SCORE}/100\n"
-        f"Expiry: {EXPIRY_MINUTES} minutes"
+        f"Mode: {'PRACTICE' if PRACTICE else 'REAL'}"
     )
 
-    last_discovery = time.time()
+    send_status(force=True)
+
+    scan_counter = 0
 
     while True:
 
         try:
 
-            # --------------------------------
-            # Stop after 50 completed trades
-            # --------------------------------
+            # ------------------------------------------------
+            # CHECK COMPLETED TRADES
+            # ------------------------------------------------
 
-            if len(completed_trades) >= TEST_TARGET:
+            check_open_trades()
 
-                win_rate = (
-                    wins
-                    / len(completed_trades)
-                    * 100
-                )
+            completed_count = len(
+                completed_trades
+            )
 
-                telegram(
-                    f"🏁 ZETA V2 TEST COMPLETE\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"Trades: {len(completed_trades)}\n"
-                    f"Wins: {wins}\n"
-                    f"Losses: {losses}\n"
-                    f"Draws: {draws}\n"
-                    f"Win Rate: {win_rate:.2f}%\n"
-                    f"Net P/L: ${net_pl:+.2f}\n"
-                    f"━━━━━━━━━━━━━━━━━━"
-                )
+            # ------------------------------------------------
+            # STOP AFTER 50 COMPLETED TRADES
+            # ------------------------------------------------
+
+            if completed_count >= TEST_TARGET:
+
+                send_final_report()
 
                 print(
-                    "50 completed trades reached."
+                    "🏁 Test target reached."
                 )
 
                 break
 
-            # --------------------------------
-            # Refresh OTC list
-            # --------------------------------
+            # ------------------------------------------------
+            # LIMIT ACTIVE POSITIONS
+            # ------------------------------------------------
 
-            if (
-                time.time()
-                - last_discovery
-                > 600
-            ):
-
-                assets = discover_otc_assets()
-
-                last_discovery = time.time()
-
-                print(
-                    f"OTC assets refreshed: "
-                    f"{len(assets)}"
-                )
-
-            # --------------------------------
-            # Check active results
-            # --------------------------------
-
-            for trade in list(
-                opened_trades
-            ):
-
-                if (
-                    trade
-                    not in completed_trades
-                ):
-
-                    age = (
-                        time.time()
-                        - trade["opened_at"]
-                    )
-
-                    # Wait slightly beyond
-                    # the 2-minute expiry.
-                    if age >= (
-                        EXPIRY_MINUTES
-                        * 60
-                        + 8
-                    ):
-
-                        check_trade_result(
-                            trade
-                        )
-
-            # --------------------------------
-            # Don't open too many simultaneous
-            # positions.
-            # --------------------------------
-
-            active_count = (
-                len(opened_trades)
-                - len(completed_trades)
-            )
-
-            if active_count >= 3:
+            if len(opened_trades) >= 3:
 
                 send_status()
 
@@ -2232,24 +1834,39 @@ def scanner_loop():
 
                 continue
 
-            # --------------------------------
-            # Scan
-            # --------------------------------
+            # ------------------------------------------------
+            # REFRESH OTC ASSETS
+            # ------------------------------------------------
+
+            if scan_counter % 60 == 0:
+
+                discovered = (
+                    discover_otc_assets()
+                )
+
+                if discovered:
+                    assets = discovered
+
+                    print(
+                        f"OTC assets refreshed: "
+                        f"{len(assets)}"
+                    )
+
+            scan_counter += 1
+
+            # ------------------------------------------------
+            # SCAN ASSETS
+            # ------------------------------------------------
 
             for asset in assets:
 
-                if (
-                    len(completed_trades)
-                    >= TEST_TARGET
-                ):
+                if len(opened_trades) >= 3:
                     break
 
-                active_count = (
-                    len(opened_trades)
-                    - len(completed_trades)
-                )
-
-                if active_count >= 3:
+                if (
+                    len(completed_trades) >=
+                    TEST_TARGET
+                ):
                     break
 
                 try:
@@ -2266,7 +1883,10 @@ def scanner_loop():
                         CANDLES_1M
                     )
 
-                    if not candles_5m or not candles_1m:
+                    if (
+                        not candles_5m or
+                        not candles_1m
+                    ):
                         continue
 
                     setup = analyze_asset(
@@ -2275,30 +1895,34 @@ def scanner_loop():
                         candles_1m
                     )
 
-                    if setup is None:
+                    if not setup:
                         continue
 
-                    # --------------------------------
-                    # Final hard quality check
-                    # --------------------------------
-
-                    if setup["score"] < MIN_SCORE:
-                        continue
+                    print(
+                        f"QUALIFIED: "
+                        f"{asset} "
+                        f"{setup['direction']} "
+                        f"score={setup['score']} "
+                        f"pattern={setup['pattern']}"
+                    )
 
                     execute_trade(
+                        asset,
                         setup
                     )
 
-                    # Don't immediately scan
-                    # the same asset again.
-                    time.sleep(0.5)
+                    time.sleep(1)
 
                 except Exception as e:
 
                     print(
-                        f"Scan error "
+                        f"Asset scan error "
                         f"{asset}: {e}"
                     )
+
+            # ------------------------------------------------
+            # STATUS
+            # ------------------------------------------------
 
             send_status()
 
@@ -2307,63 +1931,138 @@ def scanner_loop():
         except KeyboardInterrupt:
 
             print(
-                "Scanner stopped."
+                "🛑 Scanner stopped."
+            )
+
+            send_telegram(
+                f"🛑 <b>{VERSION} STOPPED</b>\n"
+                f"Completed: "
+                f"{len(completed_trades)}\n"
+                f"Wins: {wins}\n"
+                f"Losses: {losses}\n"
+                f"Net P/L: ${net_pl:.2f}"
             )
 
             break
 
-        except Exception:
+        except Exception as e:
+
+            print(
+                f"Scanner loop error: {e}"
+            )
 
             traceback.print_exc()
+
+            send_telegram(
+                f"⚠️ <b>SCANNER ERROR</b>\n"
+                f"<code>{str(e)[:500]}</code>\n"
+                f"Scanner will continue."
+            )
 
             time.sleep(10)
 
 
 # ============================================================
-# ENTRY
+# MAIN
+# ============================================================
+
+def main():
+
+    print(
+        "========================================"
+    )
+
+    print(
+        f"      {VERSION}"
+    )
+
+    print(
+        "      IQ OPTION OTC DEMO SCANNER"
+    )
+
+    print(
+        "========================================"
+    )
+
+    # --------------------------------------------------------
+    # CHECK SECRETS
+    # --------------------------------------------------------
+
+    missing = []
+
+    if not IQ_EMAIL:
+        missing.append("IQ_EMAIL")
+
+    if not IQ_PASSWORD:
+        missing.append("IQ_PASSWORD")
+
+    if not TELEGRAM_TOKEN:
+        missing.append("TELEGRAM_TOKEN")
+
+    if not TELEGRAM_CHAT_ID:
+        missing.append("TELEGRAM_CHAT_ID")
+
+    if missing:
+
+        error = (
+            "Missing GitHub Secrets: "
+            + ", ".join(missing)
+        )
+
+        print(
+            f"❌ {error}"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # CONNECT
+    # --------------------------------------------------------
+
+    try:
+
+        connect()
+
+    except Exception as e:
+
+        print(
+            f"❌ Startup connection error: {e}"
+        )
+
+        traceback.print_exc()
+
+        send_telegram(
+            f"🔴 <b>{VERSION} STARTUP FAILED</b>\n"
+            f"<code>{str(e)[:500]}</code>"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # START SCANNER
+    # --------------------------------------------------------
+
+    try:
+
+        scanner_loop()
+
+    except Exception as e:
+
+        print(
+            f"❌ Fatal scanner error: {e}"
+        )
+
+        traceback.print_exc()
+
+        send_telegram(
+            f"🔴 <b>{VERSION} CRASHED</b>\n"
+            f"<code>{str(e)[:500]}</code>"
+        )
+
+
+# ============================================================
+# REQUIRED FOR main.py
 # ============================================================
 
 if __name__ == "__main__":
-
-    print(
-        "========================================"
-    )
-
-    print(
-        "       ZETA V2 HIGH QUALITY SCANNER"
-    )
-
-    print(
-        "========================================"
-    )
-
-    print(
-        f"Expiry: {EXPIRY_MINUTES} minutes"
-    )
-
-    print(
-        f"Minimum quality: {MIN_SCORE}/100"
-    )
-
-    print(
-        f"Practice: {PRACTICE}"
-    )
-
-    print(
-        f"Auto trade: {AUTO_TRADE}"
-    )
-
-    print(
-        "========================================"
-    )
-
-    if not IQ_EMAIL or not IQ_PASSWORD:
-
-        raise RuntimeError(
-            "IQ_EMAIL and IQ_PASSWORD "
-            "environment variables are required."
-        )
-
-    connect()
-
-    scanner_loop()
+    main()
