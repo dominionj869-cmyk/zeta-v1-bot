@@ -13,6 +13,7 @@ import iqoptionapi.constants as OP_code
 # ZETA V2.4 — HIGH QUALITY TREND PULLBACK
 # REAL IQ OPTION OTC DISCOVERY
 # PRACTICE / DEMO ONLY
+# RESULT TRACKING REMOVED
 # ============================================================
 
 BALANCE_MODE = "PRACTICE"
@@ -33,10 +34,10 @@ STATUS_INTERVAL = 300
 RECONNECT_INTERVAL = 30
 DISCOVERY_INTERVAL = 1800
 
-MAX_ACTIVE_TRADES = 3
-TARGET_COMPLETED_TRADES = 50
+TARGET_TRADES = 50
 
 ASSET_LOCK_SECONDS = 300
+
 
 # ============================================================
 # STRATEGY SETTINGS
@@ -89,19 +90,10 @@ api = None
 
 otc_assets = []
 
-active_trades = {}
-
 last_signal_time = {}
 last_trade_time = {}
 
 total_trades = 0
-completed_trades = 0
-
-wins = 0
-losses = 0
-draws = 0
-
-total_profit = 0.0
 
 start_time = time.time()
 
@@ -2028,141 +2020,6 @@ def format_signal(signal):
 
 
 # ============================================================
-# TRADE RESULT
-# ============================================================
-
-def check_trade_result(trade):
-
-    global wins
-    global losses
-    global draws
-    global total_profit
-    global completed_trades
-
-    trade_id = trade["trade_id"]
-
-    try:
-
-        result = api.check_win_v4(
-            trade_id
-        )
-
-        if result is None:
-            return None
-
-        result = safe_float(
-            result,
-            None,
-        )
-
-        if result is None:
-            return None
-
-        profit = result
-
-        total_profit += profit
-        completed_trades += 1
-
-        if profit > 0:
-
-            outcome = "WIN"
-            wins += 1
-            emoji = "✅"
-
-        elif profit < 0:
-
-            outcome = "LOSS"
-            losses += 1
-            emoji = "❌"
-
-        else:
-
-            outcome = "DRAW"
-            draws += 1
-            emoji = "⚪"
-
-        settled = (
-            wins
-            + losses
-            + draws
-        )
-
-        win_rate = (
-            wins
-            / settled
-            * 100
-            if settled > 0
-            else 0
-        )
-
-        message = (
-            f"{emoji} *ZETA V2 {outcome}*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"*Asset:* {trade['asset']}\n"
-            f"*Direction:* {trade['direction']}\n"
-            f"*Signal ID:* {trade['signal_id']}\n"
-            f"*Result:* {profit:+.2f}\n"
-            f"*Completed:* {completed_trades}/{TARGET_COMPLETED_TRADES}\n"
-            f"*Wins:* {wins}\n"
-            f"*Losses:* {losses}\n"
-            f"*Draws:* {draws}\n"
-            f"*Win rate:* {win_rate:.2f}%\n"
-            f"*Net P/L:* ${total_profit:+.2f}\n"
-            "━━━━━━━━━━━━━━━━━━"
-        )
-
-        send_telegram(message)
-
-        print(
-            "[TRADE RESULT]",
-            outcome,
-            trade["asset"],
-            profit,
-        )
-
-        return outcome
-
-    except Exception as e:
-
-        print(
-            "[RESULT ERROR]",
-            trade_id,
-            repr(e),
-        )
-
-        return None
-
-
-def update_active_trades():
-
-    if not active_trades:
-        return
-
-    finished = []
-
-    for trade_id, trade in list(
-        active_trades.items()
-    ):
-
-        result = check_trade_result(
-            trade
-        )
-
-        if result is not None:
-
-            finished.append(
-                trade_id
-            )
-
-    for trade_id in finished:
-
-        active_trades.pop(
-            trade_id,
-            None,
-        )
-
-
-# ============================================================
 # EXECUTE PRACTICE TRADE
 # ============================================================
 
@@ -2171,18 +2028,6 @@ def execute_demo_trade(signal):
     global total_trades
 
     if api is None:
-        return False
-
-    if (
-        len(active_trades)
-        >= MAX_ACTIVE_TRADES
-    ):
-
-        print(
-            "[TRADE BLOCKED] "
-            "Maximum active trades reached."
-        )
-
         return False
 
     asset = signal["asset"]
@@ -2321,6 +2166,12 @@ def execute_demo_trade(signal):
 
         return False
 
+    total_trades += 1
+
+    last_trade_time[
+        asset
+    ] = time.time()
+
     if trade_id is None:
 
         print(
@@ -2331,34 +2182,20 @@ def execute_demo_trade(signal):
         send_telegram(
             "🟡 *ZETA V2 ORDER ACCEPTED*\n"
             "━━━━━━━━━━━━━━━━━━\n"
+            f"*Trade number:* {total_trades}/{TARGET_TRADES}\n"
             f"*Asset:* {asset}\n"
             f"*Direction:* {direction}\n"
             f"*Stake:* ${STAKE:.2f}\n"
             f"*Expiry:* {EXPIRY_MINUTES} minutes\n"
             f"*Signal ID:* {signal['signal_id']}\n"
-            "*Trade ID:* NOT RETURNED"
+            "*Trade ID:* NOT RETURNED\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "📋 *Track result manually in IQ Option.*"
         )
 
         return True
 
     trade_id = str(trade_id)
-
-    total_trades += 1
-
-    last_trade_time[
-        asset
-    ] = time.time()
-
-    active_trades[
-        trade_id
-    ] = {
-        "trade_id": trade_id,
-        "signal_id": signal["signal_id"],
-        "asset": asset,
-        "direction": direction,
-        "stake": STAKE,
-        "opened_at": time.time(),
-    }
 
     print(
         "[BUY SUCCESS]",
@@ -2368,6 +2205,7 @@ def execute_demo_trade(signal):
     send_telegram(
         "🚀 *ZETA V2 DEMO TRADE OPENED*\n"
         "━━━━━━━━━━━━━━━━━━\n"
+        f"*Trade #:* {total_trades}/{TARGET_TRADES}\n"
         f"*Asset:* {asset}\n"
         f"*Direction:* *{direction}*\n"
         f"*Score:* *{signal['score']}/100*\n"
@@ -2376,7 +2214,8 @@ def execute_demo_trade(signal):
         f"*Trade ID:* {trade_id}\n"
         f"*Signal ID:* {signal['signal_id']}\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "🤖 *PRACTICE / DEMO ONLY*"
+        "🤖 *PRACTICE / DEMO ONLY*\n"
+        "📋 *Track the result manually in IQ Option.*"
     )
 
     return True
@@ -2552,37 +2391,13 @@ def send_heartbeat():
     except Exception:
         pass
 
-    settled = (
-        wins
-        + losses
-        + draws
-    )
-
-    win_rate = (
-        wins
-        / settled
-        * 100
-        if settled > 0
-        else 0.0
-    )
-
     message = (
         "🟡 *ZETA V2 HEARTBEAT*\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "*Status:* ONLINE\n"
         f"*OTC feeds:* {len(otc_assets)}\n"
-        f"*Opened trades:* {total_trades}\n"
-        f"*Completed:* "
-        f"{completed_trades}/{TARGET_COMPLETED_TRADES}\n"
-        f"*Wins:* {wins}\n"
-        f"*Losses:* {losses}\n"
-        f"*Draws:* {draws}\n"
-        f"*Win rate:* {win_rate:.2f}%\n"
-        f"*Net demo P/L:* "
-        f"${total_profit:+.2f}\n"
-        f"*Active trades:* "
-        f"{len(active_trades)} / "
-        f"{MAX_ACTIVE_TRADES}\n"
+        f"*Demo orders opened:* "
+        f"{total_trades}/{TARGET_TRADES}\n"
         f"*Runtime:* {runtime_string()}\n"
         "━━━━━━━━━━━━━━━━━━\n"
         f"*Account:* {BALANCE_MODE}\n"
@@ -2600,6 +2415,9 @@ def send_heartbeat():
         )
 
     message += (
+        "━━━━━━━━━━━━━━━━━━\n"
+        "📋 *Results are tracked manually "
+        "in IQ Option.*\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "🟢 *ZETA V2 SCANNING REAL OTC MARKETS*"
     )
@@ -2670,8 +2488,8 @@ def connect_iq():
 def target_reached():
 
     return (
-        completed_trades
-        >= TARGET_COMPLETED_TRADES
+        total_trades
+        >= TARGET_TRADES
     )
 
 
@@ -2730,7 +2548,8 @@ def run_trader():
         f"*Expiry:* {EXPIRY_MINUTES} minutes\n"
         f"*Minimum score:* {MIN_SCORE}\n"
         f"*Stake:* ${STAKE:.2f}\n"
-        f"*Target:* {TARGET_COMPLETED_TRADES} completed trades\n"
+        f"*Target:* {TARGET_TRADES} demo orders\n"
+        "*Result tracking:* MANUAL\n"
         "*Auto-trading:* ON\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "🔎 Using real IQ Option OTC initialization..."
@@ -2757,6 +2576,7 @@ def run_trader():
                 "*Context:* 5M\n"
                 "*Entry:* 1M\n"
                 f"*Expiry:* {EXPIRY_MINUTES} minutes\n"
+                "*Result tracking:* MANUAL\n"
                 "━━━━━━━━━━━━━━━━━━\n"
                 "ZETA V2 scanning started."
             )
@@ -2791,17 +2611,13 @@ def run_trader():
             if target_reached():
 
                 send_telegram(
-                    "🏁 *ZETA V2 TEST COMPLETE*\n"
+                    "🏁 *ZETA V2 50-TRADE TEST REACHED*\n"
                     "━━━━━━━━━━━━━━━━━━\n"
-                    f"*Completed trades:* "
-                    f"{completed_trades}\n"
-                    f"*Wins:* {wins}\n"
-                    f"*Losses:* {losses}\n"
-                    f"*Draws:* {draws}\n"
-                    f"*Net demo P/L:* "
-                    f"${total_profit:+.2f}\n"
+                    f"*Demo orders opened:* "
+                    f"{total_trades}\n"
+                    "*Results:* Tracked manually in IQ Option\n"
                     "━━━━━━━━━━━━━━━━━━\n"
-                    "The 50-trade Practice test is complete."
+                    "The 50-order Practice test is complete."
                 )
 
                 break
@@ -2848,12 +2664,6 @@ def run_trader():
                     )
 
                     continue
-
-            # ------------------------------------------------
-            # RESULTS
-            # ------------------------------------------------
-
-            update_active_trades()
 
             # ------------------------------------------------
             # OTC REFRESH
@@ -2911,8 +2721,8 @@ def run_trader():
                     )
 
                     print(
-                        "Active trades:",
-                        len(active_trades),
+                        "Demo orders opened:",
+                        total_trades,
                     )
 
                     for item in list(
@@ -2920,12 +2730,6 @@ def run_trader():
                     ):
 
                         if target_reached():
-                            break
-
-                        if (
-                            len(active_trades)
-                            >= MAX_ACTIVE_TRADES
-                        ):
                             break
 
                         asset = item["asset"]
@@ -3090,8 +2894,12 @@ def main():
 
     print(
         "Target:",
-        TARGET_COMPLETED_TRADES,
-        "completed trades"
+        TARGET_TRADES,
+        "demo orders"
+    )
+
+    print(
+        "Result tracking: MANUAL"
     )
 
     print(
