@@ -14,6 +14,8 @@ import iqoptionapi.constants as OP_code
 # REAL IQ OPTION OTC DISCOVERY
 # PRACTICE / DEMO ONLY
 # RESULT TRACKING REMOVED
+#
+# FOCUSED ASSET TEST
 # ============================================================
 
 BALANCE_MODE = "PRACTICE"
@@ -37,6 +39,30 @@ DISCOVERY_INTERVAL = 1800
 TARGET_TRADES = 50
 
 ASSET_LOCK_SECONDS = 300
+
+
+# ============================================================
+# FOCUSED ASSETS
+#
+# These are the 8 assets that won in the previous 10-trade
+# test, plus EURUSD-OTC and AUDUSD-OTC.
+#
+# The bot still uses REAL IQ Option OTC discovery.
+# It simply filters the discovered markets to this list.
+# ============================================================
+
+FOCUSED_ASSETS = [
+    "COFFEE-OTC",
+    "USDSGD-OTC",
+    "USDPLN-OTC",
+    "COSMOS-OTC",
+    "USDMYR-OTC",
+    "EURCAD-OTC",
+    "USDTRY-OTC",
+    "ONDO-OTC",
+    "EURUSD-OTC",
+    "AUDUSD-OTC",
+]
 
 
 # ============================================================
@@ -194,6 +220,39 @@ def send_telegram(text):
         )
 
     return False
+
+
+# ============================================================
+# ASSET NORMALIZATION
+# ============================================================
+
+def normalize_asset_key(name):
+    """
+    Makes IQ Option asset names comparable.
+
+    Examples:
+        EURUSD-OTC
+        EUR/USD-OTC
+        EUR_USD-OTC
+        EUR USD-OTC
+
+    become the same comparison key.
+    """
+
+    if not isinstance(name, str):
+        return ""
+
+    return "".join(
+        ch
+        for ch in name.upper()
+        if ch.isalnum()
+    )
+
+
+FOCUSED_ASSET_KEYS = {
+    normalize_asset_key(asset)
+    for asset in FOCUSED_ASSETS
+}
 
 
 # ============================================================
@@ -373,12 +432,15 @@ def discover_otc_from_initialization(data):
 
     # --------------------------------------------------------
     # RECURSIVE WALKER
+    #
+    # We intentionally discover all available OTC assets
+    # first, then filter to the focused list later.
+    #
+    # This prevents the first 70 discovered markets from
+    # accidentally hiding one of our selected assets.
     # --------------------------------------------------------
 
     def walk(node, market_type="unknown"):
-
-        if len(found) >= MAX_OTC_ASSETS:
-            return
 
         if isinstance(node, dict):
 
@@ -393,9 +455,6 @@ def discover_otc_from_initialization(data):
                 if isinstance(actives, dict):
 
                     for active_id, active in actives.items():
-
-                        if len(found) >= MAX_OTC_ASSETS:
-                            return
 
                         if not isinstance(active, dict):
                             continue
@@ -442,7 +501,7 @@ def discover_otc_from_initialization(data):
                         )
 
                         key = (
-                            name,
+                            normalize_asset_key(name),
                             numeric_id,
                         )
 
@@ -493,9 +552,6 @@ def discover_otc_from_initialization(data):
         elif isinstance(node, list):
 
             for item in node:
-
-                if len(found) >= MAX_OTC_ASSETS:
-                    return
 
                 walk(
                     item,
@@ -581,7 +637,7 @@ def discover_otc_from_initialization(data):
             "instruments found."
         )
 
-    return found[:MAX_OTC_ASSETS]
+    return found
 
 
 # ============================================================
@@ -2271,7 +2327,7 @@ def test_candle_access(assets):
             )
 
     print(
-        "\nWORKING OTC CANDLE FEEDS:",
+        "\nWORKING FOCUSED OTC CANDLE FEEDS:",
         len(working),
     )
 
@@ -2279,7 +2335,129 @@ def test_candle_access(assets):
 
 
 # ============================================================
-# DISCOVER + TEST OTC
+# FILTER DISCOVERED OTC TO FOCUSED ASSETS
+# ============================================================
+
+def filter_focused_assets(discovered):
+
+    print("\n" + "=" * 70)
+    print("FILTERING TO FOCUSED ZETA ASSET GROUP")
+    print("=" * 70)
+
+    selected = []
+
+    available_keys = set()
+
+    for item in discovered:
+
+        asset = item["asset"]
+
+        key = normalize_asset_key(
+            asset
+        )
+
+        available_keys.add(key)
+
+        if key in FOCUSED_ASSET_KEYS:
+
+            selected.append(item)
+
+    # --------------------------------------------------------
+    # Preserve the order of FOCUSED_ASSETS
+    # --------------------------------------------------------
+
+    selected_by_key = {
+        normalize_asset_key(
+            item["asset"]
+        ): item
+        for item in selected
+    }
+
+    ordered = []
+
+    for requested in FOCUSED_ASSETS:
+
+        key = normalize_asset_key(
+            requested
+        )
+
+        item = selected_by_key.get(
+            key
+        )
+
+        if item is not None:
+            ordered.append(item)
+
+    # --------------------------------------------------------
+    # REPORT
+    # --------------------------------------------------------
+
+    print("")
+    print(
+        "FOCUSED ASSETS REQUESTED:",
+        len(FOCUSED_ASSETS),
+    )
+
+    print(
+        "FOCUSED ASSETS DISCOVERED:",
+        len(ordered),
+    )
+
+    print("")
+
+    for requested in FOCUSED_ASSETS:
+
+        key = normalize_asset_key(
+            requested
+        )
+
+        matched = selected_by_key.get(
+            key
+        )
+
+        if matched:
+
+            print(
+                "[FOCUSED OK]",
+                requested,
+                "->",
+                matched["asset"],
+                "ID=",
+                matched["active_id"],
+            )
+
+        else:
+
+            print(
+                "[FOCUSED NOT FOUND]",
+                requested,
+            )
+
+    print("")
+
+    if ordered:
+
+        print(
+            "[ACTIVE FOCUSED OTC MARKETS]"
+        )
+
+        for index, item in enumerate(
+            ordered,
+            start=1,
+        ):
+
+            print(
+                f"{index:02d}. "
+                f"{item['asset']:<20} "
+                f"{item['market_type']:<12} "
+                f"ID={item['active_id']}"
+            )
+
+    return ordered
+
+
+# ============================================================
+# DISCOVER + FILTER + TEST OTC
 # ============================================================
 
 def refresh_otc_assets():
@@ -2297,6 +2475,10 @@ def refresh_otc_assets():
 
         return False
 
+    # --------------------------------------------------------
+    # Discover REAL IQ Option OTC markets
+    # --------------------------------------------------------
+
     discovered = (
         discover_otc_from_initialization(
             raw_data
@@ -2311,8 +2493,29 @@ def refresh_otc_assets():
 
         return False
 
-    working = test_candle_access(
+    # --------------------------------------------------------
+    # Filter to selected 10 assets
+    # --------------------------------------------------------
+
+    focused = filter_focused_assets(
         discovered
+    )
+
+    if not focused:
+
+        print(
+            "[OTC] None of the focused assets "
+            "were found in IQ Option discovery."
+        )
+
+        return False
+
+    # --------------------------------------------------------
+    # Test only focused assets
+    # --------------------------------------------------------
+
+    working = test_candle_access(
+        focused
     )
 
     if working:
@@ -2324,14 +2527,25 @@ def refresh_otc_assets():
         )
 
         print(
-            "[OTC] READY:",
+            "\n[OTC] FOCUSED FEEDS READY:",
             len(otc_assets),
         )
+
+        print(
+            "[OTC] ZETA will scan ONLY:"
+        )
+
+        for item in otc_assets:
+
+            print(
+                " -",
+                item["asset"],
+            )
 
         return True
 
     print(
-        "[OTC] Assets were discovered, "
+        "[OTC] Focused assets were discovered, "
         "but candle feeds did not respond."
     )
 
@@ -2395,7 +2609,7 @@ def send_heartbeat():
         "🟡 *ZETA V2 HEARTBEAT*\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "*Status:* ONLINE\n"
-        f"*OTC feeds:* {len(otc_assets)}\n"
+        f"*Focused OTC feeds:* {len(otc_assets)}\n"
         f"*Demo orders opened:* "
         f"{total_trades}/{TARGET_TRADES}\n"
         f"*Runtime:* {runtime_string()}\n"
@@ -2416,10 +2630,15 @@ def send_heartbeat():
 
     message += (
         "━━━━━━━━━━━━━━━━━━\n"
+        "🎯 *FOCUSED ASSET TEST*\n"
+        "COFFEE • USDSGD • USDPLN\n"
+        "COSMOS • USDMYR • EURCAD\n"
+        "USDTRY • ONDO • EURUSD • AUDUSD\n"
+        "━━━━━━━━━━━━━━━━━━\n"
         "📋 *Results are tracked manually "
         "in IQ Option.*\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "🟢 *ZETA V2 SCANNING REAL OTC MARKETS*"
+        "🟢 *ZETA V2 SCANNING SELECTED OTC MARKETS*"
     )
 
     send_telegram(message)
@@ -2552,6 +2771,9 @@ def run_trader():
         "*Result tracking:* MANUAL\n"
         "*Auto-trading:* ON\n"
         "━━━━━━━━━━━━━━━━━━\n"
+        "🎯 *FOCUSED ASSET TEST*\n"
+        "10 selected OTC assets\n"
+        "━━━━━━━━━━━━━━━━━━\n"
         "🔎 Using real IQ Option OTC initialization..."
     )
 
@@ -2567,10 +2789,15 @@ def run_trader():
 
         if refresh_success:
 
+            selected_names = ", ".join(
+                item["asset"]
+                for item in otc_assets
+            )
+
             send_telegram(
-                "🟢 *REAL OTC FEEDS READY*\n"
+                "🟢 *FOCUSED OTC FEEDS READY*\n"
                 "━━━━━━━━━━━━━━━━━━\n"
-                f"*Working OTC feeds:* "
+                f"*Working focused feeds:* "
                 f"{len(otc_assets)}\n"
                 "*Data:* REAL IQ OPTION CANDLES\n"
                 "*Context:* 5M\n"
@@ -2578,17 +2805,19 @@ def run_trader():
                 f"*Expiry:* {EXPIRY_MINUTES} minutes\n"
                 "*Result tracking:* MANUAL\n"
                 "━━━━━━━━━━━━━━━━━━\n"
-                "ZETA V2 scanning started."
+                f"*Assets:* {selected_names}\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "ZETA V2 focused scanning started."
             )
 
             break
 
         send_telegram(
-            "🟡 *WAITING FOR OTC MARKETS*\n"
+            "🟡 *WAITING FOR FOCUSED OTC MARKETS*\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "IQ Option connection is active,\n"
-            "but no working OTC candle feeds "
-            "were confirmed yet.\n"
+            "but the selected assets have not\n"
+            "yet produced working candle feeds.\n"
             "Retrying real IQ Option initialization..."
         )
 
@@ -2680,7 +2909,7 @@ def run_trader():
 
                 print(
                     "\n[OTC] Refreshing "
-                    "real IQ Option OTC markets..."
+                    "real IQ Option focused OTC markets..."
                 )
 
                 refresh_otc_assets()
@@ -2700,7 +2929,7 @@ def run_trader():
                 if not otc_assets:
 
                     print(
-                        "[SCAN] No working OTC feeds."
+                        "[SCAN] No working focused OTC feeds."
                     )
 
                 else:
@@ -2711,12 +2940,12 @@ def run_trader():
                     )
 
                     print(
-                        "[ZETA V2 SCAN]",
+                        "[ZETA V2 FOCUSED SCAN]",
                         now_utc(),
                     )
 
                     print(
-                        "OTC feeds:",
+                        "Focused OTC feeds:",
                         len(otc_assets),
                     )
 
@@ -2804,7 +3033,7 @@ def run_trader():
                             traceback.print_exc()
 
                     print(
-                        "[ZETA V2 SCAN COMPLETE]",
+                        "[ZETA V2 FOCUSED SCAN COMPLETE]",
                         now_utc(),
                     )
 
@@ -2897,6 +3126,17 @@ def main():
         TARGET_TRADES,
         "demo orders"
     )
+
+    print(
+        "Focused assets:",
+        len(FOCUSED_ASSETS)
+    )
+
+    for asset in FOCUSED_ASSETS:
+        print(
+            " -",
+            asset,
+        )
 
     print(
         "Result tracking: MANUAL"
