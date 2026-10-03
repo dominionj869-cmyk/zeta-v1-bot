@@ -13,9 +13,12 @@ import iqoptionapi.constants as OP_code
 # ZETA V2.4 — HIGH QUALITY TREND PULLBACK
 # REAL IQ OPTION OTC DISCOVERY
 # PRACTICE / DEMO ONLY
-# RESULT TRACKING REMOVED
 #
-# FOCUSED ASSET TEST
+# FOCUSED ASSET TEST + REJECTION DIAGNOSTICS
+#
+# IMPORTANT:
+# Strategy rules are unchanged.
+# Diagnostics only explain why setups are rejected.
 # ============================================================
 
 BALANCE_MODE = "PRACTICE"
@@ -43,12 +46,6 @@ ASSET_LOCK_SECONDS = 300
 
 # ============================================================
 # FOCUSED ASSETS
-#
-# These are the 8 assets that won in the previous 10-trade
-# test, plus EURUSD-OTC and AUDUSD-OTC.
-#
-# The bot still uses REAL IQ Option OTC discovery.
-# It simply filters the discovered markets to this list.
 # ============================================================
 
 FOCUSED_ASSETS = [
@@ -67,6 +64,8 @@ FOCUSED_ASSETS = [
 
 # ============================================================
 # STRATEGY SETTINGS
+#
+# DO NOT CHANGE — SAME ZETA STRATEGY
 # ============================================================
 
 EMA_FAST = 20
@@ -129,6 +128,72 @@ last_connection_check = 0
 
 
 # ============================================================
+# REJECTION DIAGNOSTICS
+#
+# These do NOT change strategy decisions.
+# They only record why evaluate_zeta_v2() returned None.
+# ============================================================
+
+rejection_counts = {}
+last_rejection_by_asset = {}
+
+diagnostic_scan_count = 0
+diagnostic_last_report = 0
+
+
+def record_rejection(asset, reason):
+
+    rejection_counts[reason] = (
+        rejection_counts.get(reason, 0) + 1
+    )
+
+    last_rejection_by_asset[asset] = reason
+
+
+def diagnostic_summary():
+
+    if not rejection_counts:
+        return "No rejections recorded yet."
+
+    ordered = sorted(
+        rejection_counts.items(),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+
+    lines = []
+
+    for reason, count in ordered[:8]:
+        lines.append(
+            f"• {reason}: {count}"
+        )
+
+    return "\n".join(lines)
+
+
+def latest_asset_diagnostics():
+
+    if not last_rejection_by_asset:
+        return "No rejection diagnostics yet."
+
+    lines = []
+
+    for asset in FOCUSED_ASSETS:
+
+        reason = last_rejection_by_asset.get(asset)
+
+        if reason:
+            lines.append(
+                f"{asset}: {reason}"
+            )
+
+    if not lines:
+        return "No rejection diagnostics yet."
+
+    return "\n".join(lines[:10])
+
+
+# ============================================================
 # BASIC HELPERS
 # ============================================================
 
@@ -139,7 +204,9 @@ def now_utc():
 
 
 def safe_float(value, default=0.0):
+
     try:
+
         value = float(value)
 
         if math.isfinite(value):
@@ -152,8 +219,11 @@ def safe_float(value, default=0.0):
 
 
 def server_now():
+
     try:
+
         if api is not None:
+
             value = api.get_server_timestamp()
 
             if value:
@@ -166,7 +236,10 @@ def server_now():
 
 
 def runtime_string():
-    seconds = int(time.time() - start_time)
+
+    seconds = int(
+        time.time() - start_time
+    )
 
     hours = seconds // 3600
     minutes = (seconds % 3600) // 60
@@ -181,8 +254,10 @@ def runtime_string():
 def send_telegram(text):
 
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+
         print("\n[TELEGRAM DISABLED]")
         print(text)
+
         return False
 
     url = (
@@ -198,6 +273,7 @@ def send_telegram(text):
     }
 
     try:
+
         response = requests.post(
             url,
             json=payload,
@@ -214,6 +290,7 @@ def send_telegram(text):
         )
 
     except Exception as e:
+
         print(
             "[TELEGRAM EXCEPTION]",
             repr(e),
@@ -227,17 +304,6 @@ def send_telegram(text):
 # ============================================================
 
 def normalize_asset_key(name):
-    """
-    Makes IQ Option asset names comparable.
-
-    Examples:
-        EURUSD-OTC
-        EUR/USD-OTC
-        EUR_USD-OTC
-        EUR USD-OTC
-
-    become the same comparison key.
-    """
 
     if not isinstance(name, str):
         return ""
@@ -283,11 +349,8 @@ def clean_active_name(raw_name):
 
     name = str(raw_name).strip()
 
-    # Examples:
-    # 1.EURUSD-OTC
-    # 76.EURUSD-OTC
-
     if "." in name:
+
         parts = name.split(".")
 
         if len(parts) >= 2:
@@ -307,14 +370,18 @@ def register_active_id(name, active_id):
 
     try:
         active_id = int(active_id)
+
     except Exception:
         return False
 
     try:
+
         OP_code.ACTIVES[name] = active_id
+
         return True
 
     except Exception as e:
+
         print(
             "[ACTIVE MAP ERROR]",
             name,
@@ -338,11 +405,8 @@ def get_raw_initialization():
     print("IQ OPTION MARKET INITIALIZATION")
     print("=" * 70)
 
-    # --------------------------------------------------------
-    # METHOD 1 — PROVEN METHOD
-    # --------------------------------------------------------
-
     try:
+
         print(
             "[RAW] Requesting get_all_init_v2()..."
         )
@@ -368,10 +432,6 @@ def get_raw_initialization():
             "[RAW V2 ERROR]",
             repr(e),
         )
-
-    # --------------------------------------------------------
-    # METHOD 2 — LEGACY FALLBACK
-    # --------------------------------------------------------
 
     try:
 
@@ -409,7 +469,7 @@ def get_raw_initialization():
 
 
 # ============================================================
-# RECURSIVE REAL OTC DISCOVERY
+# REAL OTC DISCOVERY
 # ============================================================
 
 def discover_otc_from_initialization(data):
@@ -430,23 +490,9 @@ def discover_otc_from_initialization(data):
     found = []
     seen = set()
 
-    # --------------------------------------------------------
-    # RECURSIVE WALKER
-    #
-    # We intentionally discover all available OTC assets
-    # first, then filter to the focused list later.
-    #
-    # This prevents the first 70 discovered markets from
-    # accidentally hiding one of our selected assets.
-    # --------------------------------------------------------
-
     def walk(node, market_type="unknown"):
 
         if isinstance(node, dict):
-
-            # ------------------------------------------------
-            # ACTIVE DICTIONARY
-            # ------------------------------------------------
 
             if "actives" in node:
 
@@ -468,18 +514,19 @@ def discover_otc_from_initialization(data):
                         if not is_otc_name(name):
                             continue
 
-                        enabled = active.get(
-                            "enabled",
-                            True,
+                        enabled = bool(
+                            active.get(
+                                "enabled",
+                                True,
+                            )
                         )
 
-                        suspended = active.get(
-                            "is_suspended",
-                            False,
+                        suspended = bool(
+                            active.get(
+                                "is_suspended",
+                                False,
+                            )
                         )
-
-                        enabled = bool(enabled)
-                        suspended = bool(suspended)
 
                         if not enabled:
                             continue
@@ -518,10 +565,6 @@ def discover_otc_from_initialization(data):
                             }
                         )
 
-            # ------------------------------------------------
-            # RECURSION
-            # ------------------------------------------------
-
             for key, value in node.items():
 
                 child_market = market_type
@@ -558,10 +601,6 @@ def discover_otc_from_initialization(data):
                     market_type,
                 )
 
-    # --------------------------------------------------------
-    # RESULT WRAPPER
-    # --------------------------------------------------------
-
     root = data
 
     if isinstance(
@@ -569,32 +608,9 @@ def discover_otc_from_initialization(data):
         dict,
     ):
 
-        print(
-            "[DISCOVERY] result wrapper detected."
-        )
-
         root = data["result"]
 
-    print(
-        "[DISCOVERY] Top-level keys:"
-    )
-
-    for key in root.keys():
-
-        print(
-            " -",
-            key,
-        )
-
-    # --------------------------------------------------------
-    # WALK
-    # --------------------------------------------------------
-
     walk(root)
-
-    # --------------------------------------------------------
-    # SORT
-    # --------------------------------------------------------
 
     found.sort(
         key=lambda item: (
@@ -604,38 +620,10 @@ def discover_otc_from_initialization(data):
         )
     )
 
-    print("")
     print(
         "TOTAL REAL OTC DISCOVERED:",
         len(found),
     )
-
-    if found:
-
-        print("")
-        print(
-            "[REAL IQ OPTION OTC ASSETS]"
-        )
-
-        for index, item in enumerate(
-            found,
-            start=1,
-        ):
-
-            print(
-                f"{index:02d}. "
-                f"{item['asset']:<20} "
-                f"{item['market_type']:<12} "
-                f"ID={item['active_id']}"
-            )
-
-    else:
-
-        print("")
-        print(
-            "[DISCOVERY] No enabled OTC "
-            "instruments found."
-        )
 
     return found
 
@@ -754,9 +742,7 @@ def get_candles_safe(
             server_now(),
         )
 
-        candles = normalize_candles(
-            raw
-        )
+        candles = normalize_candles(raw)
 
         candles = remove_open_candle(
             candles,
@@ -945,9 +931,13 @@ def rsi_values(
     index = period
 
     if avg_loss == 0:
+
         result[index] = 100.0
+
     else:
+
         rs = avg_gain / avg_loss
+
         result[index] = (
             100.0
             - (
@@ -1241,10 +1231,13 @@ def bullish_rejection(candle):
     if rng <= 0:
         return False
 
-    lower_wick = min(
-        candle["open"],
-        candle["close"],
-    ) - candle["low"]
+    lower_wick = (
+        min(
+            candle["open"],
+            candle["close"],
+        )
+        - candle["low"]
+    )
 
     body = candle_body(candle)
 
@@ -1326,9 +1319,7 @@ def recent_support(
     lookback=30,
 ):
 
-    subset = candles[
-        -lookback:
-    ]
+    subset = candles[-lookback:]
 
     if not subset:
         return None
@@ -1344,9 +1335,7 @@ def recent_resistance(
     lookback=30,
 ):
 
-    subset = candles[
-        -lookback:
-    ]
+    subset = candles[-lookback:]
 
     if not subset:
         return None
@@ -1358,7 +1347,11 @@ def recent_resistance(
 
 
 # ============================================================
-# ZETA V2 HIGH QUALITY TREND PULLBACK
+# ZETA V2 EVALUATION
+#
+# SAME STRATEGY.
+#
+# Every rejection now gets recorded.
 # ============================================================
 
 def evaluate_zeta_v2(
@@ -1368,9 +1361,21 @@ def evaluate_zeta_v2(
 ):
 
     if len(candles_5m) < 80:
+
+        record_rejection(
+            asset,
+            "5M candles < 80",
+        )
+
         return None
 
     if len(candles_1m) < 80:
+
+        record_rejection(
+            asset,
+            "1M candles < 80",
+        )
+
         return None
 
     # --------------------------------------------------------
@@ -1406,6 +1411,12 @@ def evaluate_zeta_v2(
     p5 = i5 - 1
 
     if p5 < 1:
+
+        record_rejection(
+            asset,
+            "5M index invalid",
+        )
+
         return None
 
     values = (
@@ -1421,6 +1432,12 @@ def evaluate_zeta_v2(
         x is None
         for x in values
     ):
+
+        record_rejection(
+            asset,
+            "5M indicators unavailable",
+        )
+
         return None
 
     fast5 = ema20_5m[i5]
@@ -1433,6 +1450,12 @@ def evaluate_zeta_v2(
     current_adx = adx_5m[i5]
 
     if current_atr5 <= 0:
+
+        record_rejection(
+            asset,
+            "5M ATR <= 0",
+        )
+
         return None
 
     # --------------------------------------------------------
@@ -1459,9 +1482,25 @@ def evaluate_zeta_v2(
         bullish_trend
         or bearish_trend
     ):
+
+        record_rejection(
+            asset,
+            "No valid 5M trend",
+        )
+
         return None
 
+    # --------------------------------------------------------
+    # ADX
+    # --------------------------------------------------------
+
     if current_adx < MIN_ADX:
+
+        record_rejection(
+            asset,
+            f"ADX {current_adx:.1f} < {MIN_ADX}",
+        )
+
         return None
 
     # --------------------------------------------------------
@@ -1497,6 +1536,12 @@ def evaluate_zeta_v2(
     p1 = i1 - 1
 
     if p1 < 1:
+
+        record_rejection(
+            asset,
+            "1M index invalid",
+        )
+
         return None
 
     values_1m = (
@@ -1512,6 +1557,12 @@ def evaluate_zeta_v2(
         x is None
         for x in values_1m
     ):
+
+        record_rejection(
+            asset,
+            "1M indicators unavailable",
+        )
+
         return None
 
     fast1 = ema20_1m[i1]
@@ -1524,6 +1575,12 @@ def evaluate_zeta_v2(
     current_rsi = rsi_1m[i1]
 
     if current_atr1 <= 0:
+
+        record_rejection(
+            asset,
+            "1M ATR <= 0",
+        )
+
         return None
 
     current = candles_1m[i1]
@@ -1532,7 +1589,7 @@ def evaluate_zeta_v2(
     price = current["close"]
 
     # --------------------------------------------------------
-    # PULLBACK MEASUREMENT
+    # PULLBACK
     # --------------------------------------------------------
 
     distance_from_fast = abs(
@@ -1553,18 +1610,36 @@ def evaluate_zeta_v2(
         pullback_atr
         < MIN_PULLBACK_ATR
     ):
+
+        record_rejection(
+            asset,
+            f"Pullback {pullback_atr:.2f} < {MIN_PULLBACK_ATR}",
+        )
+
         return None
 
     if (
         extension_from_fast
         > MAX_EXTENSION_ATR
     ):
+
+        record_rejection(
+            asset,
+            f"Extension {extension_from_fast:.2f} > {MAX_EXTENSION_ATR}",
+        )
+
         return None
 
     if (
         pullback_atr
         > MAX_PULLBACK_ATR
     ):
+
+        record_rejection(
+            asset,
+            f"Pullback {pullback_atr:.2f} > {MAX_PULLBACK_ATR}",
+        )
+
         return None
 
     # --------------------------------------------------------
@@ -1582,9 +1657,21 @@ def evaluate_zeta_v2(
     )
 
     if support is None:
+
+        record_rejection(
+            asset,
+            "No support",
+        )
+
         return None
 
     if resistance is None:
+
+        record_rejection(
+            asset,
+            "No resistance",
+        )
+
         return None
 
     # --------------------------------------------------------
@@ -1607,7 +1694,7 @@ def evaluate_zeta_v2(
     )
 
     # --------------------------------------------------------
-    # REJECTION
+    # REJECTION CANDLE
     # --------------------------------------------------------
 
     bull_rejection = (
@@ -1633,7 +1720,8 @@ def evaluate_zeta_v2(
     )
 
     # --------------------------------------------------------
-    # CONFIRMATION
+    # CANDLE CONFIRMATION
+    # SAME ORIGINAL LOGIC
     # --------------------------------------------------------
 
     bull_confirm = (
@@ -1726,13 +1814,14 @@ def evaluate_zeta_v2(
 
     reasons = []
 
-    # --------------------------------------------------------
+    # ========================================================
     # CALL
-    # --------------------------------------------------------
+    # ========================================================
 
     if bullish_trend:
 
         score += 20
+
         reasons.append(
             "5M bullish trend"
         )
@@ -1740,6 +1829,7 @@ def evaluate_zeta_v2(
         if bullish_1m_structure:
 
             score += 10
+
             reasons.append(
                 "1M EMA structure"
             )
@@ -1753,6 +1843,7 @@ def evaluate_zeta_v2(
         ):
 
             score += 15
+
             reasons.append(
                 "pullback zone"
             )
@@ -1760,6 +1851,7 @@ def evaluate_zeta_v2(
         if bull_rejection:
 
             score += 20
+
             reasons.append(
                 "bullish rejection"
             )
@@ -1767,6 +1859,7 @@ def evaluate_zeta_v2(
         if bull_confirm:
 
             score += 10
+
             reasons.append(
                 "1M confirmation"
             )
@@ -1774,6 +1867,7 @@ def evaluate_zeta_v2(
         if momentum_bull:
 
             score += 5
+
             reasons.append(
                 "bullish momentum"
             )
@@ -1786,6 +1880,7 @@ def evaluate_zeta_v2(
         ):
 
             score += 5
+
             reasons.append(
                 "RSI valid"
             )
@@ -1796,6 +1891,7 @@ def evaluate_zeta_v2(
         ):
 
             score += 5
+
             reasons.append(
                 "room available"
             )
@@ -1821,24 +1917,79 @@ def evaluate_zeta_v2(
             <= zone_tolerance
         )
 
-        if (
-            valid_zone
-            and bull_rejection
-            and bull_confirm
-            and momentum_bull
-            and room_up_atr
-            >= MIN_ROOM_ATR
-        ):
+        # ----------------------------------------------------
+        # FINAL CALL QUALIFICATION
+        # SAME ORIGINAL CONDITIONS
+        # ----------------------------------------------------
 
-            direction = "CALL"
+        if not valid_zone:
 
-    # --------------------------------------------------------
+            record_rejection(
+                asset,
+                "CALL: no valid zone",
+            )
+
+            return None
+
+        if not bull_rejection:
+
+            record_rejection(
+                asset,
+                "CALL: no rejection candle",
+            )
+
+            return None
+
+        if not bull_confirm:
+
+            record_rejection(
+                asset,
+                "CALL: candle confirmation failed",
+            )
+
+            return None
+
+        if not momentum_bull:
+
+            record_rejection(
+                asset,
+                "CALL: momentum failed",
+            )
+
+            return None
+
+        if room_up_atr < MIN_ROOM_ATR:
+
+            record_rejection(
+                asset,
+                f"CALL: room {room_up_atr:.2f} < {MIN_ROOM_ATR}",
+            )
+
+            return None
+
+        direction = "CALL"
+
+        # ----------------------------------------------------
+        # SCORE FILTER
+        # ----------------------------------------------------
+
+        if score < MIN_SCORE:
+
+            record_rejection(
+                asset,
+                f"CALL: score {score} < {MIN_SCORE}",
+            )
+
+            return None
+
+    # ========================================================
     # PUT
-    # --------------------------------------------------------
+    # ========================================================
 
     elif bearish_trend:
 
         score += 20
+
         reasons.append(
             "5M bearish trend"
         )
@@ -1846,6 +1997,7 @@ def evaluate_zeta_v2(
         if bearish_1m_structure:
 
             score += 10
+
             reasons.append(
                 "1M EMA structure"
             )
@@ -1859,6 +2011,7 @@ def evaluate_zeta_v2(
         ):
 
             score += 15
+
             reasons.append(
                 "pullback zone"
             )
@@ -1866,6 +2019,7 @@ def evaluate_zeta_v2(
         if bear_rejection:
 
             score += 20
+
             reasons.append(
                 "bearish rejection"
             )
@@ -1873,6 +2027,7 @@ def evaluate_zeta_v2(
         if bear_confirm:
 
             score += 10
+
             reasons.append(
                 "1M confirmation"
             )
@@ -1880,6 +2035,7 @@ def evaluate_zeta_v2(
         if momentum_bear:
 
             score += 5
+
             reasons.append(
                 "bearish momentum"
             )
@@ -1892,6 +2048,7 @@ def evaluate_zeta_v2(
         ):
 
             score += 5
+
             reasons.append(
                 "RSI valid"
             )
@@ -1902,6 +2059,7 @@ def evaluate_zeta_v2(
         ):
 
             score += 5
+
             reasons.append(
                 "room available"
             )
@@ -1927,25 +2085,82 @@ def evaluate_zeta_v2(
             <= zone_tolerance
         )
 
-        if (
-            valid_zone
-            and bear_rejection
-            and bear_confirm
-            and momentum_bear
-            and room_down_atr
-            >= MIN_ROOM_ATR
-        ):
+        # ----------------------------------------------------
+        # FINAL PUT QUALIFICATION
+        # SAME ORIGINAL CONDITIONS
+        # ----------------------------------------------------
 
-            direction = "PUT"
+        if not valid_zone:
+
+            record_rejection(
+                asset,
+                "PUT: no valid zone",
+            )
+
+            return None
+
+        if not bear_rejection:
+
+            record_rejection(
+                asset,
+                "PUT: no rejection candle",
+            )
+
+            return None
+
+        if not bear_confirm:
+
+            record_rejection(
+                asset,
+                "PUT: candle confirmation failed",
+            )
+
+            return None
+
+        if not momentum_bear:
+
+            record_rejection(
+                asset,
+                "PUT: momentum failed",
+            )
+
+            return None
+
+        if room_down_atr < MIN_ROOM_ATR:
+
+            record_rejection(
+                asset,
+                f"PUT: room {room_down_atr:.2f} < {MIN_ROOM_ATR}",
+            )
+
+            return None
+
+        direction = "PUT"
+
+        # ----------------------------------------------------
+        # SCORE FILTER
+        # ----------------------------------------------------
+
+        if score < MIN_SCORE:
+
+            record_rejection(
+                asset,
+                f"PUT: score {score} < {MIN_SCORE}",
+            )
+
+            return None
 
     # --------------------------------------------------------
-    # FINAL FILTER
+    # SAFETY
     # --------------------------------------------------------
 
     if direction is None:
-        return None
 
-    if score < MIN_SCORE:
+        record_rejection(
+            asset,
+            "No valid direction",
+        )
+
         return None
 
     # --------------------------------------------------------
@@ -1969,6 +2184,11 @@ def evaluate_zeta_v2(
             < 180
         ):
 
+            record_rejection(
+                asset,
+                "Signal cooldown",
+            )
+
             return None
 
     previous_trade_time = (
@@ -1985,6 +2205,11 @@ def evaluate_zeta_v2(
             - previous_trade_time
             < ASSET_LOCK_SECONDS
         ):
+
+            record_rejection(
+                asset,
+                "Trade lock active",
+            )
 
             return None
 
@@ -2011,6 +2236,16 @@ def evaluate_zeta_v2(
     last_signal_time[
         asset
     ] = candle_time
+
+    # --------------------------------------------------------
+    # SUCCESS DIAGNOSTIC
+    # --------------------------------------------------------
+
+    print(
+        f"[QUALIFIED] {asset} "
+        f"{direction} "
+        f"score={score}"
+    )
 
     return {
         "signal_id": signal_id,
@@ -2230,11 +2465,6 @@ def execute_demo_trade(signal):
 
     if trade_id is None:
 
-        print(
-            "[BUY ACCEPTED] "
-            "No trade ID returned."
-        )
-
         send_telegram(
             "🟡 *ZETA V2 ORDER ACCEPTED*\n"
             "━━━━━━━━━━━━━━━━━━\n"
@@ -2346,8 +2576,6 @@ def filter_focused_assets(discovered):
 
     selected = []
 
-    available_keys = set()
-
     for item in discovered:
 
         asset = item["asset"]
@@ -2356,15 +2584,8 @@ def filter_focused_assets(discovered):
             asset
         )
 
-        available_keys.add(key)
-
         if key in FOCUSED_ASSET_KEYS:
-
             selected.append(item)
-
-    # --------------------------------------------------------
-    # Preserve the order of FOCUSED_ASSETS
-    # --------------------------------------------------------
 
     selected_by_key = {
         normalize_asset_key(
@@ -2388,10 +2609,6 @@ def filter_focused_assets(discovered):
         if item is not None:
             ordered.append(item)
 
-    # --------------------------------------------------------
-    # REPORT
-    # --------------------------------------------------------
-
     print("")
     print(
         "FOCUSED ASSETS REQUESTED:",
@@ -2402,8 +2619,6 @@ def filter_focused_assets(discovered):
         "FOCUSED ASSETS DISCOVERED:",
         len(ordered),
     )
-
-    print("")
 
     for requested in FOCUSED_ASSETS:
 
@@ -2433,26 +2648,6 @@ def filter_focused_assets(discovered):
                 requested,
             )
 
-    print("")
-
-    if ordered:
-
-        print(
-            "[ACTIVE FOCUSED OTC MARKETS]"
-        )
-
-        for index, item in enumerate(
-            ordered,
-            start=1,
-        ):
-
-            print(
-                f"{index:02d}. "
-                f"{item['asset']:<20} "
-                f"{item['market_type']:<12} "
-                f"ID={item['active_id']}"
-            )
-
     return ordered
 
 
@@ -2475,10 +2670,6 @@ def refresh_otc_assets():
 
         return False
 
-    # --------------------------------------------------------
-    # Discover REAL IQ Option OTC markets
-    # --------------------------------------------------------
-
     discovered = (
         discover_otc_from_initialization(
             raw_data
@@ -2493,10 +2684,6 @@ def refresh_otc_assets():
 
         return False
 
-    # --------------------------------------------------------
-    # Filter to selected 10 assets
-    # --------------------------------------------------------
-
     focused = filter_focused_assets(
         discovered
     )
@@ -2505,14 +2692,10 @@ def refresh_otc_assets():
 
         print(
             "[OTC] None of the focused assets "
-            "were found in IQ Option discovery."
+            "were found."
         )
 
         return False
-
-    # --------------------------------------------------------
-    # Test only focused assets
-    # --------------------------------------------------------
 
     working = test_candle_access(
         focused
@@ -2522,25 +2705,12 @@ def refresh_otc_assets():
 
         otc_assets = working
 
-        last_discovery_time = (
-            time.time()
-        )
+        last_discovery_time = time.time()
 
         print(
             "\n[OTC] FOCUSED FEEDS READY:",
             len(otc_assets),
         )
-
-        print(
-            "[OTC] ZETA will scan ONLY:"
-        )
-
-        for item in otc_assets:
-
-            print(
-                " -",
-                item["asset"],
-            )
 
         return True
 
@@ -2635,6 +2805,14 @@ def send_heartbeat():
         "COSMOS • USDMYR • EURCAD\n"
         "USDTRY • ONDO • EURUSD • AUDUSD\n"
         "━━━━━━━━━━━━━━━━━━\n"
+        "🔎 *REJECTION DIAGNOSTICS*\n"
+        f"*Total rejected evaluations:* "
+        f"{sum(rejection_counts.values())}\n"
+        f"{diagnostic_summary()}\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "📍 *LATEST BY ASSET*\n"
+        f"{latest_asset_diagnostics()}\n"
+        "━━━━━━━━━━━━━━━━━━\n"
         "📋 *Results are tracked manually "
         "in IQ Option.*\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -2720,6 +2898,7 @@ def run_trader():
 
     global last_status_time
     global last_discovery_time
+    global diagnostic_scan_count
 
     if not IQ_EMAIL or not IQ_PASSWORD:
 
@@ -2774,7 +2953,8 @@ def run_trader():
         "🎯 *FOCUSED ASSET TEST*\n"
         "10 selected OTC assets\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "🔎 Using real IQ Option OTC initialization..."
+        "🔎 Using real IQ Option OTC initialization...\n"
+        "🔎 Rejection diagnostics: ON"
     )
 
     # --------------------------------------------------------
@@ -2798,7 +2978,8 @@ def run_trader():
                 "🟢 *FOCUSED OTC FEEDS READY*\n"
                 "━━━━━━━━━━━━━━━━━━\n"
                 f"*Working focused feeds:* "
-                f"{len(otc_assets)}\n"
+                f"{len(otc_assets)}/"
+                f"{len(FOCUSED_ASSETS)}\n"
                 "*Data:* REAL IQ OPTION CANDLES\n"
                 "*Context:* 5M\n"
                 "*Entry:* 1M\n"
@@ -2807,6 +2988,7 @@ def run_trader():
                 "━━━━━━━━━━━━━━━━━━\n"
                 f"*Assets:* {selected_names}\n"
                 "━━━━━━━━━━━━━━━━━━\n"
+                "🔎 *Rejection diagnostics:* ON\n"
                 "ZETA V2 focused scanning started."
             )
 
@@ -2934,6 +3116,8 @@ def run_trader():
 
                 else:
 
+                    diagnostic_scan_count += 1
+
                     print(
                         "\n"
                         + "-" * 70
@@ -2977,6 +3161,11 @@ def run_trader():
                                 candles_5m
                             ) < 80:
 
+                                record_rejection(
+                                    asset,
+                                    "5M candle data unavailable",
+                                )
+
                                 continue
 
                             candles_1m = (
@@ -2991,6 +3180,11 @@ def run_trader():
                                 candles_1m
                             ) < 80:
 
+                                record_rejection(
+                                    asset,
+                                    "1M candle data unavailable",
+                                )
+
                                 continue
 
                             signal = (
@@ -3002,6 +3196,20 @@ def run_trader():
                             )
 
                             if signal is None:
+
+                                reason = (
+                                    last_rejection_by_asset.get(
+                                        asset,
+                                        "Unknown rejection",
+                                    )
+                                )
+
+                                print(
+                                    f"[REJECTED] "
+                                    f"{asset} -> "
+                                    f"{reason}"
+                                )
+
                                 continue
 
                             print(
@@ -3032,9 +3240,22 @@ def run_trader():
 
                             traceback.print_exc()
 
+                            record_rejection(
+                                asset,
+                                "Scanner exception",
+                            )
+
                     print(
                         "[ZETA V2 FOCUSED SCAN COMPLETE]",
                         now_utc(),
+                    )
+
+                    print(
+                        "[DIAGNOSTICS]"
+                    )
+
+                    print(
+                        diagnostic_summary()
                     )
 
             # ------------------------------------------------
@@ -3133,6 +3354,7 @@ def main():
     )
 
     for asset in FOCUSED_ASSETS:
+
         print(
             " -",
             asset,
@@ -3144,6 +3366,10 @@ def main():
 
     print(
         "Automatic trading: ENABLED"
+    )
+
+    print(
+        "Rejection diagnostics: ENABLED"
     )
 
     print("=" * 70)
