@@ -12,16 +12,16 @@ from iqoptionapi.stable_api import IQ_Option
 # ZETA V2.4 — HIGH QUALITY TREND PULLBACK
 # DEMO / PRACTICE ONLY
 #
-# Strategy logic unchanged.
+# STRATEGY LOGIC UNCHANGED.
 #
-# Infrastructure fixes:
-# 1. Correct datetime import
-# 2. Robust IQ Option connection handling
-# 3. Robust candle reconnect handling
-# 4. Robust recursive OTC discovery
-# 5. Focused OTC matching
-# 6. main() entry point preserved
-# 7. Deep rejection diagnostics preserved
+# Visibility fixes only:
+# 1. Telegram progress after OTC discovery
+# 2. Telegram progress before each candle verification
+# 3. Telegram progress after candle verification
+# 4. Telegram message when normal scanner mode begins
+# 5. Telegram scan-cycle progress
+# 6. Telegram evaluation progress
+# 7. Telegram last rejection visibility
 # ============================================================
 
 
@@ -157,6 +157,15 @@ diagnostic_trend_counts = {
     "bear_trend": 0,
     "no_valid_trend": 0,
 }
+
+
+# ============================================================
+# VISIBILITY STATE
+# ============================================================
+
+last_evaluated_asset = "None"
+last_scan_time = 0
+scan_cycle_count = 0
 
 
 # ============================================================
@@ -571,10 +580,6 @@ def discover_otc_assets():
         return []
 
 
-    # --------------------------------------------------------
-    # Recursive OTC symbol collector
-    # --------------------------------------------------------
-
     def collect_otc_symbols(
         obj,
         found=None,
@@ -591,7 +596,6 @@ def discover_otc_assets():
                     key
                 ).upper().strip()
 
-                # Direct dictionary key
                 if "-OTC" in key_text:
 
                     position = key_text.find(
@@ -605,9 +609,6 @@ def discover_otc_assets():
                     if symbol:
                         found.add(symbol)
 
-                # Some IQ Option structures
-                # may contain the symbol in
-                # the value rather than the key.
                 if isinstance(
                     value,
                     str,
@@ -669,8 +670,6 @@ def discover_otc_assets():
                     :position
                 ]
 
-                # Keep the final token if
-                # the string contains separators.
                 for separator in [
                     ":",
                     "/",
@@ -697,19 +696,11 @@ def discover_otc_assets():
         return found
 
 
-    # --------------------------------------------------------
-    # Retrieve initialization data
-    # --------------------------------------------------------
-
     discovered = set()
 
     data_v2 = None
     data_v1 = None
 
-
-    # --------------------------------------------------------
-    # METHOD 1
-    # --------------------------------------------------------
 
     try:
 
@@ -752,11 +743,6 @@ def discover_otc_assets():
         )
 
 
-    # --------------------------------------------------------
-    # METHOD 2
-    # Always try get_all_init as fallback/additional source
-    # --------------------------------------------------------
-
     try:
 
         print(
@@ -798,10 +784,6 @@ def discover_otc_assets():
         )
 
 
-    # --------------------------------------------------------
-    # Clean symbols
-    # --------------------------------------------------------
-
     cleaned = set()
 
     for symbol in discovered:
@@ -820,10 +802,6 @@ def discover_otc_assets():
 
     discovered = cleaned
 
-
-    # --------------------------------------------------------
-    # Diagnostics
-    # --------------------------------------------------------
 
     print(
         "📊 TOTAL IQ OPTION OTC SYMBOLS FOUND: "
@@ -854,10 +832,6 @@ def discover_otc_assets():
         )
 
 
-    # --------------------------------------------------------
-    # Match focused assets
-    # --------------------------------------------------------
-
     found_focused = []
 
     for asset in FOCUSED_ASSETS:
@@ -872,10 +846,6 @@ def discover_otc_assets():
                 asset
             )
 
-
-    # --------------------------------------------------------
-    # Secondary normalized matching
-    # --------------------------------------------------------
 
     if not found_focused:
 
@@ -917,11 +887,6 @@ def discover_otc_assets():
                 )
 
 
-    # --------------------------------------------------------
-    # Final result
-    # --------------------------------------------------------
-
-    # Preserve focused asset order.
     ordered = []
 
     for asset in FOCUSED_ASSETS:
@@ -941,10 +906,6 @@ def discover_otc_assets():
 
     working_assets = ordered
 
-
-    # --------------------------------------------------------
-    # Telegram result
-    # --------------------------------------------------------
 
     print(
         "🎯 Focused OTC feeds available: "
@@ -983,6 +944,10 @@ def discover_otc_assets():
                 f"✅ {asset}"
                 for asset in working_assets
             )
+            + "\n━━━━━━━━━━━━━━━━━━\n"
+            "🧪 NEXT STEP: CANDLE VERIFICATION\n"
+            f"Testing {len(working_assets)} "
+            "available focused feeds..."
         )
 
     else:
@@ -1689,6 +1654,16 @@ def build_diagnostic_text():
         f"{diagnostic_total_evaluations}"
     )
 
+    lines.append(
+        f"Scan cycles: "
+        f"{scan_cycle_count}"
+    )
+
+    lines.append(
+        f"Last evaluated: "
+        f"{last_evaluated_asset}"
+    )
+
     lines.append("")
 
     lines.append(
@@ -1802,19 +1777,17 @@ def build_asset_diagnostics():
 
 
 # ============================================================
-# STRATEGY EVALUATION
+# STRATEGY EVALUATION — UNCHANGED
 # ============================================================
 
 def evaluate_asset(asset):
 
     global diagnostic_total_evaluations
+    global last_evaluated_asset
 
     diagnostic_total_evaluations += 1
+    last_evaluated_asset = asset
 
-
-    # --------------------------------------------------------
-    # 5M CANDLES
-    # --------------------------------------------------------
 
     candles5 = fetch_candles(
         asset,
@@ -1843,10 +1816,6 @@ def evaluate_asset(asset):
         return None
 
 
-    # --------------------------------------------------------
-    # 1M CANDLES
-    # --------------------------------------------------------
-
     candles1 = fetch_candles(
         asset,
         TF1,
@@ -1873,10 +1842,6 @@ def evaluate_asset(asset):
 
         return None
 
-
-    # --------------------------------------------------------
-    # 5M INDICATORS
-    # --------------------------------------------------------
 
     close5 = closes(
         candles5
@@ -1945,10 +1910,6 @@ def evaluate_asset(asset):
     )
 
 
-    # --------------------------------------------------------
-    # 5M TREND
-    # --------------------------------------------------------
-
     bull_trend = (
         fast5 > slow5
         and previous_fast5 >= previous_slow5
@@ -1991,10 +1952,6 @@ def evaluate_asset(asset):
         return None
 
 
-    # --------------------------------------------------------
-    # ADX
-    # --------------------------------------------------------
-
     record_adx(
         adx5
     )
@@ -2018,10 +1975,6 @@ def evaluate_asset(asset):
 
         return None
 
-
-    # --------------------------------------------------------
-    # 1M INDICATORS
-    # --------------------------------------------------------
 
     close1 = closes(
         candles1
@@ -2085,10 +2038,6 @@ def evaluate_asset(asset):
     )
 
 
-    # --------------------------------------------------------
-    # CURRENT CLOSED CANDLE
-    # --------------------------------------------------------
-
     current = candles1[-2]
     previous = candles1[-3]
 
@@ -2112,10 +2061,6 @@ def evaluate_asset(asset):
         previous["low"]
     )
 
-
-    # --------------------------------------------------------
-    # PULLBACK
-    # --------------------------------------------------------
 
     distance_from_fast = abs(
         price - fast1
@@ -2158,10 +2103,6 @@ def evaluate_asset(asset):
 
         return None
 
-
-    # --------------------------------------------------------
-    # SUPPORT / RESISTANCE
-    # --------------------------------------------------------
 
     lookback = 30
 
@@ -2278,10 +2219,6 @@ def evaluate_asset(asset):
         return None
 
 
-    # --------------------------------------------------------
-    # REJECTION CANDLE
-    # --------------------------------------------------------
-
     if bull_trend:
 
         rejection = (
@@ -2317,10 +2254,6 @@ def evaluate_asset(asset):
             return None
 
 
-    # --------------------------------------------------------
-    # 1M STRUCTURE
-    # --------------------------------------------------------
-
     if bull_trend:
 
         structure = (
@@ -2353,10 +2286,6 @@ def evaluate_asset(asset):
 
             return None
 
-
-    # --------------------------------------------------------
-    # CANDLE CONFIRMATION
-    # --------------------------------------------------------
 
     body_ratio = info[
         "body_ratio"
@@ -2427,10 +2356,6 @@ def evaluate_asset(asset):
         return None
 
 
-    # --------------------------------------------------------
-    # MOMENTUM
-    # --------------------------------------------------------
-
     if bull_trend:
 
         momentum = (
@@ -2457,10 +2382,6 @@ def evaluate_asset(asset):
         return None
 
 
-    # --------------------------------------------------------
-    # RSI
-    # --------------------------------------------------------
-
     if bull_trend:
 
         rsi_valid = (
@@ -2477,10 +2398,6 @@ def evaluate_asset(asset):
             <= RSI_BEAR_MAX
         )
 
-
-    # --------------------------------------------------------
-    # ROOM
-    # --------------------------------------------------------
 
     room_up_atr = (
         (
@@ -2520,10 +2437,6 @@ def evaluate_asset(asset):
 
         return None
 
-
-    # --------------------------------------------------------
-    # SCORE
-    # --------------------------------------------------------
 
     score = 0
 
@@ -2574,10 +2487,6 @@ def evaluate_asset(asset):
 
         score += 5
 
-
-    # --------------------------------------------------------
-    # FINAL SCORE
-    # --------------------------------------------------------
 
     if score < MIN_SCORE:
 
@@ -2645,10 +2554,6 @@ def execute_trade(signal):
     now = time.time()
 
 
-    # --------------------------------------------------------
-    # Signal cooldown
-    # --------------------------------------------------------
-
     previous_signal = (
         asset_last_signal.get(
             asset,
@@ -2662,10 +2567,6 @@ def execute_trade(signal):
     ):
         return False
 
-
-    # --------------------------------------------------------
-    # Trade lock
-    # --------------------------------------------------------
 
     previous_trade = (
         asset_trade_lock.get(
@@ -2884,6 +2785,10 @@ def send_heartbeat():
         f"{trade_count}/"
         f"{TARGET_TRADES}\n"
         f"Signals: {signal_count}\n"
+        f"Last evaluated: "
+        f"{last_evaluated_asset}\n"
+        f"Scan cycles: "
+        f"{scan_cycle_count}\n"
         "━━━━━━━━━━━━━━━━━━\n"
         + build_diagnostic_text()
         + "\n━━━━━━━━━━━━━━━━━━\n"
@@ -2902,6 +2807,8 @@ def run():
     global connected
     global last_heartbeat
     global working_assets
+    global last_scan_time
+    global scan_cycle_count
 
     telegram(
         "🔌 ZETA V2.4 starting "
@@ -2949,6 +2856,25 @@ def run():
 
 
     # --------------------------------------------------------
+    # Visibility: candle verification starting
+    # --------------------------------------------------------
+
+    if working_assets:
+
+        telegram(
+            "🧪 ZETA CANDLE VERIFICATION STARTING\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"Feeds to test: "
+            f"{len(working_assets)}\n"
+            "Timeframe: 1M\n"
+            "Required candles: 100\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "The bot is testing the first available "
+            "feed now."
+        )
+
+
+    # --------------------------------------------------------
     # Verify candle retrieval
     # --------------------------------------------------------
 
@@ -2959,6 +2885,13 @@ def run():
         print(
             f"🧪 Testing candle feed: "
             f"{asset}"
+        )
+
+        telegram(
+            "🧪 TESTING CANDLE FEED\n"
+            f"Asset: {asset}\n"
+            "Timeframe: 1M\n"
+            "Requesting 100 candles..."
         )
 
         test_candles = fetch_candles(
@@ -2982,7 +2915,8 @@ def run():
                 f"Asset: {asset}\n"
                 f"1M candles received: "
                 f"{len(test_candles)}\n"
-                "Scanner entering normal mode."
+                "━━━━━━━━━━━━━━━━━━\n"
+                "🚀 SCANNER ENTERING NORMAL MODE"
             )
 
             break
@@ -2994,14 +2928,39 @@ def run():
                 f"failed: {asset}"
             )
 
+            telegram(
+                "⚠️ CANDLE TEST FAILED\n"
+                f"Asset: {asset}\n"
+                "Trying the next available "
+                "focused feed..."
+            )
+
 
     if not candle_verified:
 
         telegram(
             "⚠️ ZETA CANDLE FEED NOT VERIFIED\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "No focused asset returned valid "
+            "candle data.\n"
             "The bot will keep reconnecting "
-            "and checking instead of "
-            "silently hanging."
+            "and checking."
+        )
+
+    else:
+
+        telegram(
+            "🟢 ZETA SCANNER ACTIVE\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"Working feeds: "
+            f"{len(working_assets)}/"
+            f"{len(FOCUSED_ASSETS)}\n"
+            f"Target: "
+            f"{TARGET_TRADES} demo orders\n"
+            f"Minimum score: {MIN_SCORE}\n"
+            f"Expiry: {EXPIRY_MINUTES} minutes\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🔎 Beginning strategy evaluations..."
         )
 
 
@@ -3015,10 +2974,6 @@ def run():
     while True:
 
         try:
-
-            # ------------------------------------------------
-            # Target reached
-            # ------------------------------------------------
 
             if (
                 trade_count
@@ -3038,15 +2993,16 @@ def run():
                 break
 
 
-            # ------------------------------------------------
-            # Connection
-            # ------------------------------------------------
-
             if not ensure_connection():
 
                 print(
                     "⚠️ Connection unavailable. "
                     "Waiting before retry."
+                )
+
+                telegram(
+                    "⚠️ ZETA CONNECTION UNAVAILABLE\n"
+                    "Waiting before reconnect attempt..."
                 )
 
                 time.sleep(
@@ -3059,10 +3015,6 @@ def run():
             now = time.time()
 
 
-            # ------------------------------------------------
-            # Periodic OTC rediscovery
-            # ------------------------------------------------
-
             if (
                 now - last_discovery
                 >= DISCOVERY_INTERVAL
@@ -3071,6 +3023,11 @@ def run():
                 print(
                     "🔎 Running scheduled "
                     "OTC discovery..."
+                )
+
+                telegram(
+                    "🔎 ZETA PERIODIC OTC DISCOVERY\n"
+                    "Checking focused feeds again..."
                 )
 
                 old_assets = set(
@@ -3101,10 +3058,6 @@ def run():
                 last_discovery = now
 
 
-            # ------------------------------------------------
-            # Heartbeat
-            # ------------------------------------------------
-
             if (
                 now - last_heartbeat
                 >= STATUS_INTERVAL
@@ -3117,10 +3070,6 @@ def run():
                 reset_diagnostic_window()
 
 
-            # ------------------------------------------------
-            # Scan focused assets
-            # ------------------------------------------------
-
             if not working_assets:
 
                 time.sleep(
@@ -3129,6 +3078,19 @@ def run():
 
                 continue
 
+
+            # ------------------------------------------------
+            # Visibility: scan cycle
+            # ------------------------------------------------
+
+            scan_cycle_count += 1
+            last_scan_time = now
+
+            print(
+                f"🔎 SCAN CYCLE #{scan_cycle_count} "
+                f"STARTING — "
+                f"{len(working_assets)} assets"
+            )
 
             for asset in list(
                 working_assets
@@ -3159,8 +3121,26 @@ def run():
                             f"{signal['score']}"
                         )
 
+                        telegram(
+                            "🎯 QUALIFIED SIGNAL FOUND\n"
+                            f"Asset: {asset}\n"
+                            f"Direction: "
+                            f"{signal['direction']}\n"
+                            f"Score: {signal['score']}\n"
+                            "Executing demo order..."
+                        )
+
                         execute_trade(
                             signal
+                        )
+
+                    else:
+
+                        # Keep GitHub log visible without
+                        # flooding Telegram for every rejection.
+                        print(
+                            f"🔎 {asset} evaluated — "
+                            f"no qualifying signal"
                         )
 
 
@@ -3173,13 +3153,27 @@ def run():
 
                     traceback.print_exc()
 
+                    telegram(
+                        "⚠️ ASSET EVALUATION ERROR\n"
+                        f"Asset: {asset}\n"
+                        f"Error: {str(e)[:250]}"
+                    )
+
 
                 time.sleep(0.5)
 
 
             # ------------------------------------------------
-            # Scan interval
+            # Visibility: cycle complete
             # ------------------------------------------------
+
+            print(
+                f"✅ SCAN CYCLE #{scan_cycle_count} "
+                f"COMPLETE — "
+                f"Evaluations: "
+                f"{diagnostic_total_evaluations}"
+            )
+
 
             time.sleep(
                 SCAN_INTERVAL
