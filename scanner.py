@@ -2758,11 +2758,14 @@ def run():
 # ENTRY POINT
 # ============================================================
 
+def main():
+    run()
+
+
 if __name__ == "__main__":
 
     try:
-
-        run()
+        main()
 
     except Exception as e:
 
