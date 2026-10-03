@@ -1,20 +1,22 @@
-name: ZETA V1 Bot - 50 Trade Demo Test
+name: ZETA V2.4 - 50 Trade Demo Test
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
-  group: zeta-v1-50-trade-test
+  group: zeta-v2-demo-test
   cancel-in-progress: false
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
 
-    timeout-minutes: 360
+    # Stop normally before GitHub's hard runner limit.
+    timeout-minutes: 350
 
     steps:
       - name: Checkout repository
@@ -30,7 +32,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run ZETA V1
+      - name: Run ZETA V2.4
         env:
           IQ_EMAIL: ${{ secrets.IQ_EMAIL }}
           IQ_PASSWORD: ${{ secrets.IQ_PASSWORD }}
@@ -38,3 +40,11 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python main.py
+
+      - name: Restart ZETA automatically
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Starting the next ZETA run..."
+          gh workflow run zeta.yml --ref "${{ github.ref_name }}"
