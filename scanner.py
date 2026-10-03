@@ -3223,14 +3223,12 @@ def run():
 # ============================================================
 
 def main():
-
     run()
 
 
 if __name__ == "__main__":
 
     try:
-
         main()
 
     except Exception as e:
@@ -3244,4 +3242,4 @@ if __name__ == "__main__":
         telegram(
             "🔴 ZETA V2.4 FATAL ERROR\n"
             f"{str(e)[:500]}"
-) )
+        )
