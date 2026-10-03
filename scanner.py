@@ -12,17 +12,22 @@ from iqoptionapi.stable_api import IQ_Option
 # ZETA V2.4 — HIGH QUALITY TREND PULLBACK
 # DEMO / PRACTICE ONLY
 #
-# Strategy settings and decision logic are unchanged.
-# This version fixes:
-# 1. Syntax error
-# 2. Websocket/candle reconnection handling
-# 3. Global connection-state handling
+# Strategy logic unchanged.
+#
+# Infrastructure fixes:
+# 1. Correct datetime import
+# 2. Robust IQ Option connection handling
+# 3. Robust candle reconnect handling
+# 4. Robust recursive OTC discovery
+# 5. Focused OTC matching
+# 6. main() entry point preserved
+# 7. Deep rejection diagnostics preserved
 # ============================================================
 
 
-# =========================
+# ============================================================
 # ACCOUNT / TELEGRAM
-# =========================
+# ============================================================
 
 BALANCE_MODE = "PRACTICE"
 
@@ -33,9 +38,9 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
-# =========================
+# ============================================================
 # TRADING SETTINGS
-# =========================
+# ============================================================
 
 STAKE = 1.0
 EXPIRY_MINUTES = 2
@@ -57,9 +62,9 @@ TARGET_TRADES = 50
 ASSET_LOCK_SECONDS = 300
 
 
-# =========================
-# STRATEGY SETTINGS
-# =========================
+# ============================================================
+# STRATEGY SETTINGS — UNCHANGED
+# ============================================================
 
 EMA_FAST = 20
 EMA_SLOW = 50
@@ -89,9 +94,9 @@ RSI_BEAR_MIN = 32
 RSI_BEAR_MAX = 57
 
 
-# =========================
+# ============================================================
 # FOCUSED ASSETS
-# =========================
+# ============================================================
 
 FOCUSED_ASSETS = [
     "COFFEE-OTC",
@@ -128,7 +133,6 @@ asset_trade_lock = {}
 
 last_feed_status = {}
 
-# Diagnostic window
 diagnostic_total_evaluations = 0
 diagnostic_counts = {}
 diagnostic_asset_counts = {}
@@ -160,13 +164,18 @@ diagnostic_trend_counts = {
 # ============================================================
 
 def telegram(message):
+
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print(message)
         return
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{TELEGRAM_TOKEN}/sendMessage"
+    )
 
     try:
+
         requests.post(
             url,
             json={
@@ -175,8 +184,12 @@ def telegram(message):
             },
             timeout=15,
         )
+
     except Exception as e:
-        print(f"Telegram error: {e}")
+
+        print(
+            f"Telegram error: {e}"
+        )
 
     print(message)
 
@@ -186,6 +199,7 @@ def telegram(message):
 # ============================================================
 
 def send_startup():
+
     telegram(
         "🟢 ZETA V2.4 ONLINE\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -215,10 +229,14 @@ def send_startup():
 # ============================================================
 
 def create_connection():
+
     global iq
 
     try:
-        print("🔌 Creating IQ Option connection...")
+
+        print(
+            "🔌 Creating IQ Option connection..."
+        )
 
         new_iq = IQ_Option(
             IQ_EMAIL,
@@ -228,11 +246,15 @@ def create_connection():
         status, reason = new_iq.connect()
 
         if status:
+
             try:
+
                 new_iq.change_balance(
                     BALANCE_MODE
                 )
+
             except Exception as e:
+
                 print(
                     f"Balance mode warning: {e}"
                 )
@@ -244,6 +266,7 @@ def create_connection():
             )
 
             try:
+
                 balance = new_iq.get_balance()
 
                 print(
@@ -261,6 +284,7 @@ def create_connection():
         )
 
     except Exception as e:
+
         print(
             f"❌ Connection exception: {e}"
         )
@@ -269,16 +293,20 @@ def create_connection():
 
 
 def safe_disconnect():
+
     global iq
 
     try:
+
         if iq is not None:
             iq.close()
+
     except Exception:
         pass
 
 
 def reconnect(force=False):
+
     global connected
     global last_connection_attempt
 
@@ -319,10 +347,12 @@ def reconnect(force=False):
             )
 
             try:
+
                 telegram(
                     "🔄 ZETA CONNECTION RECOVERED\n"
                     "IQ Option websocket is connected again."
                 )
+
             except Exception:
                 pass
 
@@ -338,6 +368,7 @@ def reconnect(force=False):
 
 
 def ensure_connection():
+
     global connected
 
     try:
@@ -349,8 +380,11 @@ def ensure_connection():
             return connected
 
         try:
+
             status = iq.check_connect()
+
         except Exception:
+
             status = False
 
         if status:
@@ -375,6 +409,7 @@ def candles_are_valid(
     candles,
     minimum_count=80,
 ):
+
     if not candles:
         return False
 
@@ -411,6 +446,7 @@ def candles_are_valid(
                     return False
 
             except Exception:
+
                 return False
 
     return True
@@ -421,6 +457,7 @@ def fetch_candles(
     timeframe,
     count,
 ):
+
     global connected
 
     for attempt in range(1, 5):
@@ -456,6 +493,7 @@ def fetch_candles(
                 candles,
                 minimum_count=80,
             ):
+
                 return candles
 
             print(
@@ -513,105 +551,407 @@ def fetch_candles(
 # ============================================================
 
 def discover_otc_assets():
+
     global working_assets
 
     print(
-        "🔎 Discovering real IQ Option "
-        "OTC feeds..."
+        "🔎 Discovering OTC assets from "
+        "IQ Option initialization..."
     )
 
     if not ensure_connection():
 
         print(
             "❌ Cannot discover OTC assets: "
-            "no connection."
+            "connection unavailable."
         )
+
+        working_assets = []
 
         return []
 
+
+    # --------------------------------------------------------
+    # Recursive OTC symbol collector
+    # --------------------------------------------------------
+
+    def collect_otc_symbols(
+        obj,
+        found=None,
+    ):
+
+        if found is None:
+            found = set()
+
+        if isinstance(obj, dict):
+
+            for key, value in obj.items():
+
+                key_text = str(
+                    key
+                ).upper().strip()
+
+                # Direct dictionary key
+                if "-OTC" in key_text:
+
+                    position = key_text.find(
+                        "-OTC"
+                    )
+
+                    symbol = (
+                        key_text[:position + 4]
+                    )
+
+                    if symbol:
+                        found.add(symbol)
+
+                # Some IQ Option structures
+                # may contain the symbol in
+                # the value rather than the key.
+                if isinstance(
+                    value,
+                    str,
+                ):
+
+                    value_text = (
+                        value.upper()
+                        .strip()
+                    )
+
+                    if "-OTC" in value_text:
+
+                        position = (
+                            value_text.find(
+                                "-OTC"
+                            )
+                        )
+
+                        symbol = (
+                            value_text[
+                                :position + 4
+                            ]
+                        )
+
+                        if symbol:
+                            found.add(symbol)
+
+                collect_otc_symbols(
+                    value,
+                    found,
+                )
+
+        elif isinstance(
+            obj,
+            (list, tuple, set),
+        ):
+
+            for item in obj:
+
+                collect_otc_symbols(
+                    item,
+                    found,
+                )
+
+        elif isinstance(obj, str):
+
+            text = (
+                obj.upper()
+                .strip()
+            )
+
+            if "-OTC" in text:
+
+                position = text.find(
+                    "-OTC"
+                )
+
+                prefix = text[
+                    :position
+                ]
+
+                # Keep the final token if
+                # the string contains separators.
+                for separator in [
+                    ":",
+                    "/",
+                    "|",
+                    ",",
+                    " ",
+                ]:
+
+                    if separator in prefix:
+
+                        prefix = (
+                            prefix
+                            .split(separator)[-1]
+                        )
+
+                symbol = (
+                    prefix.strip()
+                    + "-OTC"
+                )
+
+                if symbol:
+                    found.add(symbol)
+
+        return found
+
+
+    # --------------------------------------------------------
+    # Retrieve initialization data
+    # --------------------------------------------------------
+
     discovered = set()
+
+    data_v2 = None
+    data_v1 = None
+
+
+    # --------------------------------------------------------
+    # METHOD 1
+    # --------------------------------------------------------
 
     try:
 
-        data = None
+        print(
+            "🔎 Trying get_all_init_v2()..."
+        )
 
-        try:
+        data_v2 = (
+            iq.get_all_init_v2()
+        )
 
-            data = iq.get_all_init_v2()
+        if data_v2:
 
-        except Exception as e:
-
-            print(
-                f"get_all_init_v2 warning: {e}"
+            found_v2 = (
+                collect_otc_symbols(
+                    data_v2
+                )
             )
 
-        if not data:
+            discovered.update(
+                found_v2
+            )
 
-            try:
+            print(
+                "📡 get_all_init_v2: "
+                f"{len(found_v2)} OTC symbols"
+            )
 
-                data = iq.get_all_init()
+        else:
 
-            except Exception as e:
-
-                print(
-                    f"get_all_init warning: {e}"
-                )
-
-        if data:
-
-            def recursive_find(obj):
-
-                if isinstance(obj, dict):
-
-                    for key, value in obj.items():
-
-                        key_text = str(
-                            key
-                        ).upper()
-
-                        if "-OTC" in key_text:
-
-                            discovered.add(
-                                key_text
-                            )
-
-                        recursive_find(
-                            value
-                        )
-
-                elif isinstance(obj, list):
-
-                    for item in obj:
-
-                        recursive_find(
-                            item
-                        )
-
-            recursive_find(data)
+            print(
+                "⚠️ get_all_init_v2 returned "
+                "no data."
+            )
 
     except Exception as e:
 
         print(
-            f"❌ OTC discovery error: {e}"
+            f"⚠️ get_all_init_v2 error: {e}"
         )
+
+
+    # --------------------------------------------------------
+    # METHOD 2
+    # Always try get_all_init as fallback/additional source
+    # --------------------------------------------------------
+
+    try:
+
+        print(
+            "🔎 Trying get_all_init()..."
+        )
+
+        data_v1 = (
+            iq.get_all_init()
+        )
+
+        if data_v1:
+
+            found_v1 = (
+                collect_otc_symbols(
+                    data_v1
+                )
+            )
+
+            discovered.update(
+                found_v1
+            )
+
+            print(
+                "📡 get_all_init: "
+                f"{len(found_v1)} OTC symbols"
+            )
+
+        else:
+
+            print(
+                "⚠️ get_all_init returned "
+                "no data."
+            )
+
+    except Exception as e:
+
+        print(
+            f"⚠️ get_all_init error: {e}"
+        )
+
+
+    # --------------------------------------------------------
+    # Clean symbols
+    # --------------------------------------------------------
+
+    cleaned = set()
+
+    for symbol in discovered:
+
+        symbol = (
+            str(symbol)
+            .upper()
+            .strip()
+        )
+
+        if symbol.endswith("-OTC"):
+
+            cleaned.add(
+                symbol
+            )
+
+    discovered = cleaned
+
+
+    # --------------------------------------------------------
+    # Diagnostics
+    # --------------------------------------------------------
+
+    print(
+        "📊 TOTAL IQ OPTION OTC SYMBOLS FOUND: "
+        f"{len(discovered)}"
+    )
+
+    if discovered:
+
+        sample = sorted(
+            discovered
+        )[:40]
+
+        print(
+            "📋 OTC SYMBOL SAMPLE:"
+        )
+
+        for symbol in sample:
+
+            print(
+                f"   • {symbol}"
+            )
+
+    else:
+
+        print(
+            "⚠️ IQ Option returned "
+            "ZERO recognizable OTC symbols."
+        )
+
+
+    # --------------------------------------------------------
+    # Match focused assets
+    # --------------------------------------------------------
 
     found_focused = []
 
     for asset in FOCUSED_ASSETS:
 
-        if asset.upper() in discovered:
+        asset_upper = (
+            asset.upper()
+        )
+
+        if asset_upper in discovered:
 
             found_focused.append(
                 asset
             )
 
-    working_assets = found_focused
+
+    # --------------------------------------------------------
+    # Secondary normalized matching
+    # --------------------------------------------------------
+
+    if not found_focused:
+
+        normalized = {}
+
+        for symbol in discovered:
+
+            base = (
+                symbol
+                .replace(
+                    "-OTC",
+                    "",
+                )
+                .strip()
+                .upper()
+            )
+
+            normalized[
+                base
+            ] = symbol
+
+
+        for asset in FOCUSED_ASSETS:
+
+            base = (
+                asset
+                .replace(
+                    "-OTC",
+                    "",
+                )
+                .strip()
+                .upper()
+            )
+
+            if base in normalized:
+
+                found_focused.append(
+                    normalized[base]
+                )
+
+
+    # --------------------------------------------------------
+    # Final result
+    # --------------------------------------------------------
+
+    # Preserve focused asset order.
+    ordered = []
+
+    for asset in FOCUSED_ASSETS:
+
+        for discovered_asset in found_focused:
+
+            if (
+                discovered_asset.upper()
+                == asset.upper()
+            ):
+
+                ordered.append(
+                    asset
+                )
+
+                break
+
+    working_assets = ordered
+
+
+    # --------------------------------------------------------
+    # Telegram result
+    # --------------------------------------------------------
 
     print(
-        f"🎯 Focused OTC feeds available: "
+        "🎯 Focused OTC feeds available: "
         f"{len(working_assets)}/"
         f"{len(FOCUSED_ASSETS)}"
     )
+
 
     for asset in FOCUSED_ASSETS:
 
@@ -627,6 +967,39 @@ def discover_otc_assets():
                 f"  ❌ {asset}"
             )
 
+
+    if working_assets:
+
+        telegram(
+            "🟢 ZETA OTC FEEDS FOUND\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"Working feeds: "
+            f"{len(working_assets)}/"
+            f"{len(FOCUSED_ASSETS)}\n"
+            f"Total OTC symbols discovered: "
+            f"{len(discovered)}\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            + "\n".join(
+                f"✅ {asset}"
+                for asset in working_assets
+            )
+        )
+
+    else:
+
+        telegram(
+            "⚠️ ZETA OTC DISCOVERY\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "No focused OTC feeds matched.\n"
+            f"IQ Option OTC symbols found: "
+            f"{len(discovered)}\n"
+            f"Focused assets: "
+            f"{len(FOCUSED_ASSETS)}\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "The bot will continue checking."
+        )
+
+
     return working_assets
 
 
@@ -635,6 +1008,7 @@ def discover_otc_assets():
 # ============================================================
 
 def closes(candles):
+
     return [
         float(x["close"])
         for x in candles
@@ -642,6 +1016,7 @@ def closes(candles):
 
 
 def highs(candles):
+
     return [
         float(x["high"])
         for x in candles
@@ -649,6 +1024,7 @@ def highs(candles):
 
 
 def lows(candles):
+
     return [
         float(x["low"])
         for x in candles
@@ -656,19 +1032,23 @@ def lows(candles):
 
 
 def opens(candles):
+
     return [
         float(x["open"])
         for x in candles
     ]
 
 
-def ema(values, period):
+def ema(
+    values,
+    period,
+):
 
     if len(values) < period:
         return None
 
-    multiplier = 2 / (
-        period + 1
+    multiplier = (
+        2 / (period + 1)
     )
 
     result = (
@@ -694,8 +1074,8 @@ def ema_series(
     if len(values) < period:
         return []
 
-    multiplier = 2 / (
-        period + 1
+    multiplier = (
+        2 / (period + 1)
     )
 
     first = (
@@ -714,7 +1094,9 @@ def ema_series(
             * multiplier
         ) + previous
 
-        result.append(current)
+        result.append(
+            current
+        )
 
         previous = current
 
@@ -726,7 +1108,9 @@ def atr(
     period=14,
 ):
 
-    if len(candles) < period + 1:
+    if len(candles) < (
+        period + 1
+    ):
         return None
 
     trs = []
@@ -772,11 +1156,10 @@ def atr(
 
         value = (
             (
-                (value * (period - 1))
-                + tr
+                value * (period - 1)
             )
-            / period
-        )
+            + tr
+        ) / period
 
     return value
 
@@ -786,7 +1169,9 @@ def rsi(
     period=14,
 ):
 
-    if len(values) < period + 1:
+    if len(values) < (
+        period + 1
+    ):
         return None
 
     gains = []
@@ -827,7 +1212,10 @@ def rsi(
 
         avg_gain = (
             (
-                (avg_gain * (period - 1))
+                (
+                    avg_gain
+                    * (period - 1)
+                )
                 + gains[i]
             )
             / period
@@ -835,16 +1223,23 @@ def rsi(
 
         avg_loss = (
             (
-                (avg_loss * (period - 1))
+                (
+                    avg_loss
+                    * (period - 1)
+                )
                 + losses[i]
             )
             / period
         )
 
     if avg_loss == 0:
+
         return 100.0
 
-    rs = avg_gain / avg_loss
+    rs = (
+        avg_gain
+        / avg_loss
+    )
 
     return 100 - (
         100 / (1 + rs)
@@ -945,19 +1340,25 @@ def adx(
 
         atr_value = (
             atr_value
-            - (atr_value / period)
+            - (
+                atr_value / period
+            )
             + tr_values[i]
         )
 
         plus_value = (
             plus_value
-            - (plus_value / period)
+            - (
+                plus_value / period
+            )
             + plus_dm[i]
         )
 
         minus_value = (
             minus_value
-            - (minus_value / period)
+            - (
+                minus_value / period
+            )
             + minus_dm[i]
         )
 
@@ -1006,7 +1407,10 @@ def adx(
 
         adx_value = (
             (
-                (adx_value * (period - 1))
+                (
+                    adx_value
+                    * (period - 1)
+                )
                 + dx
             )
             / period
@@ -1037,7 +1441,9 @@ def candle_info(candle):
         candle["low"]
     )
 
-    body = abs(c - o)
+    body = abs(
+        c - o
+    )
 
     full_range = max(
         h - l,
@@ -1156,7 +1562,10 @@ def record_rejection(
     ][reason] = (
         diagnostic_asset_counts[
             asset
-        ].get(reason, 0)
+        ].get(
+            reason,
+            0,
+        )
         + 1
     )
 
@@ -1402,8 +1811,9 @@ def evaluate_asset(asset):
 
     diagnostic_total_evaluations += 1
 
+
     # --------------------------------------------------------
-    # 5M candles
+    # 5M CANDLES
     # --------------------------------------------------------
 
     candles5 = fetch_candles(
@@ -1432,8 +1842,9 @@ def evaluate_asset(asset):
 
         return None
 
+
     # --------------------------------------------------------
-    # 1M candles
+    # 1M CANDLES
     # --------------------------------------------------------
 
     candles1 = fetch_candles(
@@ -1462,11 +1873,14 @@ def evaluate_asset(asset):
 
         return None
 
+
     # --------------------------------------------------------
-    # 5M indicators
+    # 5M INDICATORS
     # --------------------------------------------------------
 
-    close5 = closes(candles5)
+    close5 = closes(
+        candles5
+    )
 
     fast5 = ema(
         close5,
@@ -1530,6 +1944,7 @@ def evaluate_asset(asset):
         ADX_PERIOD,
     )
 
+
     # --------------------------------------------------------
     # 5M TREND
     # --------------------------------------------------------
@@ -1575,11 +1990,14 @@ def evaluate_asset(asset):
 
         return None
 
+
     # --------------------------------------------------------
     # ADX
     # --------------------------------------------------------
 
-    record_adx(adx5)
+    record_adx(
+        adx5
+    )
 
     if adx5 is None:
 
@@ -1600,11 +2018,14 @@ def evaluate_asset(asset):
 
         return None
 
+
     # --------------------------------------------------------
-    # 1M indicators
+    # 1M INDICATORS
     # --------------------------------------------------------
 
-    close1 = closes(candles1)
+    close1 = closes(
+        candles1
+    )
 
     fast1 = ema(
         close1,
@@ -1663,16 +2084,21 @@ def evaluate_asset(asset):
         previous_fast1_series[-2]
     )
 
+
     # --------------------------------------------------------
-    # Current closed candle
+    # CURRENT CLOSED CANDLE
     # --------------------------------------------------------
 
     current = candles1[-2]
     previous = candles1[-3]
 
-    info = candle_info(current)
+    info = candle_info(
+        current
+    )
 
-    price = info["close"]
+    price = info[
+        "close"
+    ]
 
     previous_close = float(
         previous["close"]
@@ -1686,8 +2112,9 @@ def evaluate_asset(asset):
         previous["low"]
     )
 
+
     # --------------------------------------------------------
-    # Pullback
+    # PULLBACK
     # --------------------------------------------------------
 
     distance_from_fast = abs(
@@ -1695,7 +2122,8 @@ def evaluate_asset(asset):
     )
 
     pullback_atr = (
-        distance_from_fast / atr1
+        distance_from_fast
+        / atr1
     )
 
     if pullback_atr < MIN_PULLBACK_ATR:
@@ -1730,8 +2158,9 @@ def evaluate_asset(asset):
 
         return None
 
+
     # --------------------------------------------------------
-    # Support / resistance
+    # SUPPORT / RESISTANCE
     # --------------------------------------------------------
 
     lookback = 30
@@ -1848,14 +2277,17 @@ def evaluate_asset(asset):
 
         return None
 
+
     # --------------------------------------------------------
-    # Rejection candle
+    # REJECTION CANDLE
     # --------------------------------------------------------
 
     if bull_trend:
 
         rejection = (
-            bullish_rejection(current)
+            bullish_rejection(
+                current
+            )
         )
 
         if not rejection:
@@ -1870,7 +2302,9 @@ def evaluate_asset(asset):
     else:
 
         rejection = (
-            bearish_rejection(current)
+            bearish_rejection(
+                current
+            )
         )
 
         if not rejection:
@@ -1882,8 +2316,9 @@ def evaluate_asset(asset):
 
             return None
 
+
     # --------------------------------------------------------
-    # 1M structure
+    # 1M STRUCTURE
     # --------------------------------------------------------
 
     if bull_trend:
@@ -1918,8 +2353,9 @@ def evaluate_asset(asset):
 
             return None
 
+
     # --------------------------------------------------------
-    # Candle confirmation
+    # CANDLE CONFIRMATION
     # --------------------------------------------------------
 
     body_ratio = info[
@@ -1990,8 +2426,9 @@ def evaluate_asset(asset):
 
         return None
 
+
     # --------------------------------------------------------
-    # Momentum
+    # MOMENTUM
     # --------------------------------------------------------
 
     if bull_trend:
@@ -2019,6 +2456,7 @@ def evaluate_asset(asset):
 
         return None
 
+
     # --------------------------------------------------------
     # RSI
     # --------------------------------------------------------
@@ -2039,17 +2477,24 @@ def evaluate_asset(asset):
             <= RSI_BEAR_MAX
         )
 
+
     # --------------------------------------------------------
-    # Room
+    # ROOM
     # --------------------------------------------------------
 
     room_up_atr = (
-        (resistance - price)
+        (
+            resistance
+            - price
+        )
         / atr1
     )
 
     room_down_atr = (
-        (price - support)
+        (
+            price
+            - support
+        )
         / atr1
     )
 
@@ -2075,38 +2520,26 @@ def evaluate_asset(asset):
 
         return None
 
+
     # --------------------------------------------------------
     # SCORE
     # --------------------------------------------------------
 
     score = 0
 
-    # Trend
     score += 20
-
-    # Structure
     score += 10
-
-    # Zone
     score += 15
-
-    # Rejection
     score += 20
-
-    # Candle confirmation
     score += 10
-
-    # Momentum
     score += 5
 
-    # RSI
     if rsi_valid:
         score += 5
 
-    # Room
     score += 5
 
-    # Engulfing OR rejection + confirmation
+
     if bull_trend:
 
         extra_confirm = (
@@ -2138,7 +2571,9 @@ def evaluate_asset(asset):
         )
 
     if extra_confirm:
+
         score += 5
+
 
     # --------------------------------------------------------
     # FINAL SCORE
@@ -2209,6 +2644,7 @@ def execute_trade(signal):
 
     now = time.time()
 
+
     # --------------------------------------------------------
     # Signal cooldown
     # --------------------------------------------------------
@@ -2225,6 +2661,7 @@ def execute_trade(signal):
         < 180
     ):
         return False
+
 
     # --------------------------------------------------------
     # Trade lock
@@ -2243,9 +2680,11 @@ def execute_trade(signal):
     ):
         return False
 
+
     signal_id = make_signal_id(
         signal
     )
+
 
     try:
 
@@ -2332,6 +2771,7 @@ def execute_trade(signal):
 
             return True
 
+
         telegram(
             "❌ DEMO ORDER FAILED\n"
             f"ID: {signal_id}\n"
@@ -2340,6 +2780,7 @@ def execute_trade(signal):
             f"{action.upper()}\n"
             f"Response: {order_id}"
         )
+
 
     except Exception as e:
 
@@ -2377,6 +2818,7 @@ def send_feed_status():
 
         return
 
+
     lines = [
         "📡 ZETA OTC FEED STATUS",
         "━━━━━━━━━━━━━━━━━━",
@@ -2387,6 +2829,7 @@ def send_feed_status():
         ),
         "",
     ]
+
 
     for asset in FOCUSED_ASSETS:
 
@@ -2401,6 +2844,7 @@ def send_feed_status():
             lines.append(
                 f"❌ {asset}"
             )
+
 
     telegram(
         "\n".join(lines)
@@ -2424,6 +2868,7 @@ def send_heartbeat():
     except Exception:
 
         balance_text = "Unavailable"
+
 
     text = (
         "💓 ZETA V2.4 HEARTBEAT\n"
@@ -2458,14 +2903,15 @@ def run():
     global last_heartbeat
     global working_assets
 
-    # --------------------------------------------------------
-    # Initial connection
-    # --------------------------------------------------------
-
     telegram(
         "🔌 ZETA V2.4 starting "
         "IQ Option connection..."
     )
+
+
+    # --------------------------------------------------------
+    # Initial connection
+    # --------------------------------------------------------
 
     if not create_connection():
 
@@ -2480,6 +2926,7 @@ def run():
 
     send_startup()
 
+
     # --------------------------------------------------------
     # Initial OTC discovery
     # --------------------------------------------------------
@@ -2490,6 +2937,7 @@ def run():
 
     send_feed_status()
 
+
     if not working_assets:
 
         telegram(
@@ -2498,6 +2946,7 @@ def run():
             "CURRENTLY AVAILABLE.\n"
             "Will continue checking."
         )
+
 
     # --------------------------------------------------------
     # Verify candle retrieval
@@ -2545,6 +2994,7 @@ def run():
                 f"failed: {asset}"
             )
 
+
     if not candle_verified:
 
         telegram(
@@ -2554,19 +3004,21 @@ def run():
             "silently hanging."
         )
 
+
     # --------------------------------------------------------
     # Main loop
     # --------------------------------------------------------
 
     last_discovery = time.time()
 
+
     while True:
 
         try:
 
-            # -----------------------------------------------
+            # ------------------------------------------------
             # Target reached
-            # -----------------------------------------------
+            # ------------------------------------------------
 
             if (
                 trade_count
@@ -2585,9 +3037,10 @@ def run():
 
                 break
 
-            # -----------------------------------------------
-            # Keep connection alive
-            # -----------------------------------------------
+
+            # ------------------------------------------------
+            # Connection
+            # ------------------------------------------------
 
             if not ensure_connection():
 
@@ -2602,11 +3055,13 @@ def run():
 
                 continue
 
-            # -----------------------------------------------
-            # Periodic OTC rediscovery
-            # -----------------------------------------------
 
             now = time.time()
+
+
+            # ------------------------------------------------
+            # Periodic OTC rediscovery
+            # ------------------------------------------------
 
             if (
                 now - last_discovery
@@ -2645,9 +3100,10 @@ def run():
 
                 last_discovery = now
 
-            # -----------------------------------------------
+
+            # ------------------------------------------------
             # Heartbeat
-            # -----------------------------------------------
+            # ------------------------------------------------
 
             if (
                 now - last_heartbeat
@@ -2660,9 +3116,10 @@ def run():
 
                 reset_diagnostic_window()
 
-            # -----------------------------------------------
+
+            # ------------------------------------------------
             # Scan focused assets
-            # -----------------------------------------------
+            # ------------------------------------------------
 
             if not working_assets:
 
@@ -2671,6 +3128,7 @@ def run():
                 )
 
                 continue
+
 
             for asset in list(
                 working_assets
@@ -2681,6 +3139,7 @@ def run():
                     >= TARGET_TRADES
                 ):
                     break
+
 
                 try:
 
@@ -2704,6 +3163,7 @@ def run():
                             signal
                         )
 
+
                 except Exception as e:
 
                     print(
@@ -2713,15 +3173,18 @@ def run():
 
                     traceback.print_exc()
 
+
                 time.sleep(0.5)
 
-            # -----------------------------------------------
+
+            # ------------------------------------------------
             # Scan interval
-            # -----------------------------------------------
+            # ------------------------------------------------
 
             time.sleep(
                 SCAN_INTERVAL
             )
+
 
         except KeyboardInterrupt:
 
@@ -2730,6 +3193,7 @@ def run():
             )
 
             break
+
 
         except Exception as e:
 
@@ -2759,12 +3223,14 @@ def run():
 # ============================================================
 
 def main():
+
     run()
 
 
 if __name__ == "__main__":
 
     try:
+
         main()
 
     except Exception as e:
@@ -2778,4 +3244,4 @@ if __name__ == "__main__":
         telegram(
             "🔴 ZETA V2.4 FATAL ERROR\n"
             f"{str(e)[:500]}"
-        )
+) )
