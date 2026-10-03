@@ -12,16 +12,9 @@ from iqoptionapi.stable_api import IQ_Option
 # ZETA V2.4 — HIGH QUALITY TREND PULLBACK
 # DEMO / PRACTICE ONLY
 #
-# STRATEGY LOGIC UNCHANGED.
-#
-# Visibility fixes only:
-# 1. Telegram progress after OTC discovery
-# 2. Telegram progress before each candle verification
-# 3. Telegram progress after candle verification
-# 4. Telegram message when normal scanner mode begins
-# 5. Telegram scan-cycle progress
-# 6. Telegram evaluation progress
-# 7. Telegram last rejection visibility
+# ONLY CHANGE IN THIS VERSION:
+# VISIBILITY / PROGRESS MESSAGES
+# Strategy logic unchanged.
 # ============================================================
 
 
@@ -160,15 +153,6 @@ diagnostic_trend_counts = {
 
 
 # ============================================================
-# VISIBILITY STATE
-# ============================================================
-
-last_evaluated_asset = "None"
-last_scan_time = 0
-scan_cycle_count = 0
-
-
-# ============================================================
 # TELEGRAM
 # ============================================================
 
@@ -184,7 +168,6 @@ def telegram(message):
     )
 
     try:
-
         requests.post(
             url,
             json={
@@ -195,10 +178,7 @@ def telegram(message):
         )
 
     except Exception as e:
-
-        print(
-            f"Telegram error: {e}"
-        )
+        print(f"Telegram error: {e}")
 
     print(message)
 
@@ -243,9 +223,7 @@ def create_connection():
 
     try:
 
-        print(
-            "🔌 Creating IQ Option connection..."
-        )
+        print("🔌 Creating IQ Option connection...")
 
         new_iq = IQ_Option(
             IQ_EMAIL,
@@ -257,13 +235,10 @@ def create_connection():
         if status:
 
             try:
-
                 new_iq.change_balance(
                     BALANCE_MODE
                 )
-
             except Exception as e:
-
                 print(
                     f"Balance mode warning: {e}"
                 )
@@ -275,7 +250,6 @@ def create_connection():
             )
 
             try:
-
                 balance = new_iq.get_balance()
 
                 print(
@@ -356,12 +330,10 @@ def reconnect(force=False):
             )
 
             try:
-
                 telegram(
                     "🔄 ZETA CONNECTION RECOVERED\n"
                     "IQ Option websocket is connected again."
                 )
-
             except Exception:
                 pass
 
@@ -389,11 +361,8 @@ def ensure_connection():
             return connected
 
         try:
-
             status = iq.check_connect()
-
         except Exception:
-
             status = False
 
         if status:
@@ -579,7 +548,6 @@ def discover_otc_assets():
 
         return []
 
-
     def collect_otc_symbols(
         obj,
         found=None,
@@ -695,12 +663,10 @@ def discover_otc_assets():
 
         return found
 
-
     discovered = set()
 
     data_v2 = None
     data_v1 = None
-
 
     try:
 
@@ -742,7 +708,6 @@ def discover_otc_assets():
             f"⚠️ get_all_init_v2 error: {e}"
         )
 
-
     try:
 
         print(
@@ -783,7 +748,6 @@ def discover_otc_assets():
             f"⚠️ get_all_init error: {e}"
         )
 
-
     cleaned = set()
 
     for symbol in discovered:
@@ -795,13 +759,9 @@ def discover_otc_assets():
         )
 
         if symbol.endswith("-OTC"):
-
-            cleaned.add(
-                symbol
-            )
+            cleaned.add(symbol)
 
     discovered = cleaned
-
 
     print(
         "📊 TOTAL IQ OPTION OTC SYMBOLS FOUND: "
@@ -819,7 +779,6 @@ def discover_otc_assets():
         )
 
         for symbol in sample:
-
             print(
                 f"   • {symbol}"
             )
@@ -830,7 +789,6 @@ def discover_otc_assets():
             "⚠️ IQ Option returned "
             "ZERO recognizable OTC symbols."
         )
-
 
     found_focused = []
 
@@ -845,7 +803,6 @@ def discover_otc_assets():
             found_focused.append(
                 asset
             )
-
 
     if not found_focused:
 
@@ -867,7 +824,6 @@ def discover_otc_assets():
                 base
             ] = symbol
 
-
         for asset in FOCUSED_ASSETS:
 
             base = (
@@ -885,7 +841,6 @@ def discover_otc_assets():
                 found_focused.append(
                     normalized[base]
                 )
-
 
     ordered = []
 
@@ -906,13 +861,11 @@ def discover_otc_assets():
 
     working_assets = ordered
 
-
     print(
         "🎯 Focused OTC feeds available: "
         f"{len(working_assets)}/"
         f"{len(FOCUSED_ASSETS)}"
     )
-
 
     for asset in FOCUSED_ASSETS:
 
@@ -927,7 +880,6 @@ def discover_otc_assets():
             print(
                 f"  ❌ {asset}"
             )
-
 
     if working_assets:
 
@@ -963,7 +915,6 @@ def discover_otc_assets():
             "━━━━━━━━━━━━━━━━━━\n"
             "The bot will continue checking."
         )
-
 
     return working_assets
 
@@ -1198,7 +1149,6 @@ def rsi(
         )
 
     if avg_loss == 0:
-
         return 100.0
 
     rs = (
@@ -1654,16 +1604,6 @@ def build_diagnostic_text():
         f"{diagnostic_total_evaluations}"
     )
 
-    lines.append(
-        f"Scan cycles: "
-        f"{scan_cycle_count}"
-    )
-
-    lines.append(
-        f"Last evaluated: "
-        f"{last_evaluated_asset}"
-    )
-
     lines.append("")
 
     lines.append(
@@ -1777,17 +1717,14 @@ def build_asset_diagnostics():
 
 
 # ============================================================
-# STRATEGY EVALUATION — UNCHANGED
+# STRATEGY EVALUATION
 # ============================================================
 
 def evaluate_asset(asset):
 
     global diagnostic_total_evaluations
-    global last_evaluated_asset
 
     diagnostic_total_evaluations += 1
-    last_evaluated_asset = asset
-
 
     candles5 = fetch_candles(
         asset,
@@ -1815,7 +1752,6 @@ def evaluate_asset(asset):
 
         return None
 
-
     candles1 = fetch_candles(
         asset,
         TF1,
@@ -1842,10 +1778,7 @@ def evaluate_asset(asset):
 
         return None
 
-
-    close5 = closes(
-        candles5
-    )
+    close5 = closes(candles5)
 
     fast5 = ema(
         close5,
@@ -1909,7 +1842,6 @@ def evaluate_asset(asset):
         ADX_PERIOD,
     )
 
-
     bull_trend = (
         fast5 > slow5
         and previous_fast5 >= previous_slow5
@@ -1951,10 +1883,7 @@ def evaluate_asset(asset):
 
         return None
 
-
-    record_adx(
-        adx5
-    )
+    record_adx(adx5)
 
     if adx5 is None:
 
@@ -1975,10 +1904,7 @@ def evaluate_asset(asset):
 
         return None
 
-
-    close1 = closes(
-        candles1
-    )
+    close1 = closes(candles1)
 
     fast1 = ema(
         close1,
@@ -2037,17 +1963,12 @@ def evaluate_asset(asset):
         previous_fast1_series[-2]
     )
 
-
     current = candles1[-2]
     previous = candles1[-3]
 
-    info = candle_info(
-        current
-    )
+    info = candle_info(current)
 
-    price = info[
-        "close"
-    ]
+    price = info["close"]
 
     previous_close = float(
         previous["close"]
@@ -2060,7 +1981,6 @@ def evaluate_asset(asset):
     previous_low = float(
         previous["low"]
     )
-
 
     distance_from_fast = abs(
         price - fast1
@@ -2102,7 +2022,6 @@ def evaluate_asset(asset):
         )
 
         return None
-
 
     lookback = 30
 
@@ -2218,7 +2137,6 @@ def evaluate_asset(asset):
 
         return None
 
-
     if bull_trend:
 
         rejection = (
@@ -2253,7 +2171,6 @@ def evaluate_asset(asset):
 
             return None
 
-
     if bull_trend:
 
         structure = (
@@ -2285,7 +2202,6 @@ def evaluate_asset(asset):
             )
 
             return None
-
 
     body_ratio = info[
         "body_ratio"
@@ -2355,7 +2271,6 @@ def evaluate_asset(asset):
 
         return None
 
-
     if bull_trend:
 
         momentum = (
@@ -2381,7 +2296,6 @@ def evaluate_asset(asset):
 
         return None
 
-
     if bull_trend:
 
         rsi_valid = (
@@ -2397,7 +2311,6 @@ def evaluate_asset(asset):
             <= rsi1
             <= RSI_BEAR_MAX
         )
-
 
     room_up_atr = (
         (
@@ -2437,7 +2350,6 @@ def evaluate_asset(asset):
 
         return None
 
-
     score = 0
 
     score += 20
@@ -2451,7 +2363,6 @@ def evaluate_asset(asset):
         score += 5
 
     score += 5
-
 
     if bull_trend:
 
@@ -2484,9 +2395,7 @@ def evaluate_asset(asset):
         )
 
     if extra_confirm:
-
         score += 5
-
 
     if score < MIN_SCORE:
 
@@ -2553,7 +2462,6 @@ def execute_trade(signal):
 
     now = time.time()
 
-
     previous_signal = (
         asset_last_signal.get(
             asset,
@@ -2566,7 +2474,6 @@ def execute_trade(signal):
         < 180
     ):
         return False
-
 
     previous_trade = (
         asset_trade_lock.get(
@@ -2581,11 +2488,9 @@ def execute_trade(signal):
     ):
         return False
 
-
     signal_id = make_signal_id(
         signal
     )
-
 
     try:
 
@@ -2672,7 +2577,6 @@ def execute_trade(signal):
 
             return True
 
-
         telegram(
             "❌ DEMO ORDER FAILED\n"
             f"ID: {signal_id}\n"
@@ -2681,7 +2585,6 @@ def execute_trade(signal):
             f"{action.upper()}\n"
             f"Response: {order_id}"
         )
-
 
     except Exception as e:
 
@@ -2719,7 +2622,6 @@ def send_feed_status():
 
         return
 
-
     lines = [
         "📡 ZETA OTC FEED STATUS",
         "━━━━━━━━━━━━━━━━━━",
@@ -2730,7 +2632,6 @@ def send_feed_status():
         ),
         "",
     ]
-
 
     for asset in FOCUSED_ASSETS:
 
@@ -2745,7 +2646,6 @@ def send_feed_status():
             lines.append(
                 f"❌ {asset}"
             )
-
 
     telegram(
         "\n".join(lines)
@@ -2770,7 +2670,6 @@ def send_heartbeat():
 
         balance_text = "Unavailable"
 
-
     text = (
         "💓 ZETA V2.4 HEARTBEAT\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -2785,10 +2684,6 @@ def send_heartbeat():
         f"{trade_count}/"
         f"{TARGET_TRADES}\n"
         f"Signals: {signal_count}\n"
-        f"Last evaluated: "
-        f"{last_evaluated_asset}\n"
-        f"Scan cycles: "
-        f"{scan_cycle_count}\n"
         "━━━━━━━━━━━━━━━━━━\n"
         + build_diagnostic_text()
         + "\n━━━━━━━━━━━━━━━━━━\n"
@@ -2807,14 +2702,11 @@ def run():
     global connected
     global last_heartbeat
     global working_assets
-    global last_scan_time
-    global scan_cycle_count
 
     telegram(
         "🔌 ZETA V2.4 starting "
         "IQ Option connection..."
     )
-
 
     # --------------------------------------------------------
     # Initial connection
@@ -2833,7 +2725,6 @@ def run():
 
     send_startup()
 
-
     # --------------------------------------------------------
     # Initial OTC discovery
     # --------------------------------------------------------
@@ -2844,7 +2735,6 @@ def run():
 
     send_feed_status()
 
-
     if not working_assets:
 
         telegram(
@@ -2854,18 +2744,16 @@ def run():
             "Will continue checking."
         )
 
-
-    # --------------------------------------------------------
-    # Visibility: candle verification starting
-    # --------------------------------------------------------
+    # ========================================================
+    # VISIBILITY FIX — CANDLE VERIFICATION
+    # ========================================================
 
     if working_assets:
 
         telegram(
             "🧪 ZETA CANDLE VERIFICATION STARTING\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            f"Feeds to test: "
-            f"{len(working_assets)}\n"
+            f"Feeds to test: {len(working_assets)}\n"
             "Timeframe: 1M\n"
             "Required candles: 100\n"
             "━━━━━━━━━━━━━━━━━━\n"
@@ -2873,25 +2761,29 @@ def run():
             "feed now."
         )
 
-
-    # --------------------------------------------------------
-    # Verify candle retrieval
-    # --------------------------------------------------------
-
     candle_verified = False
 
-    for asset in working_assets:
+    for index, asset in enumerate(
+        working_assets,
+        start=1,
+    ):
 
-        print(
-            f"🧪 Testing candle feed: "
-            f"{asset}"
-        )
+        # ----------------------------------------------------
+        # VISIBILITY FIX
+        # ----------------------------------------------------
 
         telegram(
             "🧪 TESTING CANDLE FEED\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"Feed: {index}/{len(working_assets)}\n"
             f"Asset: {asset}\n"
             "Timeframe: 1M\n"
             "Requesting 100 candles..."
+        )
+
+        print(
+            "🧪 Testing candle feed: "
+            f"{asset}"
         )
 
         test_candles = fetch_candles(
@@ -2911,12 +2803,14 @@ def run():
             )
 
             telegram(
-                "✅ IQ OPTION CANDLE FEED VERIFIED\n"
+                "✅ CANDLE FEED VERIFIED\n"
+                "━━━━━━━━━━━━━━━━━━\n"
                 f"Asset: {asset}\n"
                 f"1M candles received: "
                 f"{len(test_candles)}\n"
                 "━━━━━━━━━━━━━━━━━━\n"
-                "🚀 SCANNER ENTERING NORMAL MODE"
+                "✅ Candle data is working.\n"
+                "➡️ Moving to normal scanner mode."
             )
 
             break
@@ -2930,21 +2824,22 @@ def run():
 
             telegram(
                 "⚠️ CANDLE TEST FAILED\n"
+                "━━━━━━━━━━━━━━━━━━\n"
                 f"Asset: {asset}\n"
-                "Trying the next available "
-                "focused feed..."
+                "No valid 1M candle data received.\n"
+                f"Progress: {index}/{len(working_assets)}\n"
+                "➡️ Moving to the next available feed."
             )
-
 
     if not candle_verified:
 
         telegram(
             "⚠️ ZETA CANDLE FEED NOT VERIFIED\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "No focused asset returned valid "
-            "candle data.\n"
+            f"Feeds tested: {len(working_assets)}\n"
+            "No valid candle feed was confirmed.\n"
             "The bot will keep reconnecting "
-            "and checking."
+            "and checking instead of silently hanging."
         )
 
     else:
@@ -2955,14 +2850,13 @@ def run():
             f"Working feeds: "
             f"{len(working_assets)}/"
             f"{len(FOCUSED_ASSETS)}\n"
-            f"Target: "
-            f"{TARGET_TRADES} demo orders\n"
+            "Context: 5M\n"
+            "Entry: 1M\n"
             f"Minimum score: {MIN_SCORE}\n"
             f"Expiry: {EXPIRY_MINUTES} minutes\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "🔎 Beginning strategy evaluations..."
+            "🔎 Scanning for qualified signals..."
         )
-
 
     # --------------------------------------------------------
     # Main loop
@@ -2970,10 +2864,13 @@ def run():
 
     last_discovery = time.time()
 
-
     while True:
 
         try:
+
+            # ------------------------------------------------
+            # Target reached
+            # ------------------------------------------------
 
             if (
                 trade_count
@@ -2992,6 +2889,9 @@ def run():
 
                 break
 
+            # ------------------------------------------------
+            # Connection
+            # ------------------------------------------------
 
             if not ensure_connection():
 
@@ -3000,34 +2900,32 @@ def run():
                     "Waiting before retry."
                 )
 
-                telegram(
-                    "⚠️ ZETA CONNECTION UNAVAILABLE\n"
-                    "Waiting before reconnect attempt..."
-                )
-
                 time.sleep(
                     RECONNECT_INTERVAL
                 )
 
                 continue
 
-
             now = time.time()
 
+            # ------------------------------------------------
+            # Periodic OTC rediscovery
+            # ------------------------------------------------
 
             if (
                 now - last_discovery
                 >= DISCOVERY_INTERVAL
             ):
 
+                telegram(
+                    "🔎 ZETA OTC REDISCOVERY\n"
+                    "━━━━━━━━━━━━━━━━━━\n"
+                    "Checking focused OTC feeds again..."
+                )
+
                 print(
                     "🔎 Running scheduled "
                     "OTC discovery..."
-                )
-
-                telegram(
-                    "🔎 ZETA PERIODIC OTC DISCOVERY\n"
-                    "Checking focused feeds again..."
                 )
 
                 old_assets = set(
@@ -3057,6 +2955,9 @@ def run():
 
                 last_discovery = now
 
+            # ------------------------------------------------
+            # Heartbeat
+            # ------------------------------------------------
 
             if (
                 now - last_heartbeat
@@ -3069,6 +2970,9 @@ def run():
 
                 reset_diagnostic_window()
 
+            # ------------------------------------------------
+            # Scan focused assets
+            # ------------------------------------------------
 
             if not working_assets:
 
@@ -3078,22 +2982,9 @@ def run():
 
                 continue
 
-
-            # ------------------------------------------------
-            # Visibility: scan cycle
-            # ------------------------------------------------
-
-            scan_cycle_count += 1
-            last_scan_time = now
-
-            print(
-                f"🔎 SCAN CYCLE #{scan_cycle_count} "
-                f"STARTING — "
-                f"{len(working_assets)} assets"
-            )
-
-            for asset in list(
-                working_assets
+            for asset_index, asset in enumerate(
+                list(working_assets),
+                start=1,
             ):
 
                 if (
@@ -3101,7 +2992,6 @@ def run():
                     >= TARGET_TRADES
                 ):
                     break
-
 
                 try:
 
@@ -3121,28 +3011,9 @@ def run():
                             f"{signal['score']}"
                         )
 
-                        telegram(
-                            "🎯 QUALIFIED SIGNAL FOUND\n"
-                            f"Asset: {asset}\n"
-                            f"Direction: "
-                            f"{signal['direction']}\n"
-                            f"Score: {signal['score']}\n"
-                            "Executing demo order..."
-                        )
-
                         execute_trade(
                             signal
                         )
-
-                    else:
-
-                        # Keep GitHub log visible without
-                        # flooding Telegram for every rejection.
-                        print(
-                            f"🔎 {asset} evaluated — "
-                            f"no qualifying signal"
-                        )
-
 
                 except Exception as e:
 
@@ -3153,32 +3024,11 @@ def run():
 
                     traceback.print_exc()
 
-                    telegram(
-                        "⚠️ ASSET EVALUATION ERROR\n"
-                        f"Asset: {asset}\n"
-                        f"Error: {str(e)[:250]}"
-                    )
-
-
                 time.sleep(0.5)
-
-
-            # ------------------------------------------------
-            # Visibility: cycle complete
-            # ------------------------------------------------
-
-            print(
-                f"✅ SCAN CYCLE #{scan_cycle_count} "
-                f"COMPLETE — "
-                f"Evaluations: "
-                f"{diagnostic_total_evaluations}"
-            )
-
 
             time.sleep(
                 SCAN_INTERVAL
             )
-
 
         except KeyboardInterrupt:
 
@@ -3187,7 +3037,6 @@ def run():
             )
 
             break
-
 
         except Exception as e:
 
