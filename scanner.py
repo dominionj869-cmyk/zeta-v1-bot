@@ -13,7 +13,7 @@ import iqoptionapi.constants as OP_code
 # ZETA V2.4 — HIGH QUALITY TREND PULLBACK
 # REAL IQ OPTION OTC DISCOVERY
 # PRACTICE / DEMO ONLY
-# RESULT TRACKING REMOVED
+# RESULT TRACKING — MANUAL
 # ============================================================
 
 BALANCE_MODE = "PRACTICE"
@@ -40,7 +40,7 @@ ASSET_LOCK_SECONDS = 300
 
 
 # ============================================================
-# STRATEGY SETTINGS
+# STRATEGY SETTINGS — UNCHANGED
 # ============================================================
 
 EMA_FAST = 20
@@ -244,6 +244,7 @@ def register_active_id(name, active_id):
 
     try:
         active_id = int(active_id)
+
     except Exception:
         return False
 
@@ -252,6 +253,7 @@ def register_active_id(name, active_id):
         return True
 
     except Exception as e:
+
         print(
             "[ACTIVE MAP ERROR]",
             name,
@@ -263,7 +265,7 @@ def register_active_id(name, active_id):
 
 
 # ============================================================
-# WORKING IQ OPTION INITIALIZATION
+# IQ OPTION INITIALIZATION
 # ============================================================
 
 def get_raw_initialization():
@@ -276,6 +278,7 @@ def get_raw_initialization():
     print("=" * 70)
 
     try:
+
         print(
             "[RAW] Requesting get_all_init_v2()..."
         )
@@ -338,7 +341,7 @@ def get_raw_initialization():
 
 
 # ============================================================
-# RECURSIVE REAL OTC DISCOVERY
+# REAL OTC DISCOVERY
 # ============================================================
 
 def discover_otc_from_initialization(data):
@@ -399,19 +402,14 @@ def discover_otc_from_initialization(data):
                             False,
                         )
 
-                        enabled = bool(enabled)
-                        suspended = bool(suspended)
-
-                        if not enabled:
+                        if not bool(enabled):
                             continue
 
-                        if suspended:
+                        if bool(suspended):
                             continue
 
                         try:
-                            numeric_id = int(
-                                active_id
-                            )
+                            numeric_id = int(active_id)
 
                         except Exception:
                             continue
@@ -453,7 +451,6 @@ def discover_otc_from_initialization(data):
                     "stocks",
                     "commodities",
                 ):
-
                     child_market = key
 
                 if isinstance(
@@ -539,10 +536,8 @@ def discover_otc_from_initialization(data):
 
     else:
 
-        print("")
         print(
-            "[DISCOVERY] No enabled OTC "
-            "instruments found."
+            "[DISCOVERY] No enabled OTC instruments found."
         )
 
     return found[:MAX_OTC_ASSETS]
@@ -648,38 +643,30 @@ def reconnect_iq_controlled():
 
     global api
 
-    print("\n" + "=" * 70)
-    print("[CONTROLLED RECONNECT]")
-    print("=" * 70)
+    print(
+        "\n[RECONNECT] Creating fresh IQ Option connection..."
+    )
+
+    old_api = api
+
+    if old_api is not None:
+
+        try:
+            old_api.close()
+
+        except Exception:
+            pass
+
+    time.sleep(1)
 
     try:
 
-        old_api = api
-
-        if old_api is not None:
-
-            try:
-                old_api.close()
-            except Exception:
-                pass
-
-        time.sleep(1)
-
-    except Exception as e:
-
-        print(
-            "[OLD CONNECTION CLOSE ERROR]",
-            repr(e),
-        )
-
-    try:
-
-        api = IQ_Option(
+        new_api = IQ_Option(
             IQ_EMAIL,
             IQ_PASSWORD,
         )
 
-        connected, reason = api.connect()
+        connected, reason = new_api.connect()
 
         print(
             "[RECONNECT RESULT]",
@@ -689,15 +676,16 @@ def reconnect_iq_controlled():
 
         if not connected:
 
-            print(
-                "[RECONNECT FAILED]"
-            )
+            try:
+                new_api.close()
+            except Exception:
+                pass
 
             return False
 
         try:
 
-            api.change_balance(
+            new_api.change_balance(
                 BALANCE_MODE
             )
 
@@ -708,9 +696,7 @@ def reconnect_iq_controlled():
                 repr(e),
             )
 
-        print(
-            "[RECONNECT SUCCESS]"
-        )
+        api = new_api
 
         return True
 
@@ -728,6 +714,14 @@ def reconnect_iq_controlled():
 
 # ============================================================
 # SAFE LOW-LEVEL CANDLE FETCH
+#
+# IMPORTANT:
+# We intentionally do NOT use:
+#
+#     api.get_candles(...)
+#
+# because stable_api.get_candles() can internally retry forever
+# when the websocket is broken.
 # ============================================================
 
 def get_candles_safe(
@@ -748,76 +742,52 @@ def get_candles_safe(
     if active_id is None:
 
         print(
-            f"[CANDLE ERROR] "
-            f"{asset} has no active ID."
+            "[CANDLE] No active ID:",
+            asset,
         )
 
         return []
 
     # --------------------------------------------------------
-    # MAXIMUM TWO CONTROLLED ATTEMPTS
+    # MAX TWO CONTROLLED ATTEMPTS
     # --------------------------------------------------------
 
-    for attempt in range(2):
+    for attempt in range(1, 3):
 
         try:
 
-            low_api = getattr(
+            internal_api = getattr(
                 api,
                 "api",
                 None,
             )
 
-            if low_api is None:
+            if internal_api is None:
 
-                print(
-                    "[CANDLE ERROR] "
-                    "Low-level API unavailable."
+                raise RuntimeError(
+                    "IQ Option internal API unavailable"
                 )
 
-                if attempt == 0:
-
-                    if reconnect_iq_controlled():
-                        continue
-
-                return []
-
-            candle_state = getattr(
-                low_api,
+            candles_state = getattr(
+                internal_api,
                 "candles",
                 None,
             )
 
-            if candle_state is None:
+            if candles_state is None:
 
-                print(
-                    "[CANDLE ERROR] "
-                    "Candle state unavailable."
+                raise RuntimeError(
+                    "IQ Option candle state unavailable"
                 )
 
-                if attempt == 0:
-
-                    if reconnect_iq_controlled():
-                        continue
-
-                return []
-
-            # Clear previous response
-            candle_state.candles_data = None
+            # Clear previous response.
+            candles_state.candles_data = None
 
             # ------------------------------------------------
             # DIRECT LOW-LEVEL REQUEST
-            #
-            # IMPORTANT:
-            # We intentionally DO NOT use:
-            #
-            # api.get_candles(...)
-            #
-            # because that method can enter its own
-            # reconnect loop.
             # ------------------------------------------------
 
-            low_api.getcandles(
+            internal_api.getcandles(
                 active_id,
                 interval,
                 count + 5,
@@ -825,7 +795,7 @@ def get_candles_safe(
             )
 
             # ------------------------------------------------
-            # WAIT FOR RESPONSE
+            # CONTROLLED WAIT
             # ------------------------------------------------
 
             deadline = (
@@ -835,13 +805,10 @@ def get_candles_safe(
 
             raw = None
 
-            while (
-                time.time()
-                < deadline
-            ):
+            while time.time() < deadline:
 
                 raw = (
-                    candle_state.candles_data
+                    candles_state.candles_data
                 )
 
                 if raw is not None:
@@ -849,62 +816,34 @@ def get_candles_safe(
 
                 time.sleep(0.05)
 
-            # ------------------------------------------------
-            # TIMEOUT
-            # ------------------------------------------------
-
             if raw is None:
 
-                print(
-                    f"[CANDLE TIMEOUT] "
-                    f"{asset} "
-                    f"{interval}s "
-                    f"attempt={attempt + 1}"
+                raise TimeoutError(
+                    f"Timed out waiting for "
+                    f"{asset} {interval}s candles"
                 )
-
-                if attempt == 0:
-
-                    if reconnect_iq_controlled():
-                        continue
-
-                return []
-
-            # ------------------------------------------------
-            # NORMALIZE
-            # ------------------------------------------------
 
             candles = normalize_candles(
                 raw
             )
-
-            # ------------------------------------------------
-            # REMOVE OPEN CANDLE
-            # ------------------------------------------------
 
             candles = remove_open_candle(
                 candles,
                 interval,
             )
 
-            # ------------------------------------------------
-            # SUCCESS
-            # ------------------------------------------------
+            result = candles[-count:]
 
-            if len(candles) > 0:
+            if len(result) > 0:
 
-                return candles[-count:]
+                return result
 
             print(
                 f"[CANDLE EMPTY] "
                 f"{asset} "
                 f"{interval}s "
-                f"attempt={attempt + 1}"
+                f"attempt={attempt}"
             )
-
-            if attempt == 0:
-
-                if reconnect_iq_controlled():
-                    continue
 
             return []
 
@@ -914,18 +853,23 @@ def get_candles_safe(
                 f"[CANDLE ERROR] "
                 f"{asset} "
                 f"{interval}s "
-                f"attempt={attempt + 1} -> "
+                f"attempt={attempt}/2 -> "
                 f"{repr(e)}"
             )
 
-            traceback.print_exc()
+            if attempt == 1:
 
-            if attempt == 0:
+                print(
+                    "[CANDLE] Controlled reconnect..."
+                )
 
                 if reconnect_iq_controlled():
+
+                    # Active IDs remain registered in OP_code.
+                    time.sleep(1)
                     continue
 
-            return []
+            break
 
     return []
 
@@ -1098,9 +1042,13 @@ def rsi_values(
     index = period
 
     if avg_loss == 0:
+
         result[index] = 100.0
+
     else:
+
         rs = avg_gain / avg_loss
+
         result[index] = (
             100.0
             - (
@@ -1233,17 +1181,26 @@ def adx_values(
 
             minus_dm[i] = down_move
 
-    atr = sum(
-        tr[1:period + 1]
-    ) / period
+    atr = (
+        sum(
+            tr[1:period + 1]
+        )
+        / period
+    )
 
-    plus = sum(
-        plus_dm[1:period + 1]
-    ) / period
+    plus = (
+        sum(
+            plus_dm[1:period + 1]
+        )
+        / period
+    )
 
-    minus = sum(
-        minus_dm[1:period + 1]
-    ) / period
+    minus = (
+        sum(
+            minus_dm[1:period + 1]
+        )
+        / period
+    )
 
     dx_values = []
 
@@ -1394,16 +1351,18 @@ def bullish_rejection(candle):
     if rng <= 0:
         return False
 
-    lower_wick = min(
-        candle["open"],
-        candle["close"],
-    ) - candle["low"]
+    lower_wick = (
+        min(
+            candle["open"],
+            candle["close"],
+        )
+        - candle["low"]
+    )
 
     body = candle_body(candle)
 
     return (
-        lower_wick
-        >= body * 1.0
+        lower_wick >= body * 1.0
         and candle["close"]
         >= (
             candle["low"]
@@ -1430,8 +1389,7 @@ def bearish_rejection(candle):
     body = candle_body(candle)
 
     return (
-        upper_wick
-        >= body * 1.0
+        upper_wick >= body * 1.0
         and candle["close"]
         <= (
             candle["high"]
@@ -1479,9 +1437,7 @@ def recent_support(
     lookback=30,
 ):
 
-    subset = candles[
-        -lookback:
-    ]
+    subset = candles[-lookback:]
 
     if not subset:
         return None
@@ -1497,9 +1453,7 @@ def recent_resistance(
     lookback=30,
 ):
 
-    subset = candles[
-        -lookback:
-    ]
+    subset = candles[-lookback:]
 
     if not subset:
         return None
@@ -1511,7 +1465,7 @@ def recent_resistance(
 
 
 # ============================================================
-# ZETA V2 HIGH QUALITY TREND PULLBACK
+# ZETA V2 STRATEGY
 # ============================================================
 
 def evaluate_zeta_v2(
@@ -1594,16 +1548,14 @@ def evaluate_zeta_v2(
 
     bullish_trend = (
         fast5 > slow5
-        and previous_fast5
-        >= previous_slow5
+        and previous_fast5 >= previous_slow5
         and fast5 > previous_fast5
         and slow5 >= previous_slow5
     )
 
     bearish_trend = (
         fast5 < slow5
-        and previous_fast5
-        <= previous_slow5
+        and previous_fast5 <= previous_slow5
         and fast5 < previous_fast5
         and slow5 <= previous_slow5
     )
@@ -1685,7 +1637,7 @@ def evaluate_zeta_v2(
     price = current["close"]
 
     # --------------------------------------------------------
-    # PULLBACK MEASUREMENT
+    # PULLBACK
     # --------------------------------------------------------
 
     distance_from_fast = abs(
@@ -1702,22 +1654,13 @@ def evaluate_zeta_v2(
         / current_atr1
     )
 
-    if (
-        pullback_atr
-        < MIN_PULLBACK_ATR
-    ):
+    if pullback_atr < MIN_PULLBACK_ATR:
         return None
 
-    if (
-        extension_from_fast
-        > MAX_EXTENSION_ATR
-    ):
+    if extension_from_fast > MAX_EXTENSION_ATR:
         return None
 
-    if (
-        pullback_atr
-        > MAX_PULLBACK_ATR
-    ):
+    if pullback_atr > MAX_PULLBACK_ATR:
         return None
 
     # --------------------------------------------------------
@@ -1734,10 +1677,7 @@ def evaluate_zeta_v2(
         30,
     )
 
-    if support is None:
-        return None
-
-    if resistance is None:
+    if support is None or resistance is None:
         return None
 
     # --------------------------------------------------------
@@ -1763,16 +1703,16 @@ def evaluate_zeta_v2(
     # REJECTION
     # --------------------------------------------------------
 
-    bull_rejection = (
-        bullish_rejection(current)
+    bull_rejection = bullish_rejection(
+        current
     )
 
-    bear_rejection = (
-        bearish_rejection(current)
+    bear_rejection = bearish_rejection(
+        current
     )
 
     # --------------------------------------------------------
-    # 1M EMA STRUCTURE
+    # 1M STRUCTURE
     # --------------------------------------------------------
 
     bullish_1m_structure = (
@@ -1791,10 +1731,8 @@ def evaluate_zeta_v2(
 
     bull_confirm = (
         is_bullish(current)
-        and (
-            body_ratio(current)
-            >= MIN_CANDLE_BODY_RATIO
-        )
+        and body_ratio(current)
+        >= MIN_CANDLE_BODY_RATIO
         and (
             current["close"]
             > previous["high"]
@@ -1812,10 +1750,8 @@ def evaluate_zeta_v2(
 
     bear_confirm = (
         is_bearish(current)
-        and (
-            body_ratio(current)
-            >= MIN_CANDLE_BODY_RATIO
-        )
+        and body_ratio(current)
+        >= MIN_CANDLE_BODY_RATIO
         and (
             current["close"]
             < previous["low"]
@@ -1874,9 +1810,7 @@ def evaluate_zeta_v2(
     # --------------------------------------------------------
 
     score = 0
-
     direction = None
-
     reasons = []
 
     # --------------------------------------------------------
@@ -1899,9 +1833,7 @@ def evaluate_zeta_v2(
 
         if (
             near_support
-            or abs(
-                price - fast1
-            )
+            or abs(price - fast1)
             <= zone_tolerance
         ):
 
@@ -1932,9 +1864,8 @@ def evaluate_zeta_v2(
             )
 
         if (
-            current_rsi
-            >= RSI_BULL_MIN
-            and current_rsi
+            RSI_BULL_MIN
+            <= current_rsi
             <= RSI_BULL_MAX
         ):
 
@@ -1943,10 +1874,7 @@ def evaluate_zeta_v2(
                 "RSI valid"
             )
 
-        if (
-            room_up_atr
-            >= MIN_ROOM_ATR
-        ):
+        if room_up_atr >= MIN_ROOM_ATR:
 
             score += 5
             reasons.append(
@@ -1968,9 +1896,7 @@ def evaluate_zeta_v2(
 
         valid_zone = (
             near_support
-            or abs(
-                price - fast1
-            )
+            or abs(price - fast1)
             <= zone_tolerance
         )
 
@@ -2005,9 +1931,7 @@ def evaluate_zeta_v2(
 
         if (
             near_resistance
-            or abs(
-                price - fast1
-            )
+            or abs(price - fast1)
             <= zone_tolerance
         ):
 
@@ -2038,9 +1962,8 @@ def evaluate_zeta_v2(
             )
 
         if (
-            current_rsi
-            >= RSI_BEAR_MIN
-            and current_rsi
+            RSI_BEAR_MIN
+            <= current_rsi
             <= RSI_BEAR_MAX
         ):
 
@@ -2049,10 +1972,7 @@ def evaluate_zeta_v2(
                 "RSI valid"
             )
 
-        if (
-            room_down_atr
-            >= MIN_ROOM_ATR
-        ):
+        if room_down_atr >= MIN_ROOM_ATR:
 
             score += 5
             reasons.append(
@@ -2074,9 +1994,7 @@ def evaluate_zeta_v2(
 
         valid_zone = (
             near_resistance
-            or abs(
-                price - fast1
-            )
+            or abs(price - fast1)
             <= zone_tolerance
         )
 
@@ -2102,7 +2020,7 @@ def evaluate_zeta_v2(
         return None
 
     # --------------------------------------------------------
-    # COOLDOWN
+    # SIGNAL COOLDOWN
     # --------------------------------------------------------
 
     candle_time = current["from"]
@@ -2147,23 +2065,16 @@ def evaluate_zeta_v2(
 
     signal_id = (
         "ZETA2-"
-        + asset.replace(
-            "-",
-            "",
-        )
+        + asset.replace("-", "")
         + "-"
         + direction
         + "-"
         + datetime.now(
             timezone.utc
-        ).strftime(
-            "%H%M%S"
-        )
+        ).strftime("%H%M%S")
     )
 
-    last_signal_time[
-        asset
-    ] = candle_time
+    last_signal_time[asset] = candle_time
 
     return {
         "signal_id": signal_id,
@@ -2256,8 +2167,7 @@ def execute_demo_trade(signal):
     if active_id is None:
 
         print(
-            "[TRADE ERROR] "
-            "No active ID:",
+            "[TRADE ERROR] No active ID:",
             asset,
         )
 
@@ -2265,8 +2175,7 @@ def execute_demo_trade(signal):
             "🔴 *ZETA V2 TRADE ERROR*\n"
             "━━━━━━━━━━━━━━━━━━\n"
             f"*Asset:* {asset}\n"
-            "*Reason:* No real IQ Option "
-            "active ID is mapped."
+            "*Reason:* No real IQ Option active ID."
         )
 
         return False
@@ -2369,23 +2278,19 @@ def execute_demo_trade(signal):
             f"*Direction:* {direction}\n"
             f"*Score:* {signal['score']}/100\n"
             f"*Signal ID:* {signal['signal_id']}\n"
-            f"*IQ Option response:* "
-            f"{str(result)[:700]}"
+            f"*IQ Option response:* {str(result)[:700]}"
         )
 
         return False
 
     total_trades += 1
 
-    last_trade_time[
-        asset
-    ] = time.time()
+    last_trade_time[asset] = time.time()
 
     if trade_id is None:
 
         print(
-            "[BUY ACCEPTED] "
-            "No trade ID returned."
+            "[BUY ACCEPTED] No trade ID returned."
         )
 
         send_telegram(
@@ -2528,9 +2433,7 @@ def refresh_otc_assets():
 
         otc_assets = working
 
-        last_discovery_time = (
-            time.time()
-        )
+        last_discovery_time = time.time()
 
         print(
             "[OTC] READY:",
@@ -2846,26 +2749,13 @@ def run_trader():
                 send_telegram(
                     "🔴 *ZETA V2 CONNECTION LOST*\n"
                     "━━━━━━━━━━━━━━━━━━\n"
-                    "Attempting reconnect..."
+                    "Creating fresh IQ Option connection..."
                 )
 
-                try:
-
-                    api.connect()
-
-                    api.change_balance(
-                        BALANCE_MODE
-                    )
+                if not reconnect_iq_controlled():
 
                     print(
-                        "[CONNECTION] Reconnected."
-                    )
-
-                except Exception as e:
-
-                    print(
-                        "[RECONNECT ERROR]",
-                        repr(e),
+                        "[CONNECTION] Reconnect failed."
                     )
 
                     time.sleep(
@@ -2873,6 +2763,10 @@ def run_trader():
                     )
 
                     continue
+
+                print(
+                    "[CONNECTION] Reconnected."
+                )
 
             # ------------------------------------------------
             # OTC REFRESH
@@ -3151,7 +3045,7 @@ def main():
 
 
 # ============================================================
-# IMPORTANT — DO NOT CHANGE THIS
+# IMPORTANT
 # ============================================================
 
 if __name__ == "__main__":
