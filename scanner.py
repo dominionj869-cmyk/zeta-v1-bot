@@ -2813,7 +2813,8 @@ def scan_all_assets():
             )
 
     check_trade_results()
-
+def main():
+    print("🚀 ZETA V2.4 SCANNER STARTING")
 
 # ============================================================
 # MAIN TRADING LOOP
