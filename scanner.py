@@ -2857,109 +2857,90 @@ def run_trader():
         f"{ZONE_TOLERANCE_ATR:.2f} ATR"
     )
 
-    print(
-        "=" * 60
-    )
+    def main():
+    print("🚀 ZETA V2.4 SCANNER STARTING")
+
+    last_scan_time = 0
+    last_status_time = 0
 
     while True:
-
         try:
+            now_ts = time.time()
 
-            if (
-                trade_count
-                >= TARGET_TRADES
-            ):
-
-                print(
-                    "\nTARGET REACHED"
-                )
-
-                telegram(
-                    "🏁 ZETA V2.4 TARGET REACHED\n\n"
-                    f"Trades: {trade_count}\n"
-                    f"Wins: {wins}\n"
-                    f"Losses: {losses}\n"
-                    f"P/L: "
-                    f"${total_profit:.2f}"
-                )
-
-                break
-
-            if not ensure_connection():
-
-                print(
-                    "Waiting for connection..."
-                )
-
-                time.sleep(
-                    RECONNECT_INTERVAL
-                )
-
+            # -------------------------------------------------
+            # KEEP CONNECTION ALIVE
+            # -------------------------------------------------
+            if not api.check_connect():
+                print("🔄 Connection lost. Reconnecting...")
+                reconnect()
+                time.sleep(2)
                 continue
 
+            # -------------------------------------------------
+            # REFRESH OTC DISCOVERY WHEN REQUIRED
+            # -------------------------------------------------
             if (
-                not otc_assets
-                or
-                time.time()
-                - last_discovery_time
-                >= DISCOVERY_INTERVAL
+                not OTC_ASSETS
+                or now_ts - LAST_DISCOVERY >= DISCOVERY_INTERVAL
             ):
-
                 discover_otc_assets()
 
-            if otc_assets:
-
-                scan_all_assets()
-
-            else:
+            # -------------------------------------------------
+            # THIS IS THE IMPORTANT FIX
+            # -------------------------------------------------
+            # Actually execute the scanner continuously.
+            if now_ts - last_scan_time >= SCAN_INTERVAL:
+                last_scan_time = now_ts
 
                 print(
-                    "No OTC assets found."
+                    f"🔎 Running ZETA V2.4 scan | "
+                    f"OTC assets: {len(OTC_ASSETS)}"
                 )
 
-            if (
-                time.time()
-                - last_status_time
-                >= STATUS_INTERVAL
-            ):
+                try:
+                    scan_all_assets()
+                except Exception as scan_error:
+                    print(
+                        f"⚠️ scan_all_assets() error: "
+                        f"{scan_error}"
+                    )
+                    traceback.print_exc()
 
-                send_heartbeat()
+            # -------------------------------------------------
+            # HEARTBEAT
+            # -------------------------------------------------
+            if now_ts - last_status_time >= STATUS_INTERVAL:
+                last_status_time = now_ts
 
-            time.sleep(
-                SCAN_INTERVAL
-            )
+                try:
+                    send_heartbeat()
+                except Exception as heartbeat_error:
+                    print(
+                        f"⚠️ Heartbeat error: "
+                        f"{heartbeat_error}"
+                    )
+
+            time.sleep(1)
 
         except KeyboardInterrupt:
-
-            print(
-                "\nStopping ZETA V2.4..."
-            )
-
-            telegram(
-                "🛑 ZETA V2.4 STOPPED"
-            )
-
+            print("🛑 ZETA V2.4 stopped.")
             break
 
-        except Exception as e:
-
+        except Exception as main_error:
             print(
-                "\nMAIN LOOP ERROR:"
+                f"⚠️ MAIN LOOP ERROR: {main_error}"
             )
-
-            print(e)
-
             traceback.print_exc()
 
-            telegram(
-                "⚠️ ZETA V2.4 ERROR\n"
-                f"{str(e)[:500]}"
-            )
+            time.sleep(5)
 
-            time.sleep(
-                RECONNECT_INTERVAL
-            )
-
+            try:
+                reconnect()
+            except Exception as reconnect_error:
+                print(
+                    f"⚠️ Reconnect failed: "
+                    f"{reconnect_error}"
+                )
 
 # ============================================================
 # MAIN
