@@ -2322,7 +2322,7 @@ def evaluate_zeta_v2(
 
     # ========================================================
     # SIGNAL
-    # ========================================================
+    # ===============================def================
 
     return {
         "asset": asset,
@@ -2858,10 +2858,11 @@ def run_trader():
         f"{ZONE_TOLERANCE_ATR:.2f} ATR"
     )
 
-    def main():
+def main():
     print("🚀 ZETA V2.4 SCANNER STARTING")
 
-    last_scan_time = 0
+
+    TING  last_scan_time = 0
     last_status_time = 0
 
     while True:
