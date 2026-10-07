@@ -1,7 +1,6 @@
-def
+import os
 import json
 import time
-import statistics
 import requests
 import websocket
 
@@ -25,14 +24,12 @@ CANDLE_COUNT = 200
 MOMENTUM_PERIOD = 10
 MOMENTUM_LOOKBACK = 50
 EXTREME_PERCENTILE = 0.10
-MIN_TURN_DISTANCE = 0.20
 
 STAKE = 1.0
 EXPIRY_MINUTES = 10
-
 POLL_SECONDS = 60
 
-# Safety: this bot only uses the Options DEMO account.
+# Safety switch
 DEMO_ONLY = True
 
 
@@ -68,7 +65,7 @@ def fail(message):
 
 
 # ============================================================
-# AUTH HEADERS
+# AUTH
 # ============================================================
 
 def headers():
@@ -137,49 +134,20 @@ def get_otp(account_id):
 
 
 # ============================================================
-# WEBSOCKET REQUEST
+# EUR/USD CANDLES
 # ============================================================
 
-def send_request(ws, payload):
-    ws.send(json.dumps(payload))
-
-    while True:
-        raw = ws.recv()
-
-        if not raw:
-            continue
-
-        data = json.loads(raw)
-
-        if data.get("error"):
-            raise RuntimeError(
-                data["error"].get(
-                    "message",
-                    str(data["error"])
-                )
-            )
-
-        if (
-            "req_id" not in data
-            or data.get("req_id") == payload.get("req_id")
-        ):
-            return data
-
-
-# ============================================================
-# GET 1-MINUTE EUR/USD CANDLES
-# ============================================================
-
-def gedefandles(ws):
+def get_candles(ws):
     request = {
-    "ticks_history": SYMBOL,
-    "end": "latest",
-    "count": CANDLE_COUNT,
-    "style": "candles",
-    "granularity": TIMEFRAME_SECONDS,
-    "req_id": 100,
+        "ticks_history": SYMBOL,
+        "end": "latest",
+        "count": CANDLE_COUNT,
+        "style": "candles",
+        "granularity": TIMEFRAME_SECONDS,
+        "req_id": 100,
     }
-     ws.send(json.dumps(request))
+
+    ws.send(json.dumps(request))
 
     while True:
         raw = ws.recv()
@@ -211,7 +179,13 @@ def calculate_momentum(candles):
         for c in candles
     ]
 
-    if len(closes) < MOMENTUM_PERIOD + MOMENTUM_LOOKBACK + 5:
+    minimum = (
+        MOMENTUM_PERIOD
+        + MOMENTUM_LOOKBACK
+        + 5
+    )
+
+    if len(closes) < minimum:
         return None
 
     momentum = []
@@ -221,27 +195,24 @@ def calculate_momentum(candles):
         len(closes)
     ):
         momentum.append(
-            closes[i] -
-            closes[i - MOMENTUM_PERIOD]
+            closes[i]
+            - closes[i - MOMENTUM_PERIOD]
         )
-
-    if len(momentum) < MOMENTUM_LOOKBACK:
-        return None
 
     recent = momentum[-MOMENTUM_LOOKBACK:]
 
-    current = recent[-1]
+    if len(recent) < MOMENTUM_LOOKBACK:
+        return None
 
     ordered = sorted(recent)
 
     low_index = int(
-        len(ordered) *
-        EXTREME_PERCENTILE
+        len(ordered) * EXTREME_PERCENTILE
     )
 
     high_index = int(
-        len(ordered) *
-        (1 - EXTREME_PERCENTILE)
+        len(ordered)
+        * (1 - EXTREME_PERCENTILE)
     )
 
     low_index = max(
@@ -254,23 +225,21 @@ def calculate_momentum(candles):
         min(high_index, len(ordered) - 1)
     )
 
-    lower_extreme = ordered[low_index]
-    upper_extreme = ordered[high_index]
-
     return {
-        "current": current,
-        "lower_extreme": lower_extreme,
-        "upper_extreme": upper_extreme,
-        "recent": recent,
+        "current": recent[-1],
+        "previous": recent[-2],
+        "lower_extreme": ordered[low_index],
+        "upper_extreme": ordered[high_index],
     }
 
 
 # ============================================================
-# SIGNAL
+# REVERSAL SIGNAL
 # ============================================================
 
 def generate_signal(candles):
-    if len(candles) < 20:
+
+    if len(candles) < 60:
         return None, "Not enough candles."
 
     momentum = calculate_momentum(candles)
@@ -278,8 +247,9 @@ def generate_signal(candles):
     if momentum is None:
         return None, "Not enough Momentum 10 history."
 
-    previous = candles[-2]
-    latest = candles[-1]
+    # Use closed candles.
+    previous = candles[-3]
+    latest = candles[-2]
 
     prev_open = float(previous["open"])
     prev_close = float(previous["close"])
@@ -291,71 +261,73 @@ def generate_signal(candles):
     latest_body = latest_close - latest_open
 
     current_momentum = momentum["current"]
+    previous_momentum = momentum["previous"]
+
     lower_extreme = momentum["lower_extreme"]
     upper_extreme = momentum["upper_extreme"]
 
-    # --------------------------------------------------------
+    # ========================================================
     # BULLISH REVERSAL
-    # Momentum has reached a lower extreme and price turns up.
-    # --------------------------------------------------------
+    # ========================================================
 
     bullish_extreme = (
-        current_momentum <= lower_extreme
+        previous_momentum <= lower_extreme
     )
 
-    bullish_reversal = (
+    bullish_momentum_turn = (
+        current_momentum > previous_momentum
+    )
+
+    bullish_candle = (
         latest_body > 0
         and latest_close > prev_close
         and latest_close > latest_open
     )
 
-    bullish_distance = (
-        abs(current_momentum - lower_extreme)
-    )
-
     if (
         bullish_extreme
-        and bullish_reversal
-        and bullish_distance >= MIN_TURN_DISTANCE
+        and bullish_momentum_turn
+        and bullish_candle
     ):
         return "CALL", (
-            f"Bullish Momentum 10 reversal | "
-            f"M={current_momentum:.6f} | "
+            "Bullish Momentum 10 reversal | "
+            f"Previous M={previous_momentum:.6f} | "
+            f"Current M={current_momentum:.6f} | "
             f"LowExtreme={lower_extreme:.6f}"
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # BEARISH REVERSAL
-    # Momentum has reached an upper extreme and price turns down.
-    # --------------------------------------------------------
+    # ========================================================
 
     bearish_extreme = (
-        current_momentum >= upper_extreme
+        previous_momentum >= upper_extreme
     )
 
-    bearish_reversal = (
+    bearish_momentum_turn = (
+        current_momentum < previous_momentum
+    )
+
+    bearish_candle = (
         latest_body < 0
         and latest_close < prev_close
         and latest_close < latest_open
     )
 
-    bearish_distance = (
-        abs(current_momentum - upper_extreme)
-    )
-
     if (
         bearish_extreme
-        and bearish_reversal
-        and bearish_distance >= MIN_TURN_DISTANCE
+        and bearish_momentum_turn
+        and bearish_candle
     ):
         return "PUT", (
-            f"Bearish Momentum 10 reversal | "
-            f"M={current_momentum:.6f} | "
+            "Bearish Momentum 10 reversal | "
+            f"Previous M={previous_momentum:.6f} | "
+            f"Current M={current_momentum:.6f} | "
             f"HighExtreme={upper_extreme:.6f}"
         )
 
     return None, (
-        f"No Momentum 10 extreme-reversal setup | "
+        "No Momentum 10 reversal | "
         f"M={current_momentum:.6f} | "
         f"Low={lower_extreme:.6f} | "
         f"High={upper_extreme:.6f}"
@@ -367,22 +339,20 @@ def generate_signal(candles):
 # ============================================================
 
 def get_proposal(ws, direction):
-    contract_type = direction
 
     request = {
         "proposal": 1,
         "amount": STAKE,
         "basis": "stake",
-        "contract_type": contract_type,
+        "contract_type": direction,
         "currency": "USD",
         "duration": EXPIRY_MINUTES,
         "duration_unit": "m",
         "underlying_symbol": SYMBOL,
-        "subscribe": 0,
         "req_id": 200,
     }
 
-    print(
+    prin()(
         f"Requesting {direction} proposal "
         f"for {DISPLAY_SYMBOL}..."
     )
@@ -415,6 +385,7 @@ def get_proposal(ws, direction):
 # ============================================================
 
 def buy_contract(ws, proposal):
+
     proposal_id = proposal.get("id")
     ask_price = proposal.get("ask_price")
 
@@ -428,16 +399,16 @@ def buy_contract(ws, proposal):
             "Deriv returned no ask price."
         )
 
-    print(
-        f"Buying proposal {proposal_id} "
-        f"for {ask_price} USD"
-    )
-
     request = {
         "buy": proposal_id,
         "price": float(ask_price),
         "req_id": 300,
     }
+
+    print(
+        f"Buying {proposal_id} "
+        f"for ${float(ask_price):.2f}"
+    )
 
     ws.send(json.dumps(request))
 
@@ -467,9 +438,6 @@ def buy_contract(ws, proposal):
 # ============================================================
 
 def monitor_contract(ws, contract_id):
-    print(
-        f"Monitoring contract {contract_id}..."
-    )
 
     request = {
         "proposal_open_contract": 1,
@@ -481,6 +449,7 @@ def monitor_contract(ws, contract_id):
     ws.send(json.dumps(request))
 
     while True:
+
         raw = ws.recv()
 
         if not raw:
@@ -509,13 +478,12 @@ def monitor_contract(ws, contract_id):
         is_sold = contract.get("is_sold")
 
         print(
-            "Contract status:",
-            status,
-            "is_sold:",
-            is_sold
+            "Contract:",
+            contract_id,
+            "status:",
+            status
         )
 
-        # Contract has finished.
         if (
             is_sold == 1
             or status in (
@@ -525,14 +493,9 @@ def monitor_contract(ws, contract_id):
                 "expired",
             )
         ):
+
             profit = float(
                 contract.get("profit", 0) or 0
-            )
-
-            payout = contract.get("payout")
-            buy_price = contract.get(
-                "buy_price",
-                STAKE
             )
 
             if profit > 0:
@@ -545,17 +508,16 @@ def monitor_contract(ws, contract_id):
             return {
                 "result": result,
                 "profit": profit,
-                "payout": payout,
-                "buy_price": buy_price,
                 "status": status,
             }
 
 
 # ============================================================
-# ONE TRADING CYCLE
+# TRADING CYCLE
 # ============================================================
 
 def trading_cycle(ws):
+
     candles = get_candles(ws)
 
     print(
@@ -567,7 +529,12 @@ def trading_cycle(ws):
     print("Signal:", direction)
     print("Reason:", reason)
 
+    # --------------------------------------------------------
+    # NO TRADE
+    # --------------------------------------------------------
+
     if not direction:
+
         telegram(
             "🟡 ZETA MOMENTUM 10\n\n"
             "Asset: EUR/USD\n"
@@ -576,10 +543,11 @@ def trading_cycle(ws):
             "Automatic trading: ON\n"
             "No trade placed."
         )
+
         return
 
     # --------------------------------------------------------
-    # SIGNAL FOUND
+    # SIGNAL
     # --------------------------------------------------------
 
     telegram(
@@ -589,7 +557,7 @@ def trading_cycle(ws):
         f"Stake: ${STAKE:.2f}\n"
         f"Expiry: {EXPIRY_MINUTES} minutes\n\n"
         f"Reason:\n{reason}\n\n"
-        "Requesting Deriv proposal..."
+        "Requesting proposal..."
     )
 
     # --------------------------------------------------------
@@ -601,18 +569,12 @@ def trading_cycle(ws):
         direction
     )
 
-    ask_price = proposal.get(
-        "ask_price"
-    )
+    ask_price = proposal.get("ask_price")
 
-    telegram(
-        "🟠 ZETA PROPOSAL\n\n"
-        f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Direction: {direction}\n"
-        f"Stake: ${STAKE:.2f}\n"
-        f"Ask price: ${float(ask_price):.2f}\n\n"
-        "Buying demo contract..."
-    )
+    if ask_price is None:
+        raise RuntimeError(
+            "Proposal returned without ask price."
+        )
 
     # --------------------------------------------------------
     # BUY
@@ -629,8 +591,7 @@ def trading_cycle(ws):
 
     if not contract_id:
         raise RuntimeError(
-            "Deriv BUY succeeded but "
-            "no contract ID was returned."
+            "BUY returned no contract ID."
         )
 
     buy_price = bought.get(
@@ -657,14 +618,12 @@ def trading_cycle(ws):
         contract_id
     )
 
-    profit = result["profit"]
-
     telegram(
         f"{result['result']} ZETA TRADE RESULT\n\n"
         f"Asset: {DISPLAY_SYMBOL}\n"
         f"Direction: {direction}\n"
         f"Contract ID: {contract_id}\n"
-        f"Profit/Loss: ${profit:.2f}\n"
+        f"Profit/Loss: ${result['profit']:.2f}\n"
         f"Status: {result['status']}\n\n"
         "Automatic trading: ON"
     )
@@ -675,6 +634,7 @@ def trading_cycle(ws):
 # ============================================================
 
 def main():
+
     print("============================================")
     print(" ZETA MOMENTUM 10 — DERIV DEMO TRADER")
     print("============================================")
@@ -686,10 +646,12 @@ def main():
         fail("DERIV_PAT secret is missing.")
 
     if not DEMO_ONLY:
-        fail("DEMO_ONLY safety switch is disabled.")
+        fail(
+            "DEMO_ONLY safety switch is disabled."
+        )
 
     # --------------------------------------------------------
-    # Find demo Options account
+    # FIND DEMO ACCOUNT
     # --------------------------------------------------------
 
     payload = get_options_accounts()
@@ -710,7 +672,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Get authenticated demo WebSocket
+    # OTP
     # --------------------------------------------------------
 
     ws_url = get_otp(account_id)
@@ -720,9 +682,9 @@ def main():
             "Deriv returned no WebSocket URL."
         )
 
-    print(
-        "Connecting to Deriv demo WebSocket..."
-    )
+    # --------------------------------------------------------
+    # CONNECT
+    # --------------------------------------------------------
 
     ws = websocket.create_connection(
         ws_url,
@@ -735,28 +697,23 @@ def main():
 
     telegram(
         "🟢 ZETA MOMENTUM 10 STARTED\n\n"
-        f"Asset: {DISPLAY_SYMBOL} ONLY\n"
-        f"Stake: ${STAKE:.2f}\n"
-        f"Expiry: {EXPIRY_MINUTES} minutes\n"
+        "Asset: EUR/USD ONLY\n"
+        "Stake: $1.00\n"
+        "Expiry: 10 minutes\n"
         "Account: DEMO\n\n"
         "Automatic trading: ON"
     )
 
-    # Balance subscription.
-    ws.send(json.dumps({
-        "balance": 1,
-        "subscribe": 1,
-        "req_id": 1,
-    }))
-
     # --------------------------------------------------------
-    # Continuous EUR/USD scanning
+    # SCAN LOOP
     # --------------------------------------------------------
 
     last_candle_time = None
 
     while True:
+
         try:
+
             candles = get_candles(ws)
 
             if not candles:
@@ -770,7 +727,6 @@ def main():
                 "epoch"
             )
 
-            # Only process a new candle.
             if (
                 current_candle_time
                 and current_candle_time == last_candle_time
@@ -795,22 +751,27 @@ def main():
 
             trading_cycle(ws)
 
-            # Give Deriv a moment before next scan.
             time.sleep(POLL_SECONDS)
 
-        except websocket.WebSocketTimeoutException:
-            print(
-                "WebSocket timeout. Reconnecting..."
-            )
-            break
+        except (
+            websocket.WebSocketTimeoutException,
+            websocket.WebSocketConnectionClosedException,
+        ) as e:
 
-        except websocket.WebSocketConnectionClosedException:
             print(
-                "WebSocket closed. Reconnecting..."
+                "WebSocket connection problem:",
+                repr(e)
             )
+
+            telegram(
+                "🔴 ZETA WEBSOCKET ERROR\n\n"
+                f"{repr(e)}"
+            )
+
             break
 
         except Exception as e:
+
             print(
                 "Trading cycle error:",
                 repr(e)
@@ -824,6 +785,10 @@ def main():
 
             time.sleep(30)
 
+
+# ============================================================
+# START
+# ============================================================
 
 if __name__ == "__main__":
     main()
