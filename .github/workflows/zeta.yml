@@ -33,8 +33,7 @@ jobs:
 
       - name: Run Momentum 10
         env:
-          IQ_EMAIL: ${{ secrets.IQ_EMAIL }}
-          IQ_PASSWORD: ${{ secrets.IQ_PASSWORD }}
+          OTCHARTS_API_KEY: ${{ secrets.OTCHARTS_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
