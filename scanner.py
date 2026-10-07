@@ -2245,10 +2245,12 @@ if __name__ == "__main__":
 
     except Exception as exc:
 
+        stop_event    except Exception as exc:
+
         stop_event.set()
 
         print(
             "FATAL ERROR: "
             + str(exc),
             flush=True,
-) ))
+        )
