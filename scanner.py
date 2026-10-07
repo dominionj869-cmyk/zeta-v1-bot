@@ -1,18 +1,28 @@
 import os
 import csv
+import json
 import time
 import threading
 from datetime import datetime, timezone
 
 import requests
-import iqoptionapi.constants as OP_code
-from iqoptionapi.stable_api import IQ_Option
 
 
 # ============================================================
 # MOMENTUM 10 EXTREME-REVERSAL
-# EURUSD + EURUSD-OTC
-# IQ OPTION - PRACTICE MODE
+# OTCHARTS -> QUOTEX MARKET DATA
+# TELEGRAM SIGNAL SCANNER
+#
+# IMPORTANT:
+# - No Quotex email/password
+# - No Quotex session/SSID
+# - No automatic Quotex trading
+# - Market data comes from OTCharts
+# ============================================================
+
+
+# ============================================================
+# STRATEGY SETTINGS
 # ============================================================
 
 MOMENTUM_PERIOD = 10
@@ -25,56 +35,95 @@ MIN_TURN_DISTANCE = 0.20
 CANDLE_SECONDS = 60
 EXPIRY_MINUTES = 1
 
-AUTO_TRADE = True
-BALANCE_MODE = "PRACTICE"
-STAKE = 1.0
+# DATA SCANNER ONLY
+AUTO_TRADE = False
 
+STAKE = 1.0
 TARGET_TRADES = 50
 
+# How often the local scanner checks whether a completed
+# candle is ready for analysis.
 SCAN_INTERVAL = 2
-ASSET_REFRESH_SECONDS = 900
+
 HEARTBEAT_SECONDS = 300
 RECONNECT_SECONDS = 15
 
-# ONLY THESE TWO ASSETS
-TARGET_ASSETS = [
-    "EURUSD-OTC",
-    "EURUSD",
-]
+# ============================================================
+# QUOTEX SYMBOL
+#
+# OTCharts uses EURUSD_otc for Quotex.
+# ============================================================
+
+TARGET_SYMBOL = "EURUSD_otc"
+VENUE = "quotex"
 
 LOG_FILE = "momentum_signal_log.csv"
-CANDLE_REQUEST_TIMEOUT = 8
+
+HTTP_TIMEOUT = 20
+STREAM_TIMEOUT = 60
+
+# Number of completed candles retained locally.
+MAX_LOCAL_CANDLES = 300
 
 
 # ============================================================
 # SECRETS
 # ============================================================
 
-IQ_EMAIL = os.getenv("IQ_EMAIL", "")
-IQ_PASSWORD = os.getenv("IQ_PASSWORD", "")
+OTCHARTS_API_KEY = os.getenv(
+    "OTCHARTS_API_KEY",
+    "",
+)
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_TOKEN = os.getenv(
+    "TELEGRAM_TOKEN",
+    "",
+)
+
+TELEGRAM_CHAT_ID = os.getenv(
+    "TELEGRAM_CHAT_ID",
+    "",
+)
 
 
 # ============================================================
 # GLOBAL STATE
 # ============================================================
 
-api = None
+session = requests.Session()
+
+session.headers.update({
+    "Authorization": (
+        "Bearer "
+        + OTCHARTS_API_KEY
+    ),
+    "User-Agent": (
+        "Momentum10-OTCharts-Scanner/1.0"
+    ),
+})
 
 trading_assets = []
-active_ids = {}
+
+candles_by_asset = {}
+
+current_candles = {}
+
+last_signal_candle = {}
+
+extreme_state = {}
 
 trade_count = 0
 wins = 0
 losses = 0
 pending_results = 0
 
-last_signal_candle = {}
-extreme_state = {}
+last_stream_tick = 0
+last_heartbeat = 0
+last_signal_time = 0
 
 stop_event = threading.Event()
+
+stream_thread = None
 
 
 # ============================================================
@@ -82,7 +131,15 @@ stop_event = threading.Event()
 # ============================================================
 
 def send_telegram(message):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+
+    if (
+        not TELEGRAM_TOKEN
+        or not TELEGRAM_CHAT_ID
+    ):
+        print(
+            "Telegram credentials not configured.",
+            flush=True,
+        )
         return
 
     url = (
@@ -98,9 +155,28 @@ def send_telegram(message):
     }
 
     try:
-        requests.post(url, data=data, timeout=15)
+
+        response = requests.post(
+            url,
+            data=data,
+            timeout=15,
+        )
+
+        if not response.ok:
+
+            print(
+                "Telegram HTTP error: "
+                + str(response.status_code),
+                flush=True,
+            )
+
     except Exception as exc:
-        print("Telegram error:", exc, flush=True)
+
+        print(
+            "Telegram error: "
+            + str(exc),
+            flush=True,
+        )
 
 
 # ============================================================
@@ -108,10 +184,12 @@ def send_telegram(message):
 # ============================================================
 
 def init_log():
+
     if os.path.exists(LOG_FILE):
         return
 
     try:
+
         with open(
             LOG_FILE,
             "w",
@@ -132,9 +210,10 @@ def init_log():
             ])
 
     except Exception as exc:
+
         print(
-            "Log init error:",
-            exc,
+            "Log init error: "
+            + str(exc),
             flush=True,
         )
 
@@ -147,7 +226,9 @@ def log_trade(
     result,
     profit,
 ):
+
     try:
+
         with open(
             LOG_FILE,
             "a",
@@ -158,7 +239,9 @@ def log_trade(
             writer = csv.writer(file)
 
             writer.writerow([
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(
+                    timezone.utc
+                ).isoformat(),
                 asset,
                 direction,
                 signal_id,
@@ -168,361 +251,138 @@ def log_trade(
             ])
 
     except Exception as exc:
+
         print(
-            "Log error:",
-            exc,
+            "Log error: "
+            + str(exc),
             flush=True,
         )
 
 
 # ============================================================
-# IQ OPTION CONNECTION
+# OTCHARTS API
 # ============================================================
 
-def connect_iq():
-    global api
+BASE_URL = "https://otcharts.com"
 
-    print(
-        "Connecting to IQ Option...",
-        flush=True,
+
+def api_get(
+    path,
+    params=None,
+):
+
+    if not OTCHARTS_API_KEY:
+
+        raise RuntimeError(
+            "OTCHARTS_API_KEY is missing."
+        )
+
+    url = (
+        BASE_URL
+        + path
     )
 
-    try:
-        api = IQ_Option(
-            IQ_EMAIL,
-            IQ_PASSWORD,
-        )
+    response = session.get(
+        url,
+        params=params,
+        timeout=HTTP_TIMEOUT,
+    )
 
-        connected, reason = api.connect()
-
-        if not connected:
-
-            print(
-                "IQ OPTION CONNECTION FAILED:",
-                reason,
-                flush=True,
-            )
-
-            api = None
-            return False
-
-        print(
-            "🟢 IQ OPTION CONNECTED",
-            flush=True,
-        )
+    if not response.ok:
 
         try:
-            api.change_balance(
-                BALANCE_MODE
-            )
-        except Exception as exc:
+            error_data = response.json()
+        except Exception:
+            error_data = {}
 
-            print(
-                "Balance mode warning:",
-                exc,
-                flush=True,
-            )
-
-        print(
-            "Practice mode active.",
-            flush=True,
+        error_message = error_data.get(
+            "error",
+            response.text[:300],
         )
 
-        return True
-
-    except Exception as exc:
-
-        print(
-            "Connection error:",
-            exc,
-            flush=True,
+        raise RuntimeError(
+            "OTCharts HTTP "
+            + str(response.status_code)
+            + ": "
+            + str(error_message)
         )
 
-        api = None
-        return False
+    return response.json()
 
 
 # ============================================================
-# EURUSD / EURUSD-OTC ASSET DISCOVERY
+# CHECK API ACCESS
 # ============================================================
 
-def get_trading_assets():
-    global trading_assets
-    global active_ids
+def check_otcharts():
 
     print(
-        "Preparing EURUSD assets...",
+        "Checking OTCharts API...",
         flush=True,
     )
 
     try:
 
-        found_assets = {}
+        data = api_get(
+            "/v1/venues"
+        )
 
-        # ----------------------------------------------------
-        # NORMALIZE ASSET NAME
-        # ----------------------------------------------------
+        venues = data.get(
+            "venues",
+            [],
+        )
 
-        def normalize_name(name):
+        quotex_open = False
 
-            if name is None:
-                return ""
+        for venue in venues:
 
-            name = str(name).strip()
+            if (
+                venue.get("id")
+                == VENUE
+            ):
 
-            if "." in name:
-                parts = name.split(".")
-
-                if parts[-1]:
-                    name = parts[-1]
-
-            return name.upper()
-
-        # ----------------------------------------------------
-        # CHECK ONE ACTIVE RECORD
-        # ----------------------------------------------------
-
-        def check_active(info, fallback_id=None):
-
-            if not isinstance(info, dict):
-                return
-
-            name = info.get("name")
-
-            if not name:
-                name = info.get("symbol")
-
-            if not name:
-                name = info.get("instrument")
-
-            normalized_name = normalize_name(name)
-
-            if normalized_name not in TARGET_ASSETS:
-                return
-
-            active_id = info.get("active_id")
-
-            if active_id is None:
-                active_id = info.get("id")
-
-            if active_id is None:
-                active_id = fallback_id
-
-            if active_id is None:
-                return
-
-            try:
-                active_id = int(active_id)
-            except Exception:
-                return
-
-            enabled = info.get("enabled")
-
-            suspended = info.get("is_suspended")
-
-            if enabled is False:
-                return
-
-            if suspended is True:
-                return
-
-            # Preserve the exact target name used by the bot.
-            if normalized_name == "EURUSD-OTC":
-                found_assets["EURUSD-OTC"] = active_id
-
-            elif normalized_name == "EURUSD":
-                found_assets["EURUSD"] = active_id
-
-        # ----------------------------------------------------
-        # RECURSIVE SEARCH
-        #
-        # IQ Option can return the asset information in
-        # different nested structures. Search the entire
-        # initialization response instead of assuming one
-        # fixed location.
-        # ----------------------------------------------------
-
-        def search_structure(data):
-
-            if isinstance(data, dict):
-
-                # First check this dictionary itself.
-                check_active(data)
-
-                # Then inspect all nested values.
-                for key, value in data.items():
-
-                    # If the dictionary key itself is numeric,
-                    # it may be the active ID.
-                    fallback_id = None
-
-                    try:
-                        fallback_id = int(key)
-                    except Exception:
-                        pass
-
-                    if isinstance(value, dict):
-                        check_active(
-                            value,
-                            fallback_id,
-                        )
-
-                    search_structure(value)
-
-            elif isinstance(data, list):
-
-                for item in data:
-                    search_structure(item)
-
-        # ----------------------------------------------------
-        # PRIMARY SOURCE
-        # ----------------------------------------------------
-
-        init_data = None
-
-        try:
-
-            init_data = api.get_all_init_v2()
-
-            if isinstance(init_data, dict):
-
-                search_structure(init_data)
-
-        except Exception as exc:
-
-            print(
-                "get_all_init_v2 warning: "
-                + str(exc),
-                flush=True,
-            )
-
-        # ----------------------------------------------------
-        # FALLBACK SOURCE
-        # ----------------------------------------------------
-
-        if not found_assets:
-
-            print(
-                "Primary asset discovery returned no target assets.",
-                flush=True,
-            )
-
-            try:
-
-                legacy_data = api.get_all_init()
-
-                if isinstance(legacy_data, dict):
-
-                    search_structure(
-                        legacy_data
-                    )
-
-            except Exception as exc:
+                quotex_open = bool(
+                    venue.get("open")
+                )
 
                 print(
-                    "get_all_init warning: "
-                    + str(exc),
+                    "Quotex book open: "
+                    + str(
+                        quotex_open
+                    ),
                     flush=True,
                 )
 
-        # ----------------------------------------------------
-        # FINAL CHECK
-        # ----------------------------------------------------
+                if not quotex_open:
 
-        if not found_assets:
+                    print(
+                        "❌ Your OTCharts key "
+                        "does not currently open "
+                        "the Quotex book.",
+                        flush=True,
+                    )
+
+                    return False
+
+                break
+
+        if not quotex_open:
 
             print(
-                "❌ EURUSD / EURUSD-OTC are not currently open.",
+                "❌ Quotex venue unavailable "
+                "for this API key.",
                 flush=True,
             )
 
             return False
-
-        # ----------------------------------------------------
-        # ORDER ASSETS CONSISTENTLY
-        # ----------------------------------------------------
-
-        new_assets = []
-
-        for target in TARGET_ASSETS:
-
-            if target in found_assets:
-                new_assets.append(target)
-
-        # ----------------------------------------------------
-        # SAVE
-        # ----------------------------------------------------
-
-        trading_assets = new_assets
-
-        active_ids = {
-            asset: found_assets[asset]
-            for asset in new_assets
-        }
-
-        # ----------------------------------------------------
-        # REGISTER IQ ACTIVE IDs
-        # ----------------------------------------------------
-
-        for asset_name, active_id in active_ids.items():
-
-            OP_code.ACTIVES[
-                asset_name
-            ] = active_id
-
-        print(
-            "",
-            flush=True,
-        )
-
-        print(
-            "🔎 TARGET ASSETS READY",
-            flush=True,
-        )
-
-        print(
-            "Allowed assets:",
-            flush=True,
-        )
-
-        print(
-            "EURUSD",
-            flush=True,
-        )
-
-        print(
-            "EURUSD-OTC",
-            flush=True,
-        )
-
-        print(
-            "Currently available: "
-            + str(len(trading_assets)),
-            flush=True,
-        )
-
-        for asset_name in trading_assets:
-
-            print(
-                "✅ "
-                + asset_name
-                + " | Active ID: "
-                + str(active_ids[asset_name]),
-                flush=True,
-            )
-
-        print(
-            "1M scanner is now active.",
-            flush=True,
-        )
 
         return True
 
     except Exception as exc:
 
         print(
-            "Asset discovery error:",
-            exc,
+            "OTCharts API check failed:",
+            str(exc),
             flush=True,
         )
 
@@ -530,136 +390,719 @@ def get_trading_assets():
 
 
 # ============================================================
-# CANDLE DATA
+# USAGE
 # ============================================================
 
-def get_candles(asset, count):
-
-    active_id = active_ids.get(asset)
-
-    if active_id is None:
-
-        print(
-            "No active ID for "
-            + asset,
-            flush=True,
-        )
-
-        return []
+def get_usage():
 
     try:
 
-        api.api.candles.candles_data = []
-
-        server_time = time.time()
-
-        try:
-            server_time = (
-                api.api.timesync.server_timestamp
-            )
-        except Exception:
-            pass
-
-        api.api.getcandles(
-            active_id,
-            CANDLE_SECONDS,
-            count,
-            server_time,
+        data = api_get(
+            "/v1/usage"
         )
 
-        started = time.time()
+        requests_data = data.get(
+            "requests",
+            {},
+        )
 
-        while (
-            time.time() - started
-            < CANDLE_REQUEST_TIMEOUT
-        ):
+        remaining = requests_data.get(
+            "remaining"
+        )
 
-            candles = (
-                api.api.candles.candles_data
+        quota = requests_data.get(
+            "quota"
+        )
+
+        used = requests_data.get(
+            "used"
+        )
+
+        print(
+            "OTCharts usage: "
+            + str(used)
+            + "/"
+            + str(quota)
+            + " | remaining="
+            + str(remaining),
+            flush=True,
+        )
+
+        return data
+
+    except Exception as exc:
+
+        print(
+            "Usage check warning:",
+            str(exc),
+            flush=True,
+        )
+
+        return None
+
+
+# ============================================================
+# SYMBOL DISCOVERY
+# ============================================================
+
+def get_symbols():
+
+    global trading_assets
+
+    print(
+        "Discovering Quotex symbols...",
+        flush=True,
+    )
+
+    try:
+
+        data = api_get(
+            "/v1/symbols",
+            params={
+                "venue": VENUE,
+            },
+        )
+
+        symbols = data.get(
+            "symbols",
+            [],
+        )
+
+        found = []
+
+        for item in symbols:
+
+            if not isinstance(
+                item,
+                dict,
+            ):
+                continue
+
+            symbol = item.get(
+                "symbol"
             )
 
-            if candles:
+            if not symbol:
+                continue
+
+            if symbol == TARGET_SYMBOL:
+
+                found.append(
+                    TARGET_SYMBOL
+                )
+
+                print(
+                    "✅ Found "
+                    + TARGET_SYMBOL
+                    + " | "
+                    + str(
+                        item.get(
+                            "name",
+                            "",
+                        )
+                    ),
+                    flush=True,
+                )
+
+                if (
+                    "payout"
+                    in item
+                ):
+
+                    print(
+                        "Payout: "
+                        + str(
+                            item.get(
+                                "payout"
+                            )
+                        ),
+                        flush=True,
+                    )
+
                 break
 
-            time.sleep(0.1)
+        if not found:
 
-        candles = (
-            api.api.candles.candles_data
+            print(
+                "❌ "
+                + TARGET_SYMBOL
+                + " is not currently "
+                "in the Quotex catalogue.",
+                flush=True,
+            )
+
+            trading_assets = []
+
+            return False
+
+        trading_assets = found
+
+        return True
+
+    except Exception as exc:
+
+        print(
+            "Symbol discovery error:",
+            str(exc),
+            flush=True,
         )
 
-        if not candles:
-            return []
+        return False
 
-        result = []
 
-        for candle in candles:
+# ============================================================
+# INITIAL HISTORY
+#
+# This is called ONCE at startup.
+#
+# OTCharts explicitly recommends not polling candles
+# repeatedly on a timer.
+# ============================================================
 
-            if not isinstance(candle, dict):
+def load_initial_candles(
+    asset,
+):
+
+    print(
+        "Loading initial candles for "
+        + asset
+        + "...",
+        flush=True,
+    )
+
+    try:
+
+        data = api_get(
+            "/v1/candles",
+            params={
+                "venue": VENUE,
+                "symbol": asset,
+                "tf": CANDLE_SECONDS,
+                "limit": MAX_LOCAL_CANDLES,
+            },
+        )
+
+        raw_candles = data.get(
+            "candles",
+            [],
+        )
+
+        gaps = data.get(
+            "gaps",
+            {},
+        )
+
+        if (
+            gaps.get("runs", 0)
+            > 0
+        ):
+
+            print(
+                "⚠️ Candle gaps detected: "
+                + str(
+                    gaps
+                ),
+                flush=True,
+            )
+
+        cleaned = []
+
+        for candle in raw_candles:
+
+            if not isinstance(
+                candle,
+                dict,
+            ):
                 continue
 
             try:
 
-                result.append({
+                cleaned.append({
                     "from": float(
-                        candle.get("from")
+                        candle[
+                            "time"
+                        ]
                     ),
                     "open": float(
-                        candle.get("open")
-                    ),
-                    "close": float(
-                        candle.get("close")
+                        candle[
+                            "open"
+                        ]
                     ),
                     "high": float(
-                        candle.get("max")
+                        candle[
+                            "high"
+                        ]
                     ),
                     "low": float(
-                        candle.get("min")
+                        candle[
+                            "low"
+                        ]
+                    ),
+                    "close": float(
+                        candle[
+                            "close"
+                        ]
+                    ),
+                    "volume": float(
+                        candle.get(
+                            "volume",
+                            0,
+                        )
                     ),
                 })
 
             except Exception:
                 continue
 
-        return result
+        cleaned.sort(
+            key=lambda x: x["from"]
+        )
+
+        if len(cleaned) < 60:
+
+            print(
+                "❌ Not enough historical candles: "
+                + str(
+                    len(cleaned)
+                ),
+                flush=True,
+            )
+
+            return False
+
+        candles_by_asset[
+            asset
+        ] = cleaned[
+            -MAX_LOCAL_CANDLES:
+        ]
+
+        print(
+            "🟢 Loaded "
+            + str(
+                len(
+                    candles_by_asset[
+                        asset
+                    ]
+                )
+            )
+            + " candles.",
+            flush=True,
+        )
+
+        return True
 
     except Exception as exc:
 
         print(
-            "Candle error "
-            + asset
-            + ": "
+            "Initial candle error:",
+            str(exc),
+            flush=True,
+        )
+
+        return False
+
+
+# ============================================================
+# CANDLE BUILDER
+#
+# Converts OTCharts live ticks into local 1-minute candles.
+# ============================================================
+
+def process_tick(
+    symbol,
+    price,
+    tick_time,
+):
+
+    global last_stream_tick
+
+    try:
+
+        price = float(price)
+        tick_time = float(
+            tick_time
+        )
+
+    except Exception:
+
+        return
+
+    last_stream_tick = time.time()
+
+    candle_start = (
+        int(tick_time)
+        // CANDLE_SECONDS
+    ) * CANDLE_SECONDS
+
+    current = current_candles.get(
+        symbol
+    )
+
+    # --------------------------------------------------------
+    # FIRST TICK
+    # --------------------------------------------------------
+
+    if current is None:
+
+        current_candles[
+            symbol
+        ] = {
+            "from": candle_start,
+            "open": price,
+            "high": price,
+            "low": price,
+            "close": price,
+            "volume": 0.0,
+        }
+
+        return
+
+    # --------------------------------------------------------
+    # SAME CANDLE
+    # --------------------------------------------------------
+
+    if (
+        current["from"]
+        == candle_start
+    ):
+
+        if price > current["high"]:
+            current["high"] = price
+
+        if price < current["low"]:
+            current["low"] = price
+
+        current["close"] = price
+
+        return
+
+    # --------------------------------------------------------
+    # NEW CANDLE
+    # --------------------------------------------------------
+
+    if candle_start > current["from"]:
+
+        completed = dict(
+            current
+        )
+
+        candles = candles_by_asset.setdefault(
+            symbol,
+            [],
+        )
+
+        # Avoid duplicate candle insertion.
+        if not candles or (
+            candles[-1]["from"]
+            < completed["from"]
+        ):
+
+            candles.append(
+                completed
+            )
+
+            if len(candles) > (
+                MAX_LOCAL_CANDLES
+            ):
+
+                del candles[
+                    :-MAX_LOCAL_CANDLES
+                ]
+
+            print(
+                "🕯️ CLOSED 1M CANDLE "
+                + symbol
+                + " "
+                + str(
+                    completed["close"]
+                ),
+                flush=True,
+            )
+
+            process_completed_candle(
+                symbol
+            )
+
+        # Start the new candle.
+        current_candles[
+            symbol
+        ] = {
+            "from": candle_start,
+            "open": price,
+            "high": price,
+            "low": price,
+            "close": price,
+            "volume": 0.0,
+        }
+
+
+# ============================================================
+# STREAM PROCESSOR
+# ============================================================
+
+def stream_symbol(
+    symbol,
+):
+
+    global last_stream_tick
+
+    url = (
+        BASE_URL
+        + "/v1/stream"
+    )
+
+    params = {
+        "venue": VENUE,
+        "symbol": symbol,
+    }
+
+    print(
+        "Opening OTCharts live stream for "
+        + symbol
+        + "...",
+        flush=True,
+    )
+
+    try:
+
+        with session.get(
+            url,
+            params=params,
+            stream=True,
+            timeout=(
+                20,
+                STREAM_TIMEOUT,
+            ),
+        ) as response:
+
+            if not response.ok:
+
+                try:
+                    error_data = (
+                        response.json()
+                    )
+                except Exception:
+                    error_data = {}
+
+                print(
+                    "❌ Stream HTTP "
+                    + str(
+                        response.status_code
+                    )
+                    + ": "
+                    + str(
+                        error_data.get(
+                            "error",
+                            response.text[
+                                :300
+                            ],
+                        )
+                    ),
+                    flush=True,
+                )
+
+                return False
+
+            print(
+                "🟢 OTCharts stream connected.",
+                flush=True,
+            )
+
+            event_type = None
+
+            for raw_line in response.iter_lines(
+                decode_unicode=True
+            ):
+
+                if stop_event.is_set():
+                    return True
+
+                if raw_line is None:
+                    continue
+
+                line = raw_line.strip()
+
+                if not line:
+                    continue
+
+                # SSE event name.
+                if line.startswith(
+                    "event:"
+                ):
+
+                    event_type = (
+                        line[
+                            6:
+                        ].strip()
+                    )
+
+                    continue
+
+                if not line.startswith(
+                    "data:"
+                ):
+
+                    continue
+
+                raw_data = (
+                    line[
+                        5:
+                    ].strip()
+                )
+
+                try:
+
+                    payload = json.loads(
+                        raw_data
+                    )
+
+                except Exception:
+
+                    continue
+
+                # ------------------------------------------------
+                # CONNECTED
+                # ------------------------------------------------
+
+                if event_type == "connected":
+
+                    print(
+                        "Stream subscription: "
+                        + str(
+                            payload
+                        ),
+                        flush=True,
+                    )
+
+                # ------------------------------------------------
+                # DROPPED
+                # ------------------------------------------------
+
+                elif event_type == "dropped":
+
+                    print(
+                        "⚠️ Stream dropped: "
+                        + str(
+                            payload
+                        ),
+                        flush=True,
+                    )
+
+                # ------------------------------------------------
+                # TICK
+                # ------------------------------------------------
+
+                elif event_type == "tick":
+
+                    tick_symbol = payload.get(
+                        "symbol"
+                    )
+
+                    price = payload.get(
+                        "price"
+                    )
+
+                    tick_time = payload.get(
+                        "time"
+                    )
+
+                    if (
+                        tick_symbol
+                        and price is not None
+                        and tick_time is not None
+                    ):
+
+                        process_tick(
+                            tick_symbol,
+                            price,
+                            tick_time,
+                        )
+
+                event_type = None
+
+        return False
+
+    except requests.exceptions.ReadTimeout:
+
+        print(
+            "Stream read timeout. Reconnecting...",
+            flush=True,
+        )
+
+        return False
+
+    except requests.exceptions.ConnectionError as exc:
+
+        print(
+            "Stream connection error: "
             + str(exc),
             flush=True,
         )
 
-        return []
+        return False
+
+    except Exception as exc:
+
+        print(
+            "Stream error: "
+            + str(exc),
+            flush=True,
+        )
+
+        return False
 
 
-def remove_open_candle(candles):
+# ============================================================
+# STREAM LOOP
+# ============================================================
 
-    if len(candles) < 2:
-        return candles
+def stream_loop():
 
-    now = time.time()
+    global stream_thread
 
-    last = candles[-1]
+    while not stop_event.is_set():
 
-    candle_from = last.get(
-        "from",
-        0,
-    )
+        if not trading_assets:
 
-    if now - candle_from < CANDLE_SECONDS:
-        return candles[:-1]
+            time.sleep(
+                RECONNECT_SECONDS
+            )
 
-    return candles
+            continue
+
+        symbol = trading_assets[0]
+
+        connected = stream_symbol(
+            symbol
+        )
+
+        if stop_event.is_set():
+            break
+
+        if not connected:
+
+            print(
+                "🔄 Reconnecting OTCharts "
+                "stream in "
+                + str(
+                    RECONNECT_SECONDS
+                )
+                + " seconds...",
+                flush=True,
+            )
+
+            time.sleep(
+                RECONNECT_SECONDS
+            )
 
 
 # ============================================================
 # MOMENTUM 10
 # ============================================================
 
-def calculate_momentum(candles):
+def calculate_momentum(
+    candles,
+):
 
     values = []
 
@@ -671,7 +1114,9 @@ def calculate_momentum(candles):
         len(candles),
     ):
 
-        current = candles[index]["close"]
+        current = candles[
+            index
+        ]["close"]
 
         previous = candles[
             index - MOMENTUM_PERIOD
@@ -681,23 +1126,30 @@ def calculate_momentum(candles):
             continue
 
         momentum = (
-            current / previous
+            current
+            / previous
         ) * 100.0
 
-        values.append(momentum)
+        values.append(
+            momentum
+        )
 
     return values
 
 
-def analyze_momentum(candles):
+def analyze_momentum(
+    candles,
+):
 
     if len(candles) < (
         MOMENTUM_LOOKBACK + 3
     ):
         return None
 
-    momentum_values = calculate_momentum(
-        candles
+    momentum_values = (
+        calculate_momentum(
+            candles
+        )
     )
 
     if len(momentum_values) < (
@@ -709,11 +1161,21 @@ def analyze_momentum(candles):
         -MOMENTUM_LOOKBACK:
     ]
 
-    current = momentum_values[-1]
-    previous = momentum_values[-2]
-    previous_previous = momentum_values[-3]
+    current = momentum_values[
+        -1
+    ]
 
-    sorted_values = sorted(recent)
+    previous = momentum_values[
+        -2
+    ]
+
+    previous_previous = (
+        momentum_values[-3]
+    )
+
+    sorted_values = sorted(
+        recent
+    )
 
     low_index = int(
         len(sorted_values)
@@ -722,29 +1184,49 @@ def analyze_momentum(candles):
 
     high_index = int(
         len(sorted_values)
-        * (1.0 - EXTREME_PERCENTILE)
+        * (
+            1.0
+            - EXTREME_PERCENTILE
+        )
     )
 
-    if low_index >= len(sorted_values):
+    if low_index >= len(
+        sorted_values
+    ):
+
         low_index = (
-            len(sorted_values) - 1
+            len(sorted_values)
+            - 1
         )
 
-    if high_index >= len(sorted_values):
+    if high_index >= len(
+        sorted_values
+    ):
+
         high_index = (
-            len(sorted_values) - 1
+            len(sorted_values)
+            - 1
         )
 
-    low_threshold = sorted_values[
-        low_index
-    ]
+    low_threshold = (
+        sorted_values[
+            low_index
+        ]
+    )
 
-    high_threshold = sorted_values[
-        high_index
-    ]
+    high_threshold = (
+        sorted_values[
+            high_index
+        ]
+    )
 
-    recent_low = min(recent)
-    recent_high = max(recent)
+    recent_low = min(
+        recent
+    )
+
+    recent_high = max(
+        recent
+    )
 
     signal = None
     extreme = None
@@ -760,11 +1242,13 @@ def analyze_momentum(candles):
 
         if (
             current > previous
-            and previous < previous_previous
+            and previous
+            < previous_previous
         ):
 
             turn_distance = (
-                current - previous
+                current
+                - previous
             )
 
             if (
@@ -778,7 +1262,9 @@ def analyze_momentum(candles):
 
                     reversal_strength = (
                         turn_distance
-                        / abs(recent_low)
+                        / abs(
+                            recent_low
+                        )
                     ) * 100.0
 
     # --------------------------------------------------------
@@ -791,11 +1277,13 @@ def analyze_momentum(candles):
 
         if (
             current < previous
-            and previous > previous_previous
+            and previous
+            > previous_previous
         ):
 
             turn_distance = (
-                previous - current
+                previous
+                - current
             )
 
             if (
@@ -809,7 +1297,9 @@ def analyze_momentum(candles):
 
                     reversal_strength = (
                         turn_distance
-                        / abs(recent_high)
+                        / abs(
+                            recent_high
+                        )
                     ) * 100.0
 
     return {
@@ -817,12 +1307,16 @@ def analyze_momentum(candles):
         "extreme": extreme,
         "momentum": current,
         "previous": previous,
-        "previous_previous": previous_previous,
+        "previous_previous":
+            previous_previous,
         "recent_low": recent_low,
         "recent_high": recent_high,
-        "low_threshold": low_threshold,
-        "high_threshold": high_threshold,
-        "reversal_strength": reversal_strength,
+        "low_threshold":
+            low_threshold,
+        "high_threshold":
+            high_threshold,
+        "reversal_strength":
+            reversal_strength,
     }
 
 
@@ -836,18 +1330,38 @@ def price_action_confirmation(
 ):
 
     if len(candles) < 2:
-        return False, "NOT_ENOUGH_CANDLES"
+
+        return (
+            False,
+            "NOT_ENOUGH_CANDLES",
+        )
 
     current = candles[-1]
     previous = candles[-2]
 
-    current_open = current["open"]
-    current_close = current["close"]
-    current_high = current["high"]
-    current_low = current["low"]
+    current_open = current[
+        "open"
+    ]
 
-    previous_open = previous["open"]
-    previous_close = previous["close"]
+    current_close = current[
+        "close"
+    ]
+
+    current_high = current[
+        "high"
+    ]
+
+    current_low = current[
+        "low"
+    ]
+
+    previous_open = previous[
+        "open"
+    ]
+
+    previous_close = previous[
+        "close"
+    ]
 
     body = abs(
         current_close
@@ -876,7 +1390,11 @@ def price_action_confirmation(
     )
 
     if candle_range <= 0:
-        return False, "ZERO_RANGE"
+
+        return (
+            False,
+            "ZERO_RANGE",
+        )
 
     # --------------------------------------------------------
     # CALL
@@ -907,10 +1425,18 @@ def price_action_confirmation(
         )
 
         if bullish_rejection:
-            return True, "BULLISH_REJECTION"
+
+            return (
+                True,
+                "BULLISH_REJECTION",
+            )
 
         if bullish_engulfing:
-            return True, "BULLISH_ENGULFING"
+
+            return (
+                True,
+                "BULLISH_ENGULFING",
+            )
 
         return (
             False,
@@ -946,17 +1472,28 @@ def price_action_confirmation(
         )
 
         if bearish_rejection:
-            return True, "BEARISH_REJECTION"
+
+            return (
+                True,
+                "BEARISH_REJECTION",
+            )
 
         if bearish_engulfing:
-            return True, "BEARISH_ENGULFING"
+
+            return (
+                True,
+                "BEARISH_ENGULFING",
+            )
 
         return (
             False,
             "NO_BEARISH_CONFIRMATION",
         )
 
-    return False, "INVALID_DIRECTION"
+    return (
+        False,
+        "INVALID_DIRECTION",
+    )
 
 
 # ============================================================
@@ -975,6 +1512,8 @@ def build_signal_message(
     return (
         "🔔 <b>MOMENTUM 10 SIGNAL</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
+        "Source: OTCharts\n"
+        "Venue: Quotex\n"
         "Asset: "
         + asset
         + "\n"
@@ -982,10 +1521,12 @@ def build_signal_message(
         + direction
         + "\n"
         "Timeframe: 1M\n"
-        "Expiry: 1 minute\n"
+        "Expiry Reference: 1 minute\n"
         "Strategy: Momentum 10 Extreme-Reversal\n"
         "Extreme: "
-        + str(analysis["extreme"])
+        + str(
+            analysis["extreme"]
+        )
         + "\n"
         "Price Confirmation: "
         + confirmation
@@ -994,7 +1535,9 @@ def build_signal_message(
         "Momentum: "
         + str(
             round(
-                analysis["momentum"],
+                analysis[
+                    "momentum"
+                ],
                 5,
             )
         )
@@ -1002,7 +1545,9 @@ def build_signal_message(
         "Previous: "
         + str(
             round(
-                analysis["previous"],
+                analysis[
+                    "previous"
+                ],
                 5,
             )
         )
@@ -1020,7 +1565,9 @@ def build_signal_message(
         "Recent Low: "
         + str(
             round(
-                analysis["recent_low"],
+                analysis[
+                    "recent_low"
+                ],
                 5,
             )
         )
@@ -1028,7 +1575,9 @@ def build_signal_message(
         "Recent High: "
         + str(
             round(
-                analysis["recent_high"],
+                analysis[
+                    "recent_high"
+                ],
                 5,
             )
         )
@@ -1072,306 +1621,69 @@ def build_signal_message(
 
 
 # ============================================================
-# TRADE RESULT MONITOR
+# PROCESS COMPLETED CANDLE
 # ============================================================
 
-def monitor_trade(
-    order_id,
+def process_completed_candle(
     asset,
-    direction,
-    signal_id,
-    entry_price,
-):
-
-    global pending_results
-    global wins
-    global losses
-
-    try:
-
-        time.sleep(
-            (EXPIRY_MINUTES * 60)
-            + 5
-        )
-
-        result = None
-
-        for _ in range(20):
-
-            try:
-
-                result = (
-                    api.check_win_v4(
-                        order_id
-                    )
-                )
-
-            except Exception:
-
-                result = None
-
-            if result is not None:
-                break
-
-            time.sleep(1)
-
-        if result is None:
-
-            print(
-                "Could not get result for "
-                + asset,
-                flush=True,
-            )
-
-            return
-
-        try:
-            profit = float(result)
-        except Exception:
-            profit = 0.0
-
-        if profit > 0:
-
-            wins += 1
-            result_text = "WIN"
-
-        else:
-
-            losses += 1
-            result_text = "LOSS"
-
-        log_trade(
-            asset,
-            direction,
-            signal_id,
-            entry_price,
-            result_text,
-            profit,
-        )
-
-        print(
-            "📊 RESULT "
-            + asset
-            + " "
-            + result_text
-            + " "
-            + str(profit),
-            flush=True,
-        )
-
-        send_telegram(
-            "📊 <b>MOMENTUM 10 RESULT</b>\n"
-            "Asset: "
-            + asset
-            + "\n"
-            "Direction: "
-            + direction
-            + "\n"
-            "Result: "
-            + result_text
-            + "\n"
-            "Profit: "
-            + str(profit)
-            + "\n"
-            "Signal ID: "
-            + signal_id
-        )
-
-    except Exception as exc:
-
-        print(
-            "Result monitor error: "
-            + str(exc),
-            flush=True,
-        )
-
-    finally:
-
-        pending_results -= 1
-
-
-# ============================================================
-# EXECUTE TRADE
-# ============================================================
-
-def execute_trade(
-    asset,
-    direction,
-    signal_id,
-    entry_price,
 ):
 
     global trade_count
-    global pending_results
+    global last_signal_time
 
     try:
 
-        action = direction.lower()
-
-        print(
-            "Attempting trade: "
-            + asset
-            + " "
-            + action,
-            flush=True,
-        )
-
-        order_result = api.buy(
-            STAKE,
+        candles = candles_by_asset.get(
             asset,
-            action,
-            EXPIRY_MINUTES,
-        )
-
-        if isinstance(
-            order_result,
-            tuple,
-        ):
-
-            success = order_result[0]
-            order_id = order_result[1]
-
-        else:
-
-            success = bool(
-                order_result
-            )
-
-            order_id = order_result
-
-        if not success:
-
-            print(
-                "❌ TRADE FAILED "
-                + asset
-                + " "
-                + direction,
-                flush=True,
-            )
-
-            return False
-
-        trade_count += 1
-        pending_results += 1
-
-        print(
-            "✅ TRADE OPENED "
-            + asset
-            + " "
-            + direction
-            + " Order: "
-            + str(order_id),
-            flush=True,
-        )
-
-        send_telegram(
-            "✅ <b>TRADE OPENED</b>\n"
-            "Asset: "
-            + asset
-            + "\n"
-            "Direction: "
-            + direction
-            + "\n"
-            "Stake: $"
-            + str(STAKE)
-            + "\n"
-            "Expiry: 1 minute\n"
-            "Signal ID: "
-            + signal_id
-        )
-
-        thread = threading.Thread(
-            target=monitor_trade,
-            args=(
-                order_id,
-                asset,
-                direction,
-                signal_id,
-                entry_price,
-            ),
-            daemon=True,
-        )
-
-        thread.start()
-
-        return True
-
-    except Exception as exc:
-
-        print(
-            "",
-            flush=True,
-        )
-
-        print(
-            "❌ TRADE EXCEPTION",
-            flush=True,
-        )
-
-        print(
-            "Asset: "
-            + asset,
-            flush=True,
-        )
-
-        print(
-            "Direction: "
-            + direction,
-            flush=True,
-        )
-
-        print(
-            "Error: "
-            + str(exc),
-            flush=True,
-        )
-
-        return False
-
-
-# ============================================================
-# PROCESS ASSET
-# ============================================================
-
-def process_asset(asset):
-
-    try:
-
-        print(
-            "Scanning: "
-            + asset,
-            flush=True,
-        )
-
-        candles = get_candles(
-            asset,
-            MOMENTUM_LOOKBACK
-            + MOMENTUM_PERIOD
-            + 10,
-        )
-
-        if not candles:
-            return
-
-        candles = remove_open_candle(
-            candles
+            [],
         )
 
         if len(candles) < (
             MOMENTUM_LOOKBACK + 3
         ):
+
+            print(
+                "Waiting for enough candles: "
+                + str(
+                    len(candles)
+                )
+                + "/"
+                + str(
+                    MOMENTUM_LOOKBACK
+                    + 3
+                ),
+                flush=True,
+            )
+
             return
 
-        analysis = analyze_momentum(
-            candles
+        analysis = (
+            analyze_momentum(
+                candles
+            )
         )
 
         if not analysis:
             return
 
-        signal = analysis["signal"]
+        signal = analysis[
+            "signal"
+        ]
+
+        # ----------------------------------------------------
+        # NO TRADE
+        # ----------------------------------------------------
 
         if signal is None:
+
+            print(
+                "NO TRADE | "
+                + asset
+                + " | Momentum extreme "
+                "not confirmed.",
+                flush=True,
+            )
+
             return
 
         # ----------------------------------------------------
@@ -1386,6 +1698,15 @@ def process_asset(asset):
         )
 
         if not confirmed:
+
+            print(
+                "NO TRADE | "
+                + asset
+                + " | "
+                + confirmation,
+                flush=True,
+            )
+
             return
 
         # ----------------------------------------------------
@@ -1404,14 +1725,28 @@ def process_asset(asset):
             )
             == candle_id
         ):
+
             return
 
-        extreme = analysis["extreme"]
+        extreme = analysis[
+            "extreme"
+        ]
 
         if (
-            extreme_state.get(asset)
+            extreme_state.get(
+                asset
+            )
             == extreme
         ):
+
+            print(
+                "NO TRADE | "
+                + asset
+                + " | Same extreme already "
+                "triggered.",
+                flush=True,
+            )
+
             return
 
         last_signal_candle[
@@ -1429,7 +1764,7 @@ def process_asset(asset):
         signal_id = (
             "M10-"
             + asset.replace(
-                "-",
+                "_",
                 "",
             )
             + "-"
@@ -1442,13 +1777,19 @@ def process_asset(asset):
             )
         )
 
-        message = build_signal_message(
-            asset,
-            signal,
-            analysis,
-            price,
-            signal_id,
-            confirmation,
+        last_signal_time = (
+            time.time()
+        )
+
+        message = (
+            build_signal_message(
+                asset,
+                signal,
+                analysis,
+                price,
+                signal_id,
+                confirmation,
+            )
         )
 
         print(
@@ -1484,126 +1825,8 @@ def process_asset(asset):
         )
 
         print(
-            "Expiry: 1 minute",
-            flush=True,
-        )
-
-        print(
-            "Strategy: Momentum 10 Extreme-Reversal",
-            flush=True,
-        )
-
-        print(
-            "Extreme: "
-            + str(extreme),
-            flush=True,
-        )
-
-        print(
-            "Price Confirmation: "
+            "Confirmation: "
             + confirmation,
-            flush=True,
-        )
-
-        print(
-            "━━━━━━━━━━━━━━━━━━",
-            flush=True,
-        )
-
-        print(
-            "Momentum: "
-            + str(
-                round(
-                    analysis["momentum"],
-                    5,
-                )
-            ),
-            flush=True,
-        )
-
-        print(
-            "Previous: "
-            + str(
-                round(
-                    analysis["previous"],
-                    5,
-                )
-            ),
-            flush=True,
-        )
-
-        print(
-            "Previous 2: "
-            + str(
-                round(
-                    analysis[
-                        "previous_previous"
-                    ],
-                    5,
-                )
-            ),
-            flush=True,
-        )
-
-        print(
-            "Recent Low: "
-            + str(
-                round(
-                    analysis["recent_low"],
-                    5,
-                )
-            ),
-            flush=True,
-        )
-
-        print(
-            "Recent High: "
-            + str(
-                round(
-                    analysis["recent_high"],
-                    5,
-                )
-            ),
-            flush=True,
-        )
-
-        print(
-            "Low Threshold: "
-            + str(
-                round(
-                    analysis[
-                        "low_threshold"
-                    ],
-                    5,
-                )
-            ),
-            flush=True,
-        )
-
-        print(
-            "High Threshold: "
-            + str(
-                round(
-                    analysis[
-                        "high_threshold"
-                    ],
-                    5,
-                )
-            ),
-            flush=True,
-        )
-
-        print(
-            "Reversal Strength: "
-            + str(
-                round(
-                    analysis[
-                        "reversal_strength"
-                    ],
-                    1,
-                )
-            )
-            + "%",
             flush=True,
         )
 
@@ -1619,23 +1842,24 @@ def process_asset(asset):
             flush=True,
         )
 
-        send_telegram(message)
+        send_telegram(
+            message
+        )
 
-        if AUTO_TRADE:
+        # ----------------------------------------------------
+        # NO AUTOMATIC BROKER TRADE
+        # ----------------------------------------------------
 
-            execute_trade(
-                asset,
-                signal,
-                signal_id,
-                price,
-            )
+        print(
+            "ℹ️ Signal sent to Telegram. "
+            "Automatic Quotex trading is disabled.",
+            flush=True,
+        )
 
     except Exception as exc:
 
         print(
-            "Process asset error "
-            + asset
-            + ": "
+            "Process completed candle error: "
             + str(exc),
             flush=True,
         )
@@ -1646,6 +1870,18 @@ def process_asset(asset):
 # ============================================================
 
 def heartbeat():
+
+    uptime_stream = (
+        "CONNECTED"
+        if (
+            last_stream_tick
+            and (
+                time.time()
+                - last_stream_tick
+            ) < 45
+        )
+        else "WAITING"
+    )
 
     win_rate = 0.0
 
@@ -1662,7 +1898,7 @@ def heartbeat():
     )
 
     print(
-        "💚 MOMENTUM 10 BOT ALIVE",
+        "💚 MOMENTUM 10 OTCHARTS BOT ALIVE",
         flush=True,
     )
 
@@ -1672,19 +1908,19 @@ def heartbeat():
     )
 
     print(
-        "Connection: OK",
+        "OTCharts stream: "
+        + uptime_stream,
         flush=True,
     )
 
     print(
-        "Balance: "
-        + BALANCE_MODE,
+        "Venue: Quotex",
         flush=True,
     )
 
     print(
-        "Auto Trading: "
-        + str(AUTO_TRADE),
+        "Asset: "
+        + TARGET_SYMBOL,
         flush=True,
     )
 
@@ -1694,39 +1930,23 @@ def heartbeat():
     )
 
     print(
-        "Assets: EURUSD + EURUSD-OTC",
-        flush=True,
-    )
-
-    print(
         "Timeframe: 1M",
         flush=True,
     )
 
     print(
-        "Expiry: 1 minute",
+        "Expiry reference: 1 minute",
         flush=True,
     )
 
     print(
-        "Available target assets: "
-        + str(
-            len(trading_assets)
-        ),
+        "Automatic trading: OFF",
         flush=True,
     )
 
     print(
-        "Trades: "
-        + str(trade_count)
-        + "/"
-        + str(TARGET_TRADES),
-        flush=True,
-    )
-
-    print(
-        "Pending Results: "
-        + str(pending_results),
+        "Signals observed: "
+        + str(trade_count),
         flush=True,
     )
 
@@ -1761,12 +1981,13 @@ def heartbeat():
 
 def main():
 
-    global api
+    global last_heartbeat
+    global stream_thread
 
     init_log()
 
     print(
-        "🚀 MOMENTUM 10 BOT STARTING",
+        "🚀 MOMENTUM 10 OTCHARTS SCANNER STARTING",
         flush=True,
     )
 
@@ -1776,24 +1997,13 @@ def main():
     )
 
     print(
-        "Mode: "
-        + BALANCE_MODE,
+        "Venue: Quotex",
         flush=True,
     )
 
     print(
-        "Auto Trading: "
-        + str(AUTO_TRADE),
-        flush=True,
-    )
-
-    print(
-        "Strategy: Momentum 10 Extreme-Reversal",
-        flush=True,
-    )
-
-    print(
-        "Assets: EURUSD + EURUSD-OTC",
+        "Asset: "
+        + TARGET_SYMBOL,
         flush=True,
     )
 
@@ -1803,30 +2013,12 @@ def main():
     )
 
     print(
-        "Expiry: 1 minute",
+        "Strategy: Momentum 10 Extreme-Reversal",
         flush=True,
     )
 
     print(
-        "Stake: $"
-        + str(STAKE),
-        flush=True,
-    )
-
-    print(
-        "Minimum Turn Distance: "
-        + str(MIN_TURN_DISTANCE),
-        flush=True,
-    )
-
-    print(
-        "Target: "
-        + str(TARGET_TRADES),
-        flush=True,
-    )
-
-    print(
-        "Continuous scanning: ON",
+        "Automatic trading: OFF",
         flush=True,
     )
 
@@ -1835,100 +2027,138 @@ def main():
         flush=True,
     )
 
-    last_asset_refresh = 0
-    last_heartbeat = 0
+    # --------------------------------------------------------
+    # API KEY CHECK
+    # --------------------------------------------------------
+
+    if not OTCHARTS_API_KEY:
+
+        print(
+            "❌ OTCHARTS_API_KEY is missing.",
+            flush=True,
+        )
+
+        send_telegram(
+            "❌ <b>Momentum 10 Bot</b>\n"
+            "OTCHARTS_API_KEY is missing."
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # TELEGRAM CHECK
+    # --------------------------------------------------------
+
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+
+        print(
+            "⚠️ Telegram credentials missing. "
+            "Scanner will still run.",
+            flush=True,
+        )
+
+    # --------------------------------------------------------
+    # API ACCESS
+    # --------------------------------------------------------
+
+    if not check_otcharts():
+
+        print(
+            "❌ OTCharts access check failed.",
+            flush=True,
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # USAGE
+    # --------------------------------------------------------
+
+    get_usage()
+
+    # --------------------------------------------------------
+    # SYMBOL
+    # --------------------------------------------------------
+
+    if not get_symbols():
+
+        print(
+            "❌ Target symbol unavailable.",
+            flush=True,
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # INITIAL HISTORY
+    # --------------------------------------------------------
+
+    if not load_initial_candles(
+        TARGET_SYMBOL
+    ):
+
+        print(
+            "❌ Initial candle load failed.",
+            flush=True,
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # TELEGRAM STARTUP
+    # --------------------------------------------------------
+
+    send_telegram(
+        "🟢 <b>MOMENTUM 10 SCANNER ONLINE</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Source: OTCharts\n"
+        "Venue: Quotex\n"
+        "Asset: "
+        + TARGET_SYMBOL
+        + "\n"
+        "Timeframe: 1M\n"
+        "Strategy: Momentum 10 Extreme-Reversal\n"
+        "Auto Trading: OFF\n"
+        "Waiting for completed candles."
+    )
+
+    # --------------------------------------------------------
+    # HEARTBEAT CLOCK
+    # --------------------------------------------------------
+
+    last_heartbeat = time.time()
+
+    # --------------------------------------------------------
+    # START STREAM
+    # --------------------------------------------------------
+
+    stream_thread = threading.Thread(
+        target=stream_loop,
+        daemon=True,
+    )
+
+    stream_thread.start()
+
+    print(
+        "🟢 Live market-data stream started.",
+        flush=True,
+    )
+
+    # --------------------------------------------------------
+    # MAIN WATCHDOG
+    # --------------------------------------------------------
 
     while not stop_event.is_set():
 
-        # ----------------------------------------------------
-        # CONNECTION
-        # ----------------------------------------------------
-
-        if api is None:
-
-            if not connect_iq():
-
-                time.sleep(
-                    RECONNECT_SECONDS
-                )
-
-                continue
-
-        try:
-
-            if not api.check_connect():
-
-                print(
-                    "IQ Option disconnected.",
-                    flush=True,
-                )
-
-                api = None
-
-                time.sleep(
-                    RECONNECT_SECONDS
-                )
-
-                continue
-
-        except Exception:
-
-            api = None
-
-            time.sleep(
-                RECONNECT_SECONDS
-            )
-
-            continue
-
-        # ----------------------------------------------------
-        # ASSET DISCOVERY
-        # ----------------------------------------------------
-
-        if not trading_assets:
-
-            if not get_trading_assets():
-
-                print(
-                    "EURUSD assets unavailable. Retrying...",
-                    flush=True,
-                )
-
-                time.sleep(
-                    RECONNECT_SECONDS
-                )
-
-                continue
-
-            last_asset_refresh = (
-                time.time()
-            )
-
-            last_heartbeat = (
-                time.time()
-            )
-
         now = time.time()
-
-        # ----------------------------------------------------
-        # REFRESH ASSET STATUS
-        # ----------------------------------------------------
-
-        if (
-            now - last_asset_refresh
-            >= ASSET_REFRESH_SECONDS
-        ):
-
-            if get_trading_assets():
-
-                last_asset_refresh = now
 
         # ----------------------------------------------------
         # HEARTBEAT
         # ----------------------------------------------------
 
         if (
-            now - last_heartbeat
+            now
+            - last_heartbeat
             >= HEARTBEAT_SECONDS
         ):
 
@@ -1937,71 +2167,61 @@ def main():
             last_heartbeat = now
 
         # ----------------------------------------------------
-        # 50-TRADE BLOCK
+        # STREAM WATCHDOG
         # ----------------------------------------------------
 
-        if trade_count >= TARGET_TRADES:
+        if (
+            last_stream_tick
+            and (
+                now
+                - last_stream_tick
+            ) > 90
+        ):
 
             print(
-                "🎯 TARGET TRADES REACHED.",
+                "⚠️ No live tick received "
+                "for more than 90 seconds.",
+                flush=True,
+            )
+
+        # ----------------------------------------------------
+        # TARGET
+        # ----------------------------------------------------
+
+        if (
+            trade_count
+            >= TARGET_TRADES
+        ):
+
+            print(
+                "🎯 Signal target reached.",
                 flush=True,
             )
 
             send_telegram(
                 "🎯 <b>MOMENTUM 10 "
-                "50-TRADE BLOCK COMPLETE</b>\n"
-                "Assets: EURUSD + EURUSD-OTC\n"
-                "Trades: "
-                + str(trade_count)
+                "SIGNAL TEST COMPLETE</b>\n"
+                "Asset: "
+                + TARGET_SYMBOL
                 + "\n"
-                "Wins: "
-                + str(wins)
-                + "\n"
-                "Losses: "
-                + str(losses)
-                + "\n"
-                "Win Rate: "
+                "Signals: "
                 + str(
-                    round(
-                        (
-                            wins
-                            / max(
-                                trade_count,
-                                1,
-                            )
-                        )
-                        * 100.0,
-                        1,
-                    )
+                    trade_count
                 )
-                + "%"
             )
 
             break
 
-        # ----------------------------------------------------
-        # SCAN ONLY TARGET ASSETS
-        # ----------------------------------------------------
-
-        for asset in list(
-            trading_assets
-        ):
-
-            if stop_event.is_set():
-                break
-
-            if trade_count >= TARGET_TRADES:
-                break
-
-            process_asset(asset)
-
-            time.sleep(
-                SCAN_INTERVAL
-            )
-
         time.sleep(
             SCAN_INTERVAL
         )
+
+    stop_event.set()
+
+    print(
+        "Scanner stopped.",
+        flush=True,
+    )
 
 
 # ============================================================
@@ -2016,6 +2236,8 @@ if __name__ == "__main__":
 
     except KeyboardInterrupt:
 
+        stop_event.set()
+
         print(
             "Bot stopped.",
             flush=True,
@@ -2023,8 +2245,10 @@ if __name__ == "__main__":
 
     except Exception as exc:
 
+        stop_event.set()
+
         print(
             "FATAL ERROR: "
             + str(exc),
             flush=True,
-                ) )
+    )   )
