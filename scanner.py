@@ -11,7 +11,8 @@ from iqoptionapi.stable_api import IQ_Option
 
 # ============================================================
 # MOMENTUM 10 EXTREME-REVERSAL
-# IQ OPTION OTC - PRACTICE MODE
+# EURUSD + EURUSD-OTC
+# IQ OPTION - PRACTICE MODE
 # ============================================================
 
 MOMENTUM_PERIOD = 10
@@ -35,7 +36,11 @@ ASSET_REFRESH_SECONDS = 900
 HEARTBEAT_SECONDS = 300
 RECONNECT_SECONDS = 15
 
-MAX_ASSETS = 70
+# ONLY THESE TWO ASSETS
+TARGET_ASSETS = [
+    "EURUSD-OTC",
+    "EURUSD",
+]
 
 LOG_FILE = "momentum_signal_log.csv"
 CANDLE_REQUEST_TIMEOUT = 8
@@ -58,8 +63,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 api = None
 
-otc_assets = []
-otc_active_ids = {}
+trading_assets = []
+active_ids = {}
 
 trade_count = 0
 wins = 0
@@ -113,6 +118,7 @@ def init_log():
             newline="",
             encoding="utf-8",
         ) as file:
+
             writer = csv.writer(file)
 
             writer.writerow([
@@ -126,7 +132,11 @@ def init_log():
             ])
 
     except Exception as exc:
-        print("Log init error:", exc, flush=True)
+        print(
+            "Log init error:",
+            exc,
+            flush=True,
+        )
 
 
 def log_trade(
@@ -144,6 +154,7 @@ def log_trade(
             newline="",
             encoding="utf-8",
         ) as file:
+
             writer = csv.writer(file)
 
             writer.writerow([
@@ -157,7 +168,11 @@ def log_trade(
             ])
 
     except Exception as exc:
-        print("Log error:", exc, flush=True)
+        print(
+            "Log error:",
+            exc,
+            flush=True,
+        )
 
 
 # ============================================================
@@ -167,7 +182,10 @@ def log_trade(
 def connect_iq():
     global api
 
-    print("Connecting to IQ Option...", flush=True)
+    print(
+        "Connecting to IQ Option...",
+        flush=True,
+    )
 
     try:
         api = IQ_Option(
@@ -178,11 +196,13 @@ def connect_iq():
         connected, reason = api.connect()
 
         if not connected:
+
             print(
                 "IQ OPTION CONNECTION FAILED:",
                 reason,
                 flush=True,
             )
+
             api = None
             return False
 
@@ -192,8 +212,11 @@ def connect_iq():
         )
 
         try:
-            api.change_balance(BALANCE_MODE)
+            api.change_balance(
+                BALANCE_MODE
+            )
         except Exception as exc:
+
             print(
                 "Balance mode warning:",
                 exc,
@@ -208,52 +231,61 @@ def connect_iq():
         return True
 
     except Exception as exc:
+
         print(
             "Connection error:",
             exc,
             flush=True,
         )
+
         api = None
         return False
 
 
 # ============================================================
-# OTC ASSET DISCOVERY
+# EURUSD / EURUSD-OTC ASSET DISCOVERY
 # ============================================================
 
-def get_otc_assets():
-    global otc_assets
-    global otc_active_ids
+def get_trading_assets():
+    global trading_assets
+    global active_ids
 
     print(
-        "Preparing OTC assets...",
+        "Preparing EURUSD assets...",
         flush=True,
     )
 
     try:
+
         init_data = None
+
+        # ----------------------------------------------------
+        # PRIMARY SOURCE
+        # ----------------------------------------------------
 
         try:
             init_data = api.get_all_init_v2()
         except Exception as exc:
+
             print(
                 "get_all_init_v2 warning: "
                 + str(exc),
                 flush=True,
             )
 
-        new_assets = []
-        new_active_ids = {}
-
-        # ----------------------------------------------------
-        # PRIMARY SOURCE
-        # ----------------------------------------------------
-
+        found_assets = {}
+        
         if isinstance(init_data, dict):
 
             sections = [
-                init_data.get("turbo", {}),
-                init_data.get("binary", {}),
+                init_data.get(
+                    "turbo",
+                    {},
+                ),
+                init_data.get(
+                    "binary",
+                    {},
+                ),
             ]
 
             for section in sections:
@@ -302,11 +334,17 @@ def get_otc_assets():
                             1,
                         )[1]
 
-                    if "-OTC" not in name:
+                    # ONLY EURUSD AND EURUSD-OTC
+                    if name not in TARGET_ASSETS:
                         continue
 
-                    enabled = info.get("enabled")
-                    suspended = info.get("is_suspended")
+                    enabled = info.get(
+                        "enabled"
+                    )
+
+                    suspended = info.get(
+                        "is_suspended"
+                    )
 
                     if enabled is False:
                         continue
@@ -314,37 +352,29 @@ def get_otc_assets():
                     if suspended is True:
                         continue
 
-                    if name in new_active_ids:
-                        continue
-
-                    new_assets.append(name)
-                    new_active_ids[name] = active_id
-
-                    if len(new_assets) >= MAX_ASSETS:
-                        break
-
-                if len(new_assets) >= MAX_ASSETS:
-                    break
+                    found_assets[name] = active_id
 
         # ----------------------------------------------------
         # FALLBACK SOURCE
         # ----------------------------------------------------
 
-        if not new_assets:
+        if not found_assets:
 
             print(
-                "Primary OTC discovery returned no assets.",
+                "Primary asset discovery returned no target assets.",
                 flush=True,
             )
 
             try:
                 legacy_data = api.get_all_init()
             except Exception as exc:
+
                 print(
                     "get_all_init warning: "
                     + str(exc),
                     flush=True,
                 )
+
                 legacy_data = None
 
             if isinstance(legacy_data, dict):
@@ -406,11 +436,17 @@ def get_otc_assets():
                                     1,
                                 )[1]
 
-                            if "-OTC" not in name:
+                            # ONLY EURUSD AND EURUSD-OTC
+                            if name not in TARGET_ASSETS:
                                 continue
 
-                            enabled = info.get("enabled")
-                            suspended = info.get("is_suspended")
+                            enabled = info.get(
+                                "enabled"
+                            )
+
+                            suspended = info.get(
+                                "is_suspended"
+                            )
 
                             if enabled is False:
                                 continue
@@ -418,64 +454,89 @@ def get_otc_assets():
                             if suspended is True:
                                 continue
 
-                            if name in new_active_ids:
-                                continue
-
-                            new_assets.append(name)
-                            new_active_ids[name] = active_id
-
-                            if len(new_assets) >= MAX_ASSETS:
-                                break
-
-                        if len(new_assets) >= MAX_ASSETS:
-                            break
+                            found_assets[name] = active_id
 
         # ----------------------------------------------------
         # FINAL CHECK
         # ----------------------------------------------------
 
-        if not new_assets:
+        if not found_assets:
 
             print(
-                "No OPEN OTC assets found.",
+                "❌ EURUSD / EURUSD-OTC are not currently open.",
                 flush=True,
             )
 
             return False
 
         # ----------------------------------------------------
-        # SAVE ASSETS
+        # ORDER ASSETS CONSISTENTLY
         # ----------------------------------------------------
 
-        otc_assets = new_assets
-        otc_active_ids = new_active_ids
+        new_assets = []
+
+        for target in TARGET_ASSETS:
+
+            if target in found_assets:
+                new_assets.append(target)
 
         # ----------------------------------------------------
-        # REGISTER ACTIVE IDs
+        # SAVE
         # ----------------------------------------------------
 
-        for asset_name, active_id in otc_active_ids.items():
-            OP_code.ACTIVES[asset_name] = active_id
+        trading_assets = new_assets
+        active_ids = {
+            asset: found_assets[asset]
+            for asset in new_assets
+        }
+
+        # ----------------------------------------------------
+        # REGISTER IQ ACTIVE IDs
+        # ----------------------------------------------------
+
+        for asset_name, active_id in active_ids.items():
+
+            OP_code.ACTIVES[
+                asset_name
+            ] = active_id
 
         print("", flush=True)
 
         print(
-            "🔎 OTC ASSETS READY",
+            "🔎 TARGET ASSETS READY",
             flush=True,
         )
 
         print(
-            "Found "
-            + str(len(otc_assets))
-            + " OPEN OTC assets.",
+            "Allowed assets:",
             flush=True,
         )
 
         print(
-            "IQ active-code mappings loaded: "
-            + str(len(otc_active_ids)),
+            "EURUSD",
             flush=True,
         )
+
+        print(
+            "EURUSD-OTC",
+            flush=True,
+        )
+
+        print(
+            "Currently available: "
+            + str(len(trading_assets)),
+            flush=True,
+        )
+
+        for asset_name in trading_assets:
+
+            print(
+                "✅ "
+                + asset_name
+                + " | Active ID: "
+                + str(active_ids[asset_name]),
+                flush=True,
+            )
 
         print(
             "1M scanner is now active.",
@@ -487,7 +548,7 @@ def get_otc_assets():
     except Exception as exc:
 
         print(
-            "OTC discovery error:",
+            "Asset discovery error:",
             exc,
             flush=True,
         )
@@ -500,17 +561,21 @@ def get_otc_assets():
 # ============================================================
 
 def get_candles(asset, count):
-    active_id = otc_active_ids.get(asset)
+
+    active_id = active_ids.get(asset)
 
     if active_id is None:
+
         print(
             "No active ID for "
             + asset,
             flush=True,
         )
+
         return []
 
     try:
+
         api.api.candles.candles_data = []
 
         server_time = time.time()
@@ -536,14 +601,18 @@ def get_candles(asset, count):
             < CANDLE_REQUEST_TIMEOUT
         ):
 
-            candles = api.api.candles.candles_data
+            candles = (
+                api.api.candles.candles_data
+            )
 
             if candles:
                 break
 
             time.sleep(0.1)
 
-        candles = api.api.candles.candles_data
+        candles = (
+            api.api.candles.candles_data
+        )
 
         if not candles:
             return []
@@ -556,19 +625,32 @@ def get_candles(asset, count):
                 continue
 
             try:
+
                 result.append({
-                    "from": float(candle.get("from")),
-                    "open": float(candle.get("open")),
-                    "close": float(candle.get("close")),
-                    "high": float(candle.get("max")),
-                    "low": float(candle.get("min")),
+                    "from": float(
+                        candle.get("from")
+                    ),
+                    "open": float(
+                        candle.get("open")
+                    ),
+                    "close": float(
+                        candle.get("close")
+                    ),
+                    "high": float(
+                        candle.get("max")
+                    ),
+                    "low": float(
+                        candle.get("min")
+                    ),
                 })
+
             except Exception:
                 continue
 
         return result
 
     except Exception as exc:
+
         print(
             "Candle error "
             + asset
@@ -576,16 +658,23 @@ def get_candles(asset, count):
             + str(exc),
             flush=True,
         )
+
         return []
 
 
 def remove_open_candle(candles):
+
     if len(candles) < 2:
         return candles
 
     now = time.time()
+
     last = candles[-1]
-    candle_from = last.get("from", 0)
+
+    candle_from = last.get(
+        "from",
+        0,
+    )
 
     if now - candle_from < CANDLE_SECONDS:
         return candles[:-1]
@@ -598,6 +687,7 @@ def remove_open_candle(candles):
 # ============================================================
 
 def calculate_momentum(candles):
+
     values = []
 
     if len(candles) <= MOMENTUM_PERIOD:
@@ -627,12 +717,19 @@ def calculate_momentum(candles):
 
 
 def analyze_momentum(candles):
-    if len(candles) < MOMENTUM_LOOKBACK + 3:
+
+    if len(candles) < (
+        MOMENTUM_LOOKBACK + 3
+    ):
         return None
 
-    momentum_values = calculate_momentum(candles)
+    momentum_values = calculate_momentum(
+        candles
+    )
 
-    if len(momentum_values) < MOMENTUM_LOOKBACK + 3:
+    if len(momentum_values) < (
+        MOMENTUM_LOOKBACK + 3
+    ):
         return None
 
     recent = momentum_values[
@@ -656,13 +753,22 @@ def analyze_momentum(candles):
     )
 
     if low_index >= len(sorted_values):
-        low_index = len(sorted_values) - 1
+        low_index = (
+            len(sorted_values) - 1
+        )
 
     if high_index >= len(sorted_values):
-        high_index = len(sorted_values) - 1
+        high_index = (
+            len(sorted_values) - 1
+        )
 
-    low_threshold = sorted_values[low_index]
-    high_threshold = sorted_values[high_index]
+    low_threshold = sorted_values[
+        low_index
+    ]
+
+    high_threshold = sorted_values[
+        high_index
+    ]
 
     recent_low = min(recent)
     recent_high = max(recent)
@@ -670,6 +776,10 @@ def analyze_momentum(candles):
     signal = None
     extreme = None
     reversal_strength = 0.0
+
+    # --------------------------------------------------------
+    # LOW EXTREME -> CALL
+    # --------------------------------------------------------
 
     if current <= low_threshold:
 
@@ -679,17 +789,28 @@ def analyze_momentum(candles):
             current > previous
             and previous < previous_previous
         ):
-            turn_distance = current - previous
 
-            if turn_distance >= MIN_TURN_DISTANCE:
+            turn_distance = (
+                current - previous
+            )
+
+            if (
+                turn_distance
+                >= MIN_TURN_DISTANCE
+            ):
 
                 signal = "CALL"
 
                 if recent_low != 0:
+
                     reversal_strength = (
                         turn_distance
                         / abs(recent_low)
                     ) * 100.0
+
+    # --------------------------------------------------------
+    # HIGH EXTREME -> PUT
+    # --------------------------------------------------------
 
     elif current >= high_threshold:
 
@@ -699,13 +820,20 @@ def analyze_momentum(candles):
             current < previous
             and previous > previous_previous
         ):
-            turn_distance = previous - current
 
-            if turn_distance >= MIN_TURN_DISTANCE:
+            turn_distance = (
+                previous - current
+            )
+
+            if (
+                turn_distance
+                >= MIN_TURN_DISTANCE
+            ):
 
                 signal = "PUT"
 
                 if recent_high != 0:
+
                     reversal_strength = (
                         turn_distance
                         / abs(recent_high)
@@ -729,22 +857,10 @@ def analyze_momentum(candles):
 # PRICE ACTION REVERSAL CONFIRMATION
 # ============================================================
 
-def price_action_confirmation(candles, direction):
-    """
-    ONE additional confirmation for the Momentum 10 strategy.
-
-    CALL:
-        - bullish rejection candle
-        OR
-        - bullish engulfing candle
-
-    PUT:
-        - bearish rejection candle
-        OR
-        - bearish engulfing candle
-
-    This uses only CLOSED candles.
-    """
+def price_action_confirmation(
+    candles,
+    direction,
+):
 
     if len(candles) < 2:
         return False, "NOT_ENOUGH_CANDLES"
@@ -761,52 +877,60 @@ def price_action_confirmation(candles, direction):
     previous_close = previous["close"]
 
     body = abs(
-        current_close - current_open
+        current_close
+        - current_open
     )
 
     upper_wick = (
         current_high
-        - max(current_open, current_close)
+        - max(
+            current_open,
+            current_close,
+        )
     )
 
     lower_wick = (
-        min(current_open, current_close)
+        min(
+            current_open,
+            current_close,
+        )
         - current_low
     )
 
     candle_range = (
-        current_high - current_low
+        current_high
+        - current_low
     )
 
     if candle_range <= 0:
         return False, "ZERO_RANGE"
 
     # --------------------------------------------------------
-    # CALL CONFIRMATION
+    # CALL
     # --------------------------------------------------------
 
     if direction == "CALL":
 
         bullish_candle = (
-            current_close > current_open
+            current_close
+            > current_open
         )
 
-        # Bullish rejection:
-        # meaningful lower wick + bullish close
         bullish_rejection = (
             bullish_candle
             and lower_wick >= body
-            and lower_wick >= candle_range * 0.25
+            and lower_wick
+            >= candle_range * 0.25
         )
 
-        # Bullish engulfing:
-        # current bullish candle completely covers
-        # the previous candle body.
         bullish_engulfing = (
             bullish_candle
-            and previous_close < previous_open
-            and current_open <= previous_close
-            and current_close >= previous_open
+            and previous_close
+            < previous_open
+            and current_open
+            <= previous_close
+            and current_close
+            >= previous_open
         )
 
         if bullish_rejection:
@@ -815,34 +939,37 @@ def price_action_confirmation(candles, direction):
         if bullish_engulfing:
             return True, "BULLISH_ENGULFING"
 
-        return False, "NO_BULLISH_CONFIRMATION"
+        return (
+            False,
+            "NO_BULLISH_CONFIRMATION",
+        )
 
     # --------------------------------------------------------
-    # PUT CONFIRMATION
+    # PUT
     # --------------------------------------------------------
 
     if direction == "PUT":
 
         bearish_candle = (
-            current_close < current_open
+            current_close
+            < current_open
         )
 
-        # Bearish rejection:
-        # meaningful upper wick + bearish close
         bearish_rejection = (
             bearish_candle
             and upper_wick >= body
-            and upper_wick >= candle_range * 0.25
+            and upper_wick
+            >= candle_range * 0.25
         )
 
-        # Bearish engulfing:
-        # current bearish candle completely covers
-        # the previous candle body.
         bearish_engulfing = (
             bearish_candle
-            and previous_close > previous_open
-            and current_open >= previous_close
-            and current_close <= previous_open
+            and previous_close
+            > previous_open
+            and current_open
+            >= previous_close
+            and current_close
+            <= previous_open
         )
 
         if bearish_rejection:
@@ -851,7 +978,10 @@ def price_action_confirmation(candles, direction):
         if bearish_engulfing:
             return True, "BEARISH_ENGULFING"
 
-        return False, "NO_BEARISH_CONFIRMATION"
+        return (
+            False,
+            "NO_BEARISH_CONFIRMATION",
+        )
 
     return False, "INVALID_DIRECTION"
 
@@ -868,6 +998,7 @@ def build_signal_message(
     signal_id,
     confirmation,
 ):
+
     return (
         "🔔 <b>MOMENTUM 10 SIGNAL</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -888,35 +1019,73 @@ def build_signal_message(
         + "\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "Momentum: "
-        + str(round(analysis["momentum"], 5))
+        + str(
+            round(
+                analysis["momentum"],
+                5,
+            )
+        )
         + "\n"
         "Previous: "
-        + str(round(analysis["previous"], 5))
+        + str(
+            round(
+                analysis["previous"],
+                5,
+            )
+        )
         + "\n"
         "Previous 2: "
         + str(
             round(
-                analysis["previous_previous"],
+                analysis[
+                    "previous_previous"
+                ],
                 5,
             )
         )
         + "\n"
         "Recent Low: "
-        + str(round(analysis["recent_low"], 5))
+        + str(
+            round(
+                analysis["recent_low"],
+                5,
+            )
+        )
         + "\n"
         "Recent High: "
-        + str(round(analysis["recent_high"], 5))
+        + str(
+            round(
+                analysis["recent_high"],
+                5,
+            )
+        )
         + "\n"
         "Low Threshold: "
-        + str(round(analysis["low_threshold"], 5))
+        + str(
+            round(
+                analysis[
+                    "low_threshold"
+                ],
+                5,
+            )
+        )
         + "\n"
         "High Threshold: "
-        + str(round(analysis["high_threshold"], 5))
+        + str(
+            round(
+                analysis[
+                    "high_threshold"
+                ],
+                5,
+            )
+        )
         + "\n"
         "Reversal Strength: "
         + str(
             round(
-                analysis["reversal_strength"],
+                analysis[
+                    "reversal_strength"
+                ],
                 1,
             )
         )
@@ -940,13 +1109,16 @@ def monitor_trade(
     signal_id,
     entry_price,
 ):
+
     global pending_results
     global wins
     global losses
 
     try:
+
         time.sleep(
-            (EXPIRY_MINUTES * 60) + 5
+            (EXPIRY_MINUTES * 60)
+            + 5
         )
 
         result = None
@@ -954,10 +1126,15 @@ def monitor_trade(
         for _ in range(20):
 
             try:
-                result = api.check_win_v4(
-                    order_id
+
+                result = (
+                    api.check_win_v4(
+                        order_id
+                    )
                 )
+
             except Exception:
+
                 result = None
 
             if result is not None:
@@ -966,11 +1143,13 @@ def monitor_trade(
             time.sleep(1)
 
         if result is None:
+
             print(
                 "Could not get result for "
                 + asset,
                 flush=True,
             )
+
             return
 
         try:
@@ -979,9 +1158,12 @@ def monitor_trade(
             profit = 0.0
 
         if profit > 0:
+
             wins += 1
             result_text = "WIN"
+
         else:
+
             losses += 1
             result_text = "LOSS"
 
@@ -1023,6 +1205,7 @@ def monitor_trade(
         )
 
     except Exception as exc:
+
         print(
             "Result monitor error: "
             + str(exc),
@@ -1030,6 +1213,7 @@ def monitor_trade(
         )
 
     finally:
+
         pending_results -= 1
 
 
@@ -1043,10 +1227,12 @@ def execute_trade(
     signal_id,
     entry_price,
 ):
+
     global trade_count
     global pending_results
 
     try:
+
         action = direction.lower()
 
         print(
@@ -1064,14 +1250,24 @@ def execute_trade(
             EXPIRY_MINUTES,
         )
 
-        if isinstance(order_result, tuple):
+        if isinstance(
+            order_result,
+            tuple,
+        ):
+
             success = order_result[0]
             order_id = order_result[1]
+
         else:
-            success = bool(order_result)
+
+            success = bool(
+                order_result
+            )
+
             order_id = order_result
 
         if not success:
+
             print(
                 "❌ TRADE FAILED "
                 + asset
@@ -1079,6 +1275,7 @@ def execute_trade(
                 + direction,
                 flush=True,
             )
+
             return False
 
         trade_count += 1
@@ -1127,21 +1324,29 @@ def execute_trade(
         return True
 
     except Exception as exc:
-        print("", flush=True)
+
+        print(
+            "",
+            flush=True,
+        )
+
         print(
             "❌ TRADE EXCEPTION",
             flush=True,
         )
+
         print(
             "Asset: "
             + asset,
             flush=True,
         )
+
         print(
             "Direction: "
             + direction,
             flush=True,
         )
+
         print(
             "Error: "
             + str(exc),
@@ -1156,7 +1361,9 @@ def execute_trade(
 # ============================================================
 
 def process_asset(asset):
+
     try:
+
         print(
             "Scanning: "
             + asset,
@@ -1173,12 +1380,18 @@ def process_asset(asset):
         if not candles:
             return
 
-        candles = remove_open_candle(candles)
+        candles = remove_open_candle(
+            candles
+        )
 
-        if len(candles) < MOMENTUM_LOOKBACK + 3:
+        if len(candles) < (
+            MOMENTUM_LOOKBACK + 3
+        ):
             return
 
-        analysis = analyze_momentum(candles)
+        analysis = analyze_momentum(
+            candles
+        )
 
         if not analysis:
             return
@@ -1188,45 +1401,72 @@ def process_asset(asset):
         if signal is None:
             return
 
-        # ====================================================
-        # NEW SINGLE CONFIRMATION
-        # ====================================================
+        # ----------------------------------------------------
+        # PRICE ACTION CONFIRMATION
+        # ----------------------------------------------------
 
-        confirmed, confirmation = price_action_confirmation(
-            candles,
-            signal,
+        confirmed, confirmation = (
+            price_action_confirmation(
+                candles,
+                signal,
+            )
         )
 
         if not confirmed:
             return
 
-        # ====================================================
-        # EXISTING DUPLICATE-SIGNAL PROTECTION
-        # ====================================================
+        # ----------------------------------------------------
+        # DUPLICATE SIGNAL PROTECTION
+        # ----------------------------------------------------
 
         current_candle = candles[-1]
-        candle_id = current_candle["from"]
 
-        if last_signal_candle.get(asset) == candle_id:
+        candle_id = current_candle[
+            "from"
+        ]
+
+        if (
+            last_signal_candle.get(
+                asset
+            )
+            == candle_id
+        ):
             return
 
         extreme = analysis["extreme"]
 
-        if extreme_state.get(asset) == extreme:
+        if (
+            extreme_state.get(asset)
+            == extreme
+        ):
             return
 
-        last_signal_candle[asset] = candle_id
-        extreme_state[asset] = extreme
+        last_signal_candle[
+            asset
+        ] = candle_id
 
-        price = current_candle["close"]
+        extreme_state[
+            asset
+        ] = extreme
+
+        price = current_candle[
+            "close"
+        ]
 
         signal_id = (
             "M10-"
-            + asset.replace("-", "")
+            + asset.replace(
+                "-",
+                "",
+            )
             + "-"
             + signal
             + "-"
-            + str(int(time.time()))
+            + str(
+                int(
+                    time.time()
+                )
+            )
         )
 
         message = build_signal_message(
@@ -1238,107 +1478,168 @@ def process_asset(asset):
             confirmation,
         )
 
-        print("", flush=True)
+        print(
+            "",
+            flush=True,
+        )
+
         print(
             "🔔 MOMENTUM 10 SIGNAL",
             flush=True,
         )
+
         print(
             "━━━━━━━━━━━━━━━━━━",
             flush=True,
         )
+
         print(
             "Asset: "
             + asset,
             flush=True,
         )
+
         print(
             "Direction: "
             + signal,
             flush=True,
         )
+
         print(
             "Timeframe: 1M",
             flush=True,
         )
+
         print(
             "Expiry: 1 minute",
             flush=True,
         )
+
         print(
             "Strategy: Momentum 10 Extreme-Reversal",
             flush=True,
         )
+
         print(
             "Extreme: "
             + str(extreme),
             flush=True,
         )
+
         print(
             "Price Confirmation: "
             + confirmation,
             flush=True,
         )
+
         print(
             "━━━━━━━━━━━━━━━━━━",
             flush=True,
         )
+
         print(
             "Momentum: "
-            + str(round(analysis["momentum"], 5)),
-            flush=True,
-        )
-        print(
-            "Previous: "
-            + str(round(analysis["previous"], 5)),
-            flush=True,
-        )
-        print(
-            "Previous 2: "
             + str(
                 round(
-                    analysis["previous_previous"],
+                    analysis["momentum"],
                     5,
                 )
             ),
             flush=True,
         )
+
+        print(
+            "Previous: "
+            + str(
+                round(
+                    analysis["previous"],
+                    5,
+                )
+            ),
+            flush=True,
+        )
+
+        print(
+            "Previous 2: "
+            + str(
+                round(
+                    analysis[
+                        "previous_previous"
+                    ],
+                    5,
+                )
+            ),
+            flush=True,
+        )
+
         print(
             "Recent Low: "
-            + str(round(analysis["recent_low"], 5)),
+            + str(
+                round(
+                    analysis["recent_low"],
+                    5,
+                )
+            ),
             flush=True,
         )
+
         print(
             "Recent High: "
-            + str(round(analysis["recent_high"], 5)),
+            + str(
+                round(
+                    analysis["recent_high"],
+                    5,
+                )
+            ),
             flush=True,
         )
+
         print(
             "Low Threshold: "
-            + str(round(analysis["low_threshold"], 5)),
+            + str(
+                round(
+                    analysis[
+                        "low_threshold"
+                    ],
+                    5,
+                )
+            ),
             flush=True,
         )
+
         print(
             "High Threshold: "
-            + str(round(analysis["high_threshold"], 5)),
+            + str(
+                round(
+                    analysis[
+                        "high_threshold"
+                    ],
+                    5,
+                )
+            ),
             flush=True,
         )
+
         print(
             "Reversal Strength: "
             + str(
                 round(
-                    analysis["reversal_strength"],
+                    analysis[
+                        "reversal_strength"
+                    ],
                     1,
                 )
             )
             + "%",
             flush=True,
         )
+
         print(
             "Price: "
             + str(price),
             flush=True,
         )
+
         print(
             "Signal ID: "
             + signal_id,
@@ -1348,6 +1649,7 @@ def process_asset(asset):
         send_telegram(message)
 
         if AUTO_TRADE:
+
             execute_trade(
                 asset,
                 signal,
@@ -1356,6 +1658,7 @@ def process_asset(asset):
             )
 
     except Exception as exc:
+
         print(
             "Process asset error "
             + asset
@@ -1370,53 +1673,76 @@ def process_asset(asset):
 # ============================================================
 
 def heartbeat():
+
     win_rate = 0.0
 
     if trade_count > 0:
+
         win_rate = (
-            wins / trade_count
+            wins
+            / trade_count
         ) * 100.0
 
-    print("", flush=True)
+    print(
+        "",
+        flush=True,
+    )
+
     print(
         "💚 MOMENTUM 10 BOT ALIVE",
         flush=True,
     )
+
     print(
         "━━━━━━━━━━━━━━━━━━",
         flush=True,
     )
+
     print(
         "Connection: OK",
         flush=True,
     )
+
     print(
         "Balance: "
         + BALANCE_MODE,
         flush=True,
     )
+
     print(
         "Auto Trading: "
         + str(AUTO_TRADE),
         flush=True,
     )
+
     print(
         "Strategy: Momentum 10",
         flush=True,
     )
+
+    print(
+        "Assets: EURUSD + EURUSD-OTC",
+        flush=True,
+    )
+
     print(
         "Timeframe: 1M",
         flush=True,
     )
+
     print(
         "Expiry: 1 minute",
         flush=True,
     )
+
     print(
-        "OTC Assets: "
-        + str(len(otc_assets)),
+        "Available target assets: "
+        + str(
+            len(trading_assets)
+        ),
         flush=True,
     )
+
     print(
         "Trades: "
         + str(trade_count)
@@ -1424,24 +1750,33 @@ def heartbeat():
         + str(TARGET_TRADES),
         flush=True,
     )
+
     print(
         "Pending Results: "
         + str(pending_results),
         flush=True,
     )
+
     print(
         "Wins: "
         + str(wins),
         flush=True,
     )
+
     print(
         "Losses: "
         + str(losses),
         flush=True,
     )
+
     print(
         "Win Rate: "
-        + str(round(win_rate, 1))
+        + str(
+            round(
+                win_rate,
+                1,
+            )
+        )
         + "%",
         flush=True,
     )
@@ -1452,6 +1787,7 @@ def heartbeat():
 # ============================================================
 
 def main():
+
     global api
 
     init_log()
@@ -1460,60 +1796,93 @@ def main():
         "🚀 MOMENTUM 10 BOT STARTING",
         flush=True,
     )
+
     print(
         "━━━━━━━━━━━━━━━━━━",
         flush=True,
     )
+
     print(
         "Mode: "
         + BALANCE_MODE,
         flush=True,
     )
+
     print(
         "Auto Trading: "
         + str(AUTO_TRADE),
         flush=True,
     )
+
     print(
         "Strategy: Momentum 10 Extreme-Reversal",
         flush=True,
     )
+
+    print(
+        "Assets: EURUSD + EURUSD-OTC",
+        flush=True,
+    )
+
     print(
         "Timeframe: 1M",
         flush=True,
     )
+
     print(
         "Expiry: 1 minute",
         flush=True,
     )
+
     print(
         "Stake: $"
         + str(STAKE),
         flush=True,
     )
+
+    print(
+        "Minimum Turn Distance: "
+        + str(MIN_TURN_DISTANCE),
+        flush=True,
+    )
+
     print(
         "Target: "
         + str(TARGET_TRADES),
         flush=True,
     )
+
     print(
         "Continuous scanning: ON",
         flush=True,
     )
-    print("", flush=True)
+
+    print(
+        "",
+        flush=True,
+    )
 
     last_asset_refresh = 0
     last_heartbeat = 0
 
     while not stop_event.is_set():
 
+        # ----------------------------------------------------
+        # CONNECTION
+        # ----------------------------------------------------
+
         if api is None:
 
             if not connect_iq():
-                time.sleep(RECONNECT_SECONDS)
+
+                time.sleep(
+                    RECONNECT_SECONDS
+                )
+
                 continue
 
         try:
+
             if not api.check_connect():
 
                 print(
@@ -1523,45 +1892,80 @@ def main():
 
                 api = None
 
-                time.sleep(RECONNECT_SECONDS)
+                time.sleep(
+                    RECONNECT_SECONDS
+                )
+
                 continue
 
         except Exception:
+
             api = None
-            time.sleep(RECONNECT_SECONDS)
+
+            time.sleep(
+                RECONNECT_SECONDS
+            )
+
             continue
 
-        if not otc_assets:
+        # ----------------------------------------------------
+        # ASSET DISCOVERY
+        # ----------------------------------------------------
 
-            if not get_otc_assets():
+        if not trading_assets:
+
+            if not get_trading_assets():
 
                 print(
-                    "OTC assets unavailable. Retrying...",
+                    "EURUSD assets unavailable. Retrying...",
                     flush=True,
                 )
 
-                time.sleep(RECONNECT_SECONDS)
+                time.sleep(
+                    RECONNECT_SECONDS
+                )
+
                 continue
 
-            last_asset_refresh = time.time()
-            last_heartbeat = time.time()
+            last_asset_refresh = (
+                time.time()
+            )
+
+            last_heartbeat = (
+                time.time()
+            )
 
         now = time.time()
+
+        # ----------------------------------------------------
+        # REFRESH ASSET STATUS
+        # ----------------------------------------------------
 
         if (
             now - last_asset_refresh
             >= ASSET_REFRESH_SECONDS
         ):
 
-            if get_otc_assets():
+            if get_trading_assets():
+
                 last_asset_refresh = now
+
+        # ----------------------------------------------------
+        # HEARTBEAT
+        # ----------------------------------------------------
 
         if (
             now - last_heartbeat
             >= HEARTBEAT_SECONDS
         ):
+
             heartbeat()
+
             last_heartbeat = now
+
+        # ----------------------------------------------------
+        # 50-TRADE BLOCK
+        # ----------------------------------------------------
 
         if trade_count >= TARGET_TRADES:
 
@@ -1571,7 +1975,9 @@ def main():
             )
 
             send_telegram(
-                "🎯 <b>MOMENTUM 10 TARGET REACHED</b>\n"
+                "🎯 <b>MOMENTUM 10 "
+                "50-TRADE BLOCK COMPLETE</b>\n"
+                "Assets: EURUSD + EURUSD-OTC\n"
                 "Trades: "
                 + str(trade_count)
                 + "\n"
@@ -1580,11 +1986,33 @@ def main():
                 + "\n"
                 "Losses: "
                 + str(losses)
+                + "\n"
+                "Win Rate: "
+                + str(
+                    round(
+                        (
+                            wins
+                            / max(
+                                trade_count,
+                                1,
+                            )
+                        )
+                        * 100.0,
+                        1,
+                    )
+                )
+                + "%"
             )
 
             break
 
-        for asset in list(otc_assets):
+        # ----------------------------------------------------
+        # SCAN ONLY TARGET ASSETS
+        # ----------------------------------------------------
+
+        for asset in list(
+            trading_assets
+        ):
 
             if stop_event.is_set():
                 break
@@ -1594,22 +2022,34 @@ def main():
 
             process_asset(asset)
 
-            time.sleep(SCAN_INTERVAL)
+            time.sleep(
+                SCAN_INTERVAL
+            )
 
-        time.sleep(SCAN_INTERVAL)
+        time.sleep(
+            SCAN_INTERVAL
+        )
 
+
+# ============================================================
+# START
+# ============================================================
 
 if __name__ == "__main__":
+
     try:
+
         main()
 
     except KeyboardInterrupt:
+
         print(
             "Bot stopped.",
             flush=True,
         )
 
     except Exception as exc:
+
         print(
             "FATAL ERROR: "
             + str(exc),
