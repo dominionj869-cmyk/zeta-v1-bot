@@ -1,4 +1,4 @@
-import os
+def
 import json
 import time
 import statistics
@@ -170,18 +170,16 @@ def send_request(ws, payload):
 # GET 1-MINUTE EUR/USD CANDLES
 # ============================================================
 
-def get_candles(ws):
+def gedefandles(ws):
     request = {
-        "ticks_history": SYMBOL,
-        "end": "latest",
-        "count": CANDLE_COUNT,
-        "style": "candles",
-        "granularity": TIMEFRAME_SECONDS,
-        "subscribe": 0,
-        "req_id": 100,
+    "ticks_history": SYMBOL,
+    "end": "latest",
+    "count": CANDLE_COUNT,
+    "style": "candles",
+    "granularity": TIMEFRAME_SECONDS,
+    "req_id": 100,
     }
-
-    ws.send(json.dumps(request))
+     ws.send(json.dumps(request))
 
     while True:
         raw = ws.recv()
