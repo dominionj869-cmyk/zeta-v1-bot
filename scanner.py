@@ -257,14 +257,137 @@ def get_trading_assets():
 
     try:
 
-        init_data = None
+        found_assets = {}
+
+        # ----------------------------------------------------
+        # NORMALIZE ASSET NAME
+        # ----------------------------------------------------
+
+        def normalize_name(name):
+
+            if name is None:
+                return ""
+
+            name = str(name).strip()
+
+            if "." in name:
+                parts = name.split(".")
+
+                if parts[-1]:
+                    name = parts[-1]
+
+            return name.upper()
+
+        # ----------------------------------------------------
+        # CHECK ONE ACTIVE RECORD
+        # ----------------------------------------------------
+
+        def check_active(info, fallback_id=None):
+
+            if not isinstance(info, dict):
+                return
+
+            name = info.get("name")
+
+            if not name:
+                name = info.get("symbol")
+
+            if not name:
+                name = info.get("instrument")
+
+            normalized_name = normalize_name(name)
+
+            if normalized_name not in TARGET_ASSETS:
+                return
+
+            active_id = info.get("active_id")
+
+            if active_id is None:
+                active_id = info.get("id")
+
+            if active_id is None:
+                active_id = fallback_id
+
+            if active_id is None:
+                return
+
+            try:
+                active_id = int(active_id)
+            except Exception:
+                return
+
+            enabled = info.get("enabled")
+
+            suspended = info.get("is_suspended")
+
+            if enabled is False:
+                return
+
+            if suspended is True:
+                return
+
+            # Preserve the exact target name used by the bot.
+            if normalized_name == "EURUSD-OTC":
+                found_assets["EURUSD-OTC"] = active_id
+
+            elif normalized_name == "EURUSD":
+                found_assets["EURUSD"] = active_id
+
+        # ----------------------------------------------------
+        # RECURSIVE SEARCH
+        #
+        # IQ Option can return the asset information in
+        # different nested structures. Search the entire
+        # initialization response instead of assuming one
+        # fixed location.
+        # ----------------------------------------------------
+
+        def search_structure(data):
+
+            if isinstance(data, dict):
+
+                # First check this dictionary itself.
+                check_active(data)
+
+                # Then inspect all nested values.
+                for key, value in data.items():
+
+                    # If the dictionary key itself is numeric,
+                    # it may be the active ID.
+                    fallback_id = None
+
+                    try:
+                        fallback_id = int(key)
+                    except Exception:
+                        pass
+
+                    if isinstance(value, dict):
+                        check_active(
+                            value,
+                            fallback_id,
+                        )
+
+                    search_structure(value)
+
+            elif isinstance(data, list):
+
+                for item in data:
+                    search_structure(item)
 
         # ----------------------------------------------------
         # PRIMARY SOURCE
         # ----------------------------------------------------
 
+        init_data = None
+
         try:
+
             init_data = api.get_all_init_v2()
+
+            if isinstance(init_data, dict):
+
+                search_structure(init_data)
+
         except Exception as exc:
 
             print(
@@ -272,87 +395,6 @@ def get_trading_assets():
                 + str(exc),
                 flush=True,
             )
-
-        found_assets = {}
-        
-        if isinstance(init_data, dict):
-
-            sections = [
-                init_data.get(
-                    "turbo",
-                    {},
-                ),
-                init_data.get(
-                    "binary",
-                    {},
-                ),
-            ]
-
-            for section in sections:
-
-                if not isinstance(section, dict):
-                    continue
-
-                actives = section.get(
-                    "actives",
-                    {},
-                )
-
-                if not isinstance(actives, dict):
-                    continue
-
-                for key, info in actives.items():
-
-                    if not isinstance(info, dict):
-                        continue
-
-                    active_id = info.get(
-                        "active_id"
-                    )
-
-                    if active_id is None:
-                        active_id = key
-
-                    try:
-                        active_id = int(active_id)
-                    except Exception:
-                        continue
-
-                    name = info.get(
-                        "name",
-                        "",
-                    )
-
-                    if not name:
-                        continue
-
-                    name = str(name)
-
-                    if "." in name:
-                        name = name.split(
-                            ".",
-                            1,
-                        )[1]
-
-                    # ONLY EURUSD AND EURUSD-OTC
-                    if name not in TARGET_ASSETS:
-                        continue
-
-                    enabled = info.get(
-                        "enabled"
-                    )
-
-                    suspended = info.get(
-                        "is_suspended"
-                    )
-
-                    if enabled is False:
-                        continue
-
-                    if suspended is True:
-                        continue
-
-                    found_assets[name] = active_id
 
         # ----------------------------------------------------
         # FALLBACK SOURCE
@@ -366,7 +408,15 @@ def get_trading_assets():
             )
 
             try:
+
                 legacy_data = api.get_all_init()
+
+                if isinstance(legacy_data, dict):
+
+                    search_structure(
+                        legacy_data
+                    )
+
             except Exception as exc:
 
                 print(
@@ -374,87 +424,6 @@ def get_trading_assets():
                     + str(exc),
                     flush=True,
                 )
-
-                legacy_data = None
-
-            if isinstance(legacy_data, dict):
-
-                result = legacy_data.get(
-                    "result",
-                    {},
-                )
-
-                if isinstance(result, dict):
-
-                    sections = [
-                        result.get(
-                            "turbo",
-                            {},
-                        ),
-                        result.get(
-                            "binary",
-                            {},
-                        ),
-                    ]
-
-                    for section in sections:
-
-                        if not isinstance(section, dict):
-                            continue
-
-                        actives = section.get(
-                            "actives",
-                            {},
-                        )
-
-                        if not isinstance(actives, dict):
-                            continue
-
-                        for key, info in actives.items():
-
-                            if not isinstance(info, dict):
-                                continue
-
-                            try:
-                                active_id = int(key)
-                            except Exception:
-                                continue
-
-                            name = info.get(
-                                "name",
-                                "",
-                            )
-
-                            if not name:
-                                continue
-
-                            name = str(name)
-
-                            if "." in name:
-                                name = name.split(
-                                    ".",
-                                    1,
-                                )[1]
-
-                            # ONLY EURUSD AND EURUSD-OTC
-                            if name not in TARGET_ASSETS:
-                                continue
-
-                            enabled = info.get(
-                                "enabled"
-                            )
-
-                            suspended = info.get(
-                                "is_suspended"
-                            )
-
-                            if enabled is False:
-                                continue
-
-                            if suspended is True:
-                                continue
-
-                            found_assets[name] = active_id
 
         # ----------------------------------------------------
         # FINAL CHECK
@@ -485,6 +454,7 @@ def get_trading_assets():
         # ----------------------------------------------------
 
         trading_assets = new_assets
+
         active_ids = {
             asset: found_assets[asset]
             for asset in new_assets
@@ -500,7 +470,10 @@ def get_trading_assets():
                 asset_name
             ] = active_id
 
-        print("", flush=True)
+        print(
+            "",
+            flush=True,
+        )
 
         print(
             "🔎 TARGET ASSETS READY",
@@ -2054,4 +2027,4 @@ if __name__ == "__main__":
             "FATAL ERROR: "
             + str(exc),
             flush=True,
-        )
+                ) )
