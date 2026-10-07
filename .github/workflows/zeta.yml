@@ -1,4 +1,4 @@
-name: ZETA V2.4 - 50 Trade Demo Test
+name: Momentum 10 - Continuous 50 Trade Blocks
 
 on:
   workflow_dispatch:
@@ -8,14 +8,13 @@ permissions:
   actions: write
 
 concurrency:
-  group: zeta-v2-demo-test
+  group: momentum-10-demo-test
   cancel-in-progress: false
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
 
-    # Stop normally before GitHub's hard runner limit.
     timeout-minutes: 350
 
     steps:
@@ -32,7 +31,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run ZETA V2.4
+      - name: Run Momentum 10
         env:
           IQ_EMAIL: ${{ secrets.IQ_EMAIL }}
           IQ_PASSWORD: ${{ secrets.IQ_PASSWORD }}
@@ -41,10 +40,11 @@ jobs:
         run: |
           python main.py
 
-      - name: Restart ZETA automatically
+      - name: Start next 50-trade block
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          echo "Starting the next ZETA run..."
+          echo "50-trade block finished."
+          echo "Starting the next Momentum 10 block..."
           gh workflow run zeta.yml --ref "${{ github.ref_name }}"
