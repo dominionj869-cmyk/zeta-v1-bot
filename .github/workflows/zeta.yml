@@ -1,21 +1,14 @@
-name: Momentum 10 - Continuous 50 Trade Blocks
+name: Deriv API Connection Test
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
-  actions: write
-
-concurrency:
-  group: momentum-10-demo-test
-  cancel-in-progress: false
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
-    timeout-minutes: 350
 
     steps:
       - name: Checkout repository
@@ -31,19 +24,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Momentum 10
+      - name: Test Deriv API
         env:
-          OTCHARTS_API_KEY: ${{ secrets.OTCHARTS_API_KEY }}
+          DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
+          DERIV_PAT: ${{ secrets.DERIV_PAT }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python main.py
-
-      - name: Start next 50-trade block
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "50-trade block finished."
-          echo "Starting the next Momentum 10 block..."
-          gh workflow run zeta.yml --ref "${{ github.ref_name }}"
+          python scanner.py
