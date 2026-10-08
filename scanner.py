@@ -23,6 +23,7 @@ API_BASE = "https://api.derivws.com"
 SYMBOL = "frxEURUSD"
 DISPLAY_SYMBOL = "EUR/USD"
 
+
 # ============================================================
 # STRATEGY
 # ============================================================
@@ -40,6 +41,7 @@ EXPIRY_MINUTES = 15
 STAKE = 1.0
 
 TARGET_TRADES = 50
+
 
 # ============================================================
 # SAFETY
@@ -59,6 +61,7 @@ WS_TIMEOUT = 40
 STATE_FILE = "trade_state.json"
 
 RUNNING = True
+
 
 # ============================================================
 # STATE
@@ -383,7 +386,6 @@ def get_ws_url(account):
             "Deriv OTP response contained no WebSocket URL."
         )
 
-    # HARD DEMO SAFETY CHECK
     if "/options/ws/demo" not in ws_url:
         raise RuntimeError(
             "SAFETY STOP: "
@@ -406,6 +408,7 @@ def connect():
     account_id = account.get("account_id")
 
     balance = account.get("balance")
+
     currency = account.get(
         "currency",
         "USD"
@@ -488,6 +491,7 @@ def ws_request(
     deadline = time.time() + timeout
 
     while time.time() < deadline:
+
         remaining = max(
             1,
             deadline - time.time()
@@ -503,6 +507,7 @@ def ws_request(
         data = json.loads(raw)
 
         if data.get("error"):
+
             error = data["error"]
 
             code = error.get(
@@ -535,6 +540,11 @@ def ws_request(
 # ============================================================
 
 def get_candles():
+
+    # IMPORTANT:
+    # No "subscribe" field is used here.
+    # We are polling closed candles directly.
+
     response = ws_request(
         {
             "ticks_history": SYMBOL,
@@ -542,7 +552,6 @@ def get_candles():
             "count": CANDLE_COUNT,
             "style": "candles",
             "granularity": TIMEFRAME_SECONDS,
-            "subscribe": 0,
         },
         expected_types={"candles"},
         timeout=20,
@@ -561,6 +570,7 @@ def get_candles():
     clean = []
 
     for candle in candles:
+
         try:
             clean.append(
                 {
@@ -605,9 +615,11 @@ def get_candles():
 # ============================================================
 
 def calculate_momentum(candles):
+
     closes = []
 
     for candle in candles:
+
         try:
             close = float(
                 candle["close"]
@@ -630,6 +642,7 @@ def calculate_momentum(candles):
         MOMENTUM_PERIOD,
         len(closes)
     ):
+
         old_price = closes[
             i - MOMENTUM_PERIOD
         ]
@@ -639,7 +652,8 @@ def calculate_momentum(candles):
 
         value = (
             (
-                closes[i] - old_price
+                closes[i]
+                - old_price
             )
             / old_price
         ) * 100.0
@@ -654,6 +668,7 @@ def calculate_momentum(candles):
 # ============================================================
 
 def percentile(values, percent):
+
     if not values:
         return None
 
@@ -689,10 +704,11 @@ def percentile(values, percent):
 
 
 # ============================================================
-# ANALYZE
+# ANALYZE MOMENTUM
 # ============================================================
 
 def analyze_momentum(candles):
+
     momentum = calculate_momentum(
         candles
     )
@@ -708,7 +724,9 @@ def analyze_momentum(candles):
         return None
 
     current = lookback[-1]
+
     previous = lookback[-2]
+
     previous_two = lookback[-3]
 
     low_level = percentile(
@@ -728,11 +746,16 @@ def analyze_momentum(candles):
         return None
 
     extreme = "NONE"
+
     action = None
 
+
+    # ========================================================
     # LOW EXTREME -> TURN UP -> CALL
+    # ========================================================
 
     if current <= low_level:
+
         extreme = "LOW"
 
         turned_up = (
@@ -741,6 +764,7 @@ def analyze_momentum(candles):
         )
 
         if turned_up:
+
             turn_distance = abs(
                 current - previous
             )
@@ -751,9 +775,13 @@ def analyze_momentum(candles):
             ):
                 action = "CALL"
 
+
+    # ========================================================
     # HIGH EXTREME -> TURN DOWN -> PUT
+    # ========================================================
 
     elif current >= high_level:
+
         extreme = "HIGH"
 
         turned_down = (
@@ -762,6 +790,7 @@ def analyze_momentum(candles):
         )
 
         if turned_down:
+
             turn_distance = abs(
                 current - previous
             )
@@ -771,6 +800,7 @@ def analyze_momentum(candles):
                 >= MIN_TURN_DISTANCE
             ):
                 action = "PUT"
+
 
     result = {
         "action": action,
@@ -782,13 +812,17 @@ def analyze_momentum(candles):
         "extreme": extreme,
     }
 
+
     if action is not None:
+
         reversal_strength = 0.0
 
         if previous != 0:
+
             reversal_strength = (
                 abs(
-                    current - previous
+                    current
+                    - previous
                 )
                 / max(
                     abs(previous),
@@ -800,6 +834,7 @@ def analyze_momentum(candles):
             "reversal_strength"
         ] = reversal_strength
 
+
     return result
 
 
@@ -808,6 +843,7 @@ def analyze_momentum(candles):
 # ============================================================
 
 def get_proposal(action):
+
     if action not in (
         "CALL",
         "PUT"
@@ -840,7 +876,9 @@ def get_proposal(action):
             "No proposal returned."
         )
 
-    proposal_id = proposal.get("id")
+    proposal_id = proposal.get(
+        "id"
+    )
 
     ask_price = proposal.get(
         "ask_price"
@@ -866,10 +904,11 @@ def get_proposal(action):
 
 
 # ============================================================
-# BUY
+# BUY CONTRACT
 # ============================================================
 
 def buy_contract(proposal):
+
     if DEMO_ONLY is not True:
         raise RuntimeError(
             "SAFETY STOP: "
@@ -885,7 +924,9 @@ def buy_contract(proposal):
         timeout=20,
     )
 
-    buy = response.get("buy")
+    buy = response.get(
+        "buy"
+    )
 
     if not buy:
         raise RuntimeError(
@@ -909,6 +950,7 @@ def buy_contract(proposal):
 # ============================================================
 
 def monitor_contract(contract_id):
+
     log(
         f"Monitoring contract "
         f"{contract_id}..."
@@ -917,7 +959,8 @@ def monitor_contract(contract_id):
     deadline = (
         time.time()
         + (
-            EXPIRY_MINUTES * 60
+            EXPIRY_MINUTES
+            * 60
         )
         + 180
     )
@@ -926,13 +969,16 @@ def monitor_contract(contract_id):
 
     while time.time() < deadline:
 
+        # IMPORTANT:
+        # No "subscribe" field here.
+        # We poll the contract status directly.
+
         response = ws_request(
             {
                 "proposal_open_contract": 1,
                 "contract_id": int(
                     contract_id
                 ),
-                "subscribe": 0,
             },
             expected_types={
                 "proposal_open_contract"
@@ -957,6 +1003,7 @@ def monitor_contract(contract_id):
         )
 
         if status != last_status:
+
             log(
                 f"Contract "
                 f"{contract_id} status: "
@@ -974,11 +1021,13 @@ def monitor_contract(contract_id):
                 "expired",
             )
         ):
+
             profit = contract.get(
                 "profit"
             )
 
             if profit is None:
+
                 payout = contract.get(
                     "payout"
                 )
@@ -991,6 +1040,7 @@ def monitor_contract(contract_id):
                     payout is not None
                     and buy_price is not None
                 ):
+
                     profit = (
                         float(payout)
                         - float(buy_price)
@@ -1023,6 +1073,7 @@ def make_signal_id(
     action,
     candle_epoch
 ):
+
     return (
         f"EURUSD-"
         f"{action}-"
@@ -1039,6 +1090,7 @@ def record_result(
     action,
     result
 ):
+
     global completed_trades
     global wins
     global losses
@@ -1057,16 +1109,19 @@ def record_result(
     total_profit += profit
 
     if profit > 0:
+
         wins += 1
         outcome = "WIN"
         emoji = "🟢"
 
     elif profit < 0:
+
         losses += 1
         outcome = "LOSS"
         emoji = "🔴"
 
     else:
+
         outcome = "BREAKEVEN"
         emoji = "🟡"
 
@@ -1075,6 +1130,7 @@ def record_result(
     win_rate = 0.0
 
     if completed_trades > 0:
+
         win_rate = (
             wins
             / completed_trades
@@ -1121,6 +1177,7 @@ def record_result(
 # ============================================================
 
 def send_heartbeat():
+
     global last_heartbeat
 
     now = time.time()
@@ -1136,6 +1193,7 @@ def send_heartbeat():
     win_rate = 0.0
 
     if completed_trades > 0:
+
         win_rate = (
             wins
             / completed_trades
@@ -1170,6 +1228,7 @@ def process_signal(
     candles,
     analysis
 ):
+
     global last_signal_candle
     global last_extreme_state
     global active_contract
@@ -1185,10 +1244,12 @@ def process_signal(
         return
 
     if active_contract is not None:
+
         log(
             "Signal skipped: "
             "existing contract active."
         )
+
         return
 
     signal_candle = candles[-1]
@@ -1213,9 +1274,11 @@ def process_signal(
         and last_extreme_state
         == extreme
     ):
+
         last_signal_candle = (
             candle_epoch
         )
+
         return
 
     last_signal_candle = (
@@ -1285,6 +1348,7 @@ def process_signal(
     )
 
     try:
+
         proposal = get_proposal(
             action
         )
@@ -1336,6 +1400,7 @@ def process_signal(
         )
 
     except Exception as exc:
+
         active_contract = None
 
         log(
@@ -1356,38 +1421,49 @@ def process_signal(
 
 
 # ============================================================
-# FINISH
+# FINISH TEST
 # ============================================================
 
 def finish_test():
+
     win_rate = 0.0
 
     if completed_trades > 0:
+
         win_rate = (
             wins
             / completed_trades
         ) * 100.0
 
     log("=" * 60)
-    log("50-TRADE TEST COMPLETE")
+
+    log(
+        "50-TRADE TEST COMPLETE"
+    )
+
     log(
         f"Trades: "
         f"{completed_trades}"
     )
+
     log(
         f"Wins: {wins}"
     )
+
     log(
         f"Losses: {losses}"
     )
+
     log(
         f"Win rate: "
         f"{win_rate:.2f}%"
     )
+
     log(
         f"Total P/L: "
         f"${total_profit:.2f}"
     )
+
     log("=" * 60)
 
     telegram(
@@ -1413,6 +1489,7 @@ def finish_test():
 # ============================================================
 
 def startup_message():
+
     telegram(
         f"🚀 ZETA MOMENTUM 10 STARTED\n\n"
         f"Asset: {DISPLAY_SYMBOL}\n"
@@ -1438,6 +1515,7 @@ def shutdown_handler(
     signum,
     frame
 ):
+
     global RUNNING
 
     RUNNING = False
@@ -1465,18 +1543,22 @@ signal.signal(
 # ============================================================
 
 def run_forever():
+
     global ws
     global last_processed_candle
 
     while RUNNING:
 
         if completed_trades >= TARGET_TRADES:
+
             finish_test()
+
             return
 
         try:
 
             if ws is None:
+
                 log(
                     "Connecting to "
                     "Deriv DEMO..."
@@ -1495,7 +1577,9 @@ def run_forever():
             candles = get_candles()
 
             if len(candles) < 2:
+
                 time.sleep(5)
+
                 continue
 
             # Last candle = currently forming.
@@ -1507,14 +1591,15 @@ def run_forever():
                 closed_candle["epoch"]
             )
 
-            # Only process each closed
-            # 1-minute candle once.
+            # Process each closed candle once.
 
             if (
                 last_processed_candle
                 == candle_epoch
             ):
+
                 time.sleep(5)
+
                 continue
 
             last_processed_candle = (
@@ -1540,7 +1625,9 @@ def run_forever():
             )
 
             if analysis is None:
+
                 time.sleep(5)
+
                 continue
 
             action = analysis.get(
@@ -1548,6 +1635,7 @@ def run_forever():
             )
 
             if action is None:
+
                 log(
                     f"NO TRADE | "
                     f"Momentum "
@@ -1557,16 +1645,24 @@ def run_forever():
                 )
 
             else:
+
                 process_signal(
                     candles[:-1],
                     analysis
                 )
 
             if completed_trades >= TARGET_TRADES:
+
                 finish_test()
+
                 return
 
             time.sleep(5)
+
+
+        # ====================================================
+        # CONNECTION / TIMEOUT RECOVERY
+        # ====================================================
 
         except (
             websocket.WebSocketConnectionClosedException,
@@ -1589,6 +1685,11 @@ def run_forever():
                 RECONNECT_SECONDS
             )
 
+
+        # ====================================================
+        # REST / NETWORK RECOVERY
+        # ====================================================
+
         except requests.RequestException as exc:
 
             log(
@@ -1601,6 +1702,11 @@ def run_forever():
             time.sleep(
                 RECONNECT_SECONDS
             )
+
+
+        # ====================================================
+        # GENERAL RECOVERY
+        # ====================================================
 
         except Exception as exc:
 
@@ -1631,13 +1737,17 @@ def run_forever():
 # ============================================================
 
 def main():
+
     log("=" * 60)
+
     log(
         "ZETA MOMENTUM 10"
     )
+
     log(
         "DERIV DEMO — 50 TRADE TEST"
     )
+
     log("=" * 60)
 
     validate_environment()
@@ -1645,7 +1755,9 @@ def main():
     load_state()
 
     if completed_trades >= TARGET_TRADES:
+
         finish_test()
+
         return
 
     startup_message()
