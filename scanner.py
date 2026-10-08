@@ -19,7 +19,7 @@ import websocket
 #   10% lower extreme
 #   90% upper extreme
 #   3-point momentum reversal
-#   Minimum turn distance = 0.03
+#   Minimum turn distance = 0.02
 #   CLOSED CANDLES ONLY
 #
 # EXECUTION:
@@ -28,12 +28,6 @@ import websocket
 #   $1 stake
 #   1-minute expiry
 #
-# CONNECTION:
-#   Current Deriv REST Options API
-#   account_id handling
-#   OTP -> ready WebSocket URL
-#   automatic reconnect
-#
 # ============================================================
 
 
@@ -41,25 +35,11 @@ import websocket
 # CONFIGURATION
 # =========================
 
-DERIV_APP_ID = os.getenv(
-    "DERIV_APP_ID",
-    ""
-).strip()
+DERIV_APP_ID = os.getenv("DERIV_APP_ID", "").strip()
+DERIV_PAT = os.getenv("DERIV_PAT", "").strip()
 
-DERIV_PAT = os.getenv(
-    "DERIV_PAT",
-    ""
-).strip()
-
-TELEGRAM_TOKEN = os.getenv(
-    "TELEGRAM_TOKEN",
-    ""
-).strip()
-
-TELEGRAM_CHAT_ID = os.getenv(
-    "TELEGRAM_CHAT_ID",
-    ""
-).strip()
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 
 # =========================
@@ -78,14 +58,16 @@ CANDLE_COUNT = 200
 # =========================
 
 MOMENTUM_PERIOD = 10
-
 MOMENTUM_LOOKBACK = 50
 
 EXTREME_PERCENTILE = 0.10
 
 REQUIRE_TURN = True
 
-MIN_TURN_DISTANCE = 0.03
+# CALIBRATION CHANGE:
+# Original = 0.03
+# Current = 0.02
+MIN_TURN_DISTANCE = 0.02
 
 
 # =========================
@@ -96,6 +78,7 @@ STAKE = 1.0
 
 EXPIRY_MINUTES = 1
 
+# HARD SAFETY LOCK
 DEMO_ONLY = True
 
 
@@ -124,23 +107,18 @@ REST_BASE = "https://api.derivws.com"
 # =========================
 
 last_signal_candle = None
-
 last_extreme_state = None
 
 total_signals = 0
-
 total_trades = 0
 
 wins = 0
-
 losses = 0
-
 draws = 0
 
 session_profit = 0.0
 
 last_heartbeat = 0
-
 last_status_message = 0
 
 
@@ -195,13 +173,11 @@ def send_telegram(message):
 def get_options_account():
 
     if not DERIV_APP_ID:
-
         raise RuntimeError(
             "DERIV_APP_ID is missing."
         )
 
     if not DERIV_PAT:
-
         raise RuntimeError(
             "DERIV_PAT is missing."
         )
@@ -232,9 +208,7 @@ def get_options_account():
 
     data = response.json()
 
-    accounts_data = data.get(
-        "data"
-    )
+    accounts_data = data.get("data")
 
     if not accounts_data:
 
@@ -242,32 +216,11 @@ def get_options_account():
             "Deriv returned no Options accounts."
         )
 
-    # --------------------------------------------------------
-    # IMPORTANT:
-    # Current Deriv API uses "account_id".
-    #
-    # Depending on the response, data can be:
-    #
-    #   {"account_id": "..."}
-    #
-    # OR:
-    #
-    #   [{"account_id": "..."}]
-    # --------------------------------------------------------
+    if isinstance(accounts_data, dict):
 
-    if isinstance(
-        accounts_data,
-        dict
-    ):
+        accounts = [accounts_data]
 
-        accounts = [
-            accounts_data
-        ]
-
-    elif isinstance(
-        accounts_data,
-        list
-    ):
+    elif isinstance(accounts_data, list):
 
         accounts = accounts_data
 
@@ -278,15 +231,12 @@ def get_options_account():
         )
 
     # --------------------------------------------------------
-    # Prefer DEMO account
+    # Prefer active DEMO account
     # --------------------------------------------------------
 
     for account in accounts:
 
-        if not isinstance(
-            account,
-            dict
-        ):
+        if not isinstance(account, dict):
             continue
 
         account_id = str(
@@ -315,24 +265,18 @@ def get_options_account():
 
         if (
             account_type == "demo"
-            and status in {
-                "",
-                "active"
-            }
+            and status in {"", "active"}
         ):
 
             return account
 
     # --------------------------------------------------------
-    # Fallback: any DOT demo account
+    # Fallback: DOT account
     # --------------------------------------------------------
 
     for account in accounts:
 
-        if not isinstance(
-            account,
-            dict
-        ):
+        if not isinstance(account, dict):
             continue
 
         account_id = str(
@@ -342,15 +286,12 @@ def get_options_account():
             )
         )
 
-        if account_id.startswith(
-            "DOT"
-        ):
+        if account_id.startswith("DOT"):
 
             return account
 
     raise RuntimeError(
-        "No suitable DEMO Options account "
-        "was found."
+        "No suitable DEMO Options account was found."
     )
 
 
@@ -395,29 +336,15 @@ def request_demo_ws_url(account_id):
 
     data = response.json()
 
-    result = data.get(
-        "data"
-    )
+    result = data.get("data")
 
-    if not isinstance(
-        result,
-        dict
-    ):
+    if not isinstance(result, dict):
 
         raise RuntimeError(
             "Unexpected OTP response."
         )
 
-    # Current Deriv API returns:
-    #
-    # data.url
-    #
-    # The URL already contains the one-time
-    # authentication information.
-
-    ws_url = result.get(
-        "url"
-    )
+    ws_url = result.get("url")
 
     if not ws_url:
 
@@ -433,14 +360,9 @@ def request_demo_ws_url(account_id):
 # WEBSOCKET RECEIVE
 # ============================================================
 
-def ws_receive(
-    ws,
-    timeout=15
-):
+def ws_receive(ws, timeout=15):
 
-    ws.settimeout(
-        timeout
-    )
+    ws.settimeout(timeout)
 
     raw = ws.recv()
 
@@ -450,24 +372,17 @@ def ws_receive(
             "WebSocket returned no data."
         )
 
-    return json.loads(
-        raw
-    )
+    return json.loads(raw)
 
 
 # ============================================================
 # WEBSOCKET SEND
 # ============================================================
 
-def ws_send(
-    ws,
-    payload
-):
+def ws_send(ws, payload):
 
     ws.send(
-        json.dumps(
-            payload
-        )
+        json.dumps(payload)
     )
 
 
@@ -509,9 +424,7 @@ def ws_request(
 
         if "error" in message:
 
-            error = message[
-                "error"
-            ]
+            error = message["error"]
 
             raise RuntimeError(
                 "Deriv API error: "
@@ -524,17 +437,14 @@ def ws_request(
             return message
 
         if (
-            message.get(
-                "msg_type"
-            )
+            message.get("msg_type")
             == expected_type
         ):
 
             return message
 
     raise TimeoutError(
-        f"Timed out waiting for "
-        f"{expected_type}"
+        f"Timed out waiting for {expected_type}"
     )
 
 
@@ -578,8 +488,7 @@ def get_candles(ws):
     if not candles:
 
         raise RuntimeError(
-            "Deriv returned no "
-            "EUR/USD candles."
+            "Deriv returned no EUR/USD candles."
         )
 
     return candles
@@ -601,9 +510,7 @@ def calculate_momentum(candles):
                 candle["close"]
             )
 
-            closes.append(
-                close
-            )
+            closes.append(close)
 
         except Exception:
 
@@ -643,9 +550,7 @@ def calculate_momentum(candles):
             * 100.0
         )
 
-        momentum.append(
-            value
-        )
+        momentum.append(value)
 
     return momentum
 
@@ -654,46 +559,30 @@ def calculate_momentum(candles):
 # PERCENTILE
 # ============================================================
 
-def percentile(
-    values,
-    percent
-):
+def percentile(values, percent):
 
     if not values:
 
         return None
 
-    ordered = sorted(
-        values
-    )
+    ordered = sorted(values)
 
     if len(ordered) == 1:
 
         return ordered[0]
 
     position = (
-        (
-            len(ordered)
-            - 1
-        )
+        (len(ordered) - 1)
         * percent
     )
 
-    lower = int(
-        position
-    )
+    lower = int(position)
 
-    upper = (
-        lower + 1
-    )
+    upper = lower + 1
 
-    if upper >= len(
-        ordered
-    ):
+    if upper >= len(ordered):
 
-        return ordered[
-            lower
-        ]
+        return ordered[lower]
 
     weight = (
         position
@@ -715,9 +604,7 @@ def percentile(
 # MOMENTUM 10 ANALYSIS
 # ============================================================
 
-def analyze_momentum(
-    candles
-):
+def analyze_momentum(candles):
 
     momentum = calculate_momentum(
         candles
@@ -756,8 +643,7 @@ def analyze_momentum(
 
     high_level = percentile(
         lookback,
-        1.0
-        - EXTREME_PERCENTILE
+        1.0 - EXTREME_PERCENTILE
     )
 
     if (
@@ -777,20 +663,18 @@ def analyze_momentum(
 
     turn_distance = 0.0
 
-    # -------------------------
-    # LOW -> CALL
-    # -------------------------
+    # --------------------------------------------------------
+    # LOW EXTREME -> CALL
+    # --------------------------------------------------------
 
     if current <= low_level:
 
         extreme = "LOW"
 
         turned_up = (
-            previous
-            < previous_two
+            previous < previous_two
             and
-            current
-            > previous
+            current > previous
         )
 
         if turned_up:
@@ -800,6 +684,8 @@ def analyze_momentum(
                 - previous
             )
 
+            # CALIBRATED THRESHOLD:
+            # 0.02 instead of original 0.03
             if (
                 turn_distance
                 >= MIN_TURN_DISTANCE
@@ -807,20 +693,18 @@ def analyze_momentum(
 
                 action = "CALL"
 
-    # -------------------------
-    # HIGH -> PUT
-    # -------------------------
+    # --------------------------------------------------------
+    # HIGH EXTREME -> PUT
+    # --------------------------------------------------------
 
     elif current >= high_level:
 
         extreme = "HIGH"
 
         turned_down = (
-            previous
-            > previous_two
+            previous > previous_two
             and
-            current
-            < previous
+            current < previous
         )
 
         if turned_down:
@@ -830,6 +714,8 @@ def analyze_momentum(
                 - previous
             )
 
+            # CALIBRATED THRESHOLD:
+            # 0.02 instead of original 0.03
             if (
                 turn_distance
                 >= MIN_TURN_DISTANCE
@@ -837,9 +723,9 @@ def analyze_momentum(
 
                 action = "PUT"
 
-    # -------------------------
+    # --------------------------------------------------------
     # REVERSAL STRENGTH
-    # -------------------------
+    # --------------------------------------------------------
 
     reversal_strength = 0.0
 
@@ -892,9 +778,7 @@ def analyze_momentum(
 # SIGNAL GENERATOR
 # ============================================================
 
-def generate_signal(
-    candles
-):
+def generate_signal(candles):
 
     global last_signal_candle
     global last_extreme_state
@@ -906,7 +790,7 @@ def generate_signal(
             "Not enough candles."
         )
 
-    # NEVER analyze the currently forming candle.
+    # Closed candles only.
     closed_candles = candles[:-1]
 
     if len(closed_candles) < (
@@ -942,17 +826,11 @@ def generate_signal(
     )
 
     candle_time = (
-        signal_candle.get(
-            "epoch"
-        )
+        signal_candle.get("epoch")
         or
-        signal_candle.get(
-            "from"
-        )
+        signal_candle.get("from")
         or
-        signal_candle.get(
-            "to"
-        )
+        signal_candle.get("to")
         or
         0
     )
@@ -1006,13 +884,9 @@ def generate_signal(
         )
 
     # Valid signal.
-    last_signal_candle = (
-        candle_time
-    )
+    last_signal_candle = candle_time
 
-    last_extreme_state = (
-        extreme
-    )
+    last_extreme_state = extreme
 
     signal = {
 
@@ -1059,9 +933,7 @@ def generate_signal(
 # SIGNAL ID
 # ============================================================
 
-def create_signal_id(
-    signal
-):
+def create_signal_id(signal):
 
     timestamp = int(
         time.time()
@@ -1201,8 +1073,7 @@ def buy_contract(
     if not contract_id:
 
         raise RuntimeError(
-            "Buy response has no "
-            "contract ID."
+            "Buy response has no contract ID."
         )
 
     return buy_data
@@ -1242,10 +1113,7 @@ def monitor_contract(
         + 180
     )
 
-    while (
-        time.time()
-        < deadline
-    ):
+    while time.time() < deadline:
 
         message = ws_receive(
             ws,
@@ -1254,9 +1122,7 @@ def monitor_contract(
 
         if "error" in message:
 
-            error = message[
-                "error"
-            ]
+            error = message["error"]
 
             raise RuntimeError(
                 "Contract monitor error: "
@@ -1265,11 +1131,8 @@ def monitor_contract(
             )
 
         if (
-            message.get(
-                "msg_type"
-            )
-            !=
-            "proposal_open_contract"
+            message.get("msg_type")
+            != "proposal_open_contract"
         ):
 
             continue
@@ -1308,8 +1171,7 @@ def monitor_contract(
             return contract
 
     raise TimeoutError(
-        "Timed out waiting for "
-        "contract result."
+        "Timed out waiting for contract result."
     )
 
 
@@ -1317,9 +1179,7 @@ def monitor_contract(
 # DETERMINE RESULT
 # ============================================================
 
-def determine_result(
-    contract
-):
+def determine_result(contract):
 
     profit = float(
         contract.get(
@@ -1380,15 +1240,11 @@ def handle_trade_result(
     global draws
     global session_profit
 
-    result, profit = (
-        determine_result(
-            contract
-        )
+    result, profit = determine_result(
+        contract
     )
 
-    session_profit += (
-        profit
-    )
+    session_profit += profit
 
     if result == "WIN":
 
@@ -1408,17 +1264,12 @@ def handle_trade_result(
         + draws
     )
 
-    if closed:
-
-        win_rate = (
-            wins
-            /
-            closed
-        ) * 100.0
-
-    else:
-
-        win_rate = 0.0
+    win_rate = (
+        (wins / closed) * 100.0
+        if closed
+        else
+        0.0
+    )
 
     emoji = (
         "🟢"
@@ -1449,13 +1300,9 @@ def handle_trade_result(
         f"${session_profit:.2f}"
     )
 
-    send_telegram(
-        message
-    )
+    send_telegram(message)
 
-    print(
-        message
-    )
+    print(message)
 
 
 # ============================================================
@@ -1467,9 +1314,7 @@ def send_signal_message(
     signal_id
 ):
 
-    direction = signal[
-        "action"
-    ]
+    direction = signal["action"]
 
     emoji = (
         "🟢"
@@ -1518,22 +1363,16 @@ def send_signal_message(
         f"Automatic trading: ON"
     )
 
-    send_telegram(
-        message
-    )
+    send_telegram(message)
 
-    print(
-        message
-    )
+    print(message)
 
 
 # ============================================================
 # NO TRADE
 # ============================================================
 
-def send_no_trade(
-    reason
-):
+def send_no_trade(reason):
 
     global last_status_message
 
@@ -1541,17 +1380,13 @@ def send_no_trade(
 
     if (
         now
-        -
-        last_status_message
-        <
-        55
+        - last_status_message
+        < 55
     ):
 
         return
 
-    last_status_message = (
-        now
-    )
+    last_status_message = now
 
     message = (
 
@@ -1567,13 +1402,9 @@ def send_no_trade(
         f"No trade placed."
     )
 
-    send_telegram(
-        message
-    )
+    send_telegram(message)
 
-    print(
-        message
-    )
+    print(message)
 
 
 # ============================================================
@@ -1588,17 +1419,13 @@ def send_heartbeat():
 
     if (
         now
-        -
-        last_heartbeat
-        <
-        HEARTBEAT_SECONDS
+        - last_heartbeat
+        < HEARTBEAT_SECONDS
     ):
 
         return
 
-    last_heartbeat = (
-        now
-    )
+    last_heartbeat = now
 
     closed = (
         wins
@@ -1606,17 +1433,12 @@ def send_heartbeat():
         + draws
     )
 
-    if closed:
-
-        win_rate = (
-            wins
-            /
-            closed
-        ) * 100.0
-
-    else:
-
-        win_rate = 0.0
+    win_rate = (
+        (wins / closed) * 100.0
+        if closed
+        else
+        0.0
+    )
 
     message = (
 
@@ -1643,13 +1465,9 @@ def send_heartbeat():
         f"Automatic trading: ON"
     )
 
-    send_telegram(
-        message
-    )
+    send_telegram(message)
 
-    print(
-        message
-    )
+    print(message)
 
 
 # ============================================================
@@ -1679,41 +1497,29 @@ def send_startup():
         f"Automatic reconnect: ON"
     )
 
-    send_telegram(
-        message
-    )
+    send_telegram(message)
 
-    print(
-        message
-    )
+    print(message)
 
 
 # ============================================================
 # TRADING CYCLE
 # ============================================================
 
-def trading_cycle(
-    ws
-):
+def trading_cycle(ws):
 
     global total_signals
     global total_trades
 
-    candles = get_candles(
-        ws
-    )
+    candles = get_candles(ws)
 
-    signal, reason = (
-        generate_signal(
-            candles
-        )
+    signal, reason = generate_signal(
+        candles
     )
 
     if signal is None:
 
-        send_no_trade(
-            reason
-        )
+        send_no_trade(reason)
 
         send_heartbeat()
 
@@ -1721,43 +1527,37 @@ def trading_cycle(
 
     total_signals += 1
 
-    signal_id = (
-        create_signal_id(
-            signal
-        )
+    signal_id = create_signal_id(
+        signal
     )
 
-    direction = signal[
-        "action"
-    ]
+    direction = signal["action"]
 
     send_signal_message(
         signal,
         signal_id
     )
 
-    # -------------------------
+    # --------------------------------------------------------
     # PROPOSAL
-    # -------------------------
+    # --------------------------------------------------------
 
     proposal = get_proposal(
         ws,
         direction
     )
 
-    # -------------------------
+    # --------------------------------------------------------
     # BUY
-    # -------------------------
+    # --------------------------------------------------------
 
     buy_data = buy_contract(
         ws,
         proposal
     )
 
-    contract_id = (
-        buy_data.get(
-            "contract_id"
-        )
+    contract_id = buy_data.get(
+        "contract_id"
     )
 
     if not contract_id:
@@ -1793,28 +1593,22 @@ def trading_cycle(
         f"Monitoring result..."
     )
 
-    send_telegram(
-        message
-    )
+    send_telegram(message)
 
-    print(
-        message
-    )
+    print(message)
 
-    # -------------------------
+    # --------------------------------------------------------
     # MONITOR
-    # -------------------------
+    # --------------------------------------------------------
 
-    contract = (
-        monitor_contract(
-            ws,
-            contract_id
-        )
+    contract = monitor_contract(
+        ws,
+        contract_id
     )
 
-    # -------------------------
+    # --------------------------------------------------------
     # RESULT
-    # -------------------------
+    # --------------------------------------------------------
 
     handle_trade_result(
         signal_id,
@@ -1836,12 +1630,8 @@ def connect_demo():
             "DEMO_ONLY must remain True."
         )
 
-    account = (
-        get_options_account()
-    )
+    account = get_options_account()
 
-    # IMPORTANT:
-    # Current Deriv API uses account_id.
     account_id = str(
         account.get(
             "account_id",
@@ -1870,34 +1660,18 @@ def connect_demo():
             "selected account is not DEMO."
         )
 
-    # --------------------------------------------------------
-    # Get authenticated WebSocket URL.
-    # The URL already contains the one-time OTP.
-    # --------------------------------------------------------
-
-    ws_url = (
-        request_demo_ws_url(
-            account_id
-        )
+    ws_url = request_demo_ws_url(
+        account_id
     )
 
     print(
         "Connecting to Deriv DEMO..."
     )
 
-    # --------------------------------------------------------
-    # Connect directly to the URL returned by Deriv.
-    # --------------------------------------------------------
-
     ws = websocket.create_connection(
         ws_url,
         timeout=30
     )
-
-    # --------------------------------------------------------
-    # The OTP-authenticated URL establishes the session.
-    # No second authorize request is required here.
-    # --------------------------------------------------------
 
     send_telegram(
 
@@ -1948,9 +1722,7 @@ def main():
 
     send_startup()
 
-    reconnect_delay = (
-        RECONNECT_DELAY
-    )
+    reconnect_delay = RECONNECT_DELAY
 
     while True:
 
@@ -1960,33 +1732,22 @@ def main():
 
             ws = connect_demo()
 
-            reconnect_delay = (
-                RECONNECT_DELAY
-            )
+            reconnect_delay = RECONNECT_DELAY
 
-            # Reset candle/extreme state
-            # for a fresh connection.
             last_signal_candle = None
-
             last_extreme_state = None
 
             while True:
 
-                cycle_start = (
-                    time.time()
-                )
+                cycle_start = time.time()
 
                 try:
 
-                    trading_cycle(
-                        ws
-                    )
+                    trading_cycle(ws)
 
                 except (
-                    websocket
-                    .WebSocketConnectionClosedException,
-                    websocket
-                    .WebSocketTimeoutException,
+                    websocket.WebSocketConnectionClosedException,
+                    websocket.WebSocketTimeoutException,
                     ConnectionError,
                     OSError,
                 ) as exc:
@@ -2029,9 +1790,7 @@ def main():
 
         except Exception as exc:
 
-            error_text = repr(
-                exc
-            )
+            error_text = repr(exc)
 
             print(
                 "\n🔴 "
