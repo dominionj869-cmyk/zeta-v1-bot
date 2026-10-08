@@ -10,31 +10,32 @@ import websocket
 # ZETA MOMENTUM 10 — DERIV DEMO EXECUTION TEST
 # ============================================================
 #
-# TEMPORARY TEST MODE
+# PURPOSE:
+#   Prove that the actual Deriv execution path works.
 #
-# This version performs ONE real DEMO trade only.
+# FLOW:
 #
-# Purpose:
-#   Prove that the complete execution path works:
-#
-#   DERIV CONNECTION
+#   DEMO ACCOUNT
 #        ↓
-#   PROPOSAL
+#   WEBSOCKET
 #        ↓
-#   BUY
+#   TEST AVAILABLE DURATIONS
+#        ↓
+#   ACCEPTED PROPOSAL
+#        ↓
+#   ONE $1 DEMO BUY
 #        ↓
 #   CONTRACT ID
 #        ↓
-#   1-MINUTE RESULT
+#   RESULT
+#        ↓
+#   STOP
 #
 # IMPORTANT:
-#   This test DOES NOT use the Momentum strategy to trigger
-#   the trade.
+#   This is NOT the Momentum strategy.
 #
-#   It deliberately places ONE fixed DEMO trade so we can
-#   determine whether Deriv actually accepts the order.
-#
-# After the trade result is received, the program STOPS.
+#   It deliberately performs ONE DEMO trade so we can
+#   verify that Deriv will actually accept a trade.
 #
 # ============================================================
 
@@ -59,22 +60,38 @@ DISPLAY_SYMBOL = "EUR/USD"
 
 
 # ============================================================
-# TEST TRADE
+# HARD SAFETY SETTINGS
 # ============================================================
 
-# HARD SAFETY LOCK
 DEMO_ONLY = True
 
-# IMPORTANT:
-# This MUST remain True for this temporary test.
 EXECUTION_TEST = True
 
-# Exactly ONE trade.
 TEST_DIRECTION = "CALL"
 
 TEST_STAKE = 1.0
 
-TEST_EXPIRY_MINUTES = 1
+
+# ============================================================
+# DURATION DISCOVERY
+# ============================================================
+#
+# These are proposal checks only.
+# They DO NOT place trades.
+#
+# The first duration accepted by Deriv will be used for
+# the ONE actual demo trade.
+#
+# ============================================================
+
+TEST_DURATIONS_MINUTES = [
+    1,
+    2,
+    3,
+    5,
+    10,
+    15,
+]
 
 
 # ============================================================
@@ -91,7 +108,9 @@ REST_BASE = "https://api.derivws.com"
 def send_telegram(message):
 
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+
         print(message)
+
         return
 
     url = (
@@ -109,7 +128,7 @@ def send_telegram(message):
         response = requests.post(
             url,
             json=payload,
-            timeout=15
+            timeout=15,
         )
 
         if response.status_code != 200:
@@ -117,29 +136,31 @@ def send_telegram(message):
             print(
                 "Telegram error:",
                 response.status_code,
-                response.text
+                response.text,
             )
 
     except Exception as exc:
 
         print(
             "Telegram exception:",
-            repr(exc)
+            repr(exc),
         )
 
 
 # ============================================================
-# GET DERIV OPTIONS ACCOUNT
+# GET OPTIONS ACCOUNT
 # ============================================================
 
 def get_options_account():
 
     if not DERIV_APP_ID:
+
         raise RuntimeError(
             "DERIV_APP_ID is missing."
         )
 
     if not DERIV_PAT:
+
         raise RuntimeError(
             "DERIV_PAT is missing."
         )
@@ -150,14 +171,17 @@ def get_options_account():
     )
 
     headers = {
-        "Authorization": f"Bearer {DERIV_PAT}",
-        "Deriv-App-ID": DERIV_APP_ID,
+        "Authorization":
+            f"Bearer {DERIV_PAT}",
+
+        "Deriv-App-ID":
+            DERIV_APP_ID,
     }
 
     response = requests.get(
         url,
         headers=headers,
-        timeout=20
+        timeout=20,
     )
 
     if response.status_code != 200:
@@ -178,11 +202,19 @@ def get_options_account():
             "Deriv returned no Options accounts."
         )
 
-    if isinstance(accounts_data, dict):
+    if isinstance(
+        accounts_data,
+        dict,
+    ):
 
-        accounts = [accounts_data]
+        accounts = [
+            accounts_data
+        ]
 
-    elif isinstance(accounts_data, list):
+    elif isinstance(
+        accounts_data,
+        list,
+    ):
 
         accounts = accounts_data
 
@@ -198,53 +230,66 @@ def get_options_account():
 
     for account in accounts:
 
-        if not isinstance(account, dict):
+        if not isinstance(
+            account,
+            dict,
+        ):
+
             continue
 
         account_id = str(
             account.get(
                 "account_id",
-                ""
+                "",
             )
         )
 
         account_type = str(
             account.get(
                 "account_type",
-                ""
+                "",
             )
         ).lower()
 
         status = str(
             account.get(
                 "status",
-                ""
+                "",
             )
         ).lower()
 
         if not account_id:
+
             continue
 
         if (
             account_type == "demo"
-            and status in {"", "active"}
+            and
+            status in {
+                "",
+                "active",
+            }
         ):
 
             return account
 
     # --------------------------------------------------------
-    # Fallback: DOT account
+    # Fallback DOT account
     # --------------------------------------------------------
 
     for account in accounts:
 
-        if not isinstance(account, dict):
+        if not isinstance(
+            account,
+            dict,
+        ):
+
             continue
 
         account_id = str(
             account.get(
                 "account_id",
-                ""
+                "",
             )
         )
 
@@ -276,16 +321,21 @@ def request_demo_ws_url(account_id):
     )
 
     headers = {
-        "Authorization": f"Bearer {DERIV_PAT}",
-        "Deriv-App-ID": DERIV_APP_ID,
-        "Content-Type": "application/json",
+        "Authorization":
+            f"Bearer {DERIV_PAT}",
+
+        "Deriv-App-ID":
+            DERIV_APP_ID,
+
+        "Content-Type":
+            "application/json",
     }
 
     response = requests.post(
         url,
         headers=headers,
         json={},
-        timeout=20
+        timeout=20,
     )
 
     if response.status_code != 200:
@@ -300,7 +350,10 @@ def request_demo_ws_url(account_id):
 
     result = data.get("data")
 
-    if not isinstance(result, dict):
+    if not isinstance(
+        result,
+        dict,
+    ):
 
         raise RuntimeError(
             "Unexpected OTP response."
@@ -322,7 +375,10 @@ def request_demo_ws_url(account_id):
 # WEBSOCKET RECEIVE
 # ============================================================
 
-def ws_receive(ws, timeout=15):
+def ws_receive(
+    ws,
+    timeout=15,
+):
 
     ws.settimeout(timeout)
 
@@ -341,7 +397,10 @@ def ws_receive(ws, timeout=15):
 # WEBSOCKET SEND
 # ============================================================
 
-def ws_send(ws, payload):
+def ws_send(
+    ws,
+    payload,
+):
 
     ws.send(
         json.dumps(payload)
@@ -356,12 +415,12 @@ def ws_request(
     ws,
     payload,
     expected_type=None,
-    timeout=20
+    timeout=20,
 ):
 
     ws_send(
         ws,
-        payload
+        payload,
     )
 
     deadline = (
@@ -376,12 +435,12 @@ def ws_request(
             int(
                 deadline
                 - time.time()
-            )
+            ),
         )
 
         message = ws_receive(
             ws,
-            timeout=remaining
+            timeout=remaining,
         )
 
         if "error" in message:
@@ -406,22 +465,21 @@ def ws_request(
             return message
 
     raise TimeoutError(
-        f"Timed out waiting for {expected_type}"
+        f"Timed out waiting for "
+        f"{expected_type}"
     )
 
 
 # ============================================================
-# PROPOSAL
+# REQUEST ONE PROPOSAL
 # ============================================================
 
-def get_proposal(
+def request_proposal(
     ws,
-    direction
+    direction,
+    duration_minutes,
+    req_id,
 ):
-
-    print(
-        "\nRequesting DEMO proposal..."
-    )
 
     request = {
 
@@ -441,7 +499,7 @@ def get_proposal(
             "USD",
 
         "duration":
-            TEST_EXPIRY_MINUTES,
+            duration_minutes,
 
         "duration_unit":
             "m",
@@ -453,14 +511,14 @@ def get_proposal(
             1,
 
         "req_id":
-            200,
+            req_id,
     }
 
     response = ws_request(
         ws,
         request,
         expected_type="proposal",
-        timeout=20
+        timeout=15,
     )
 
     proposal = response.get(
@@ -470,7 +528,7 @@ def get_proposal(
     if not proposal:
 
         raise RuntimeError(
-            "Deriv returned no proposal."
+            "No proposal returned."
         )
 
     proposal_id = proposal.get(
@@ -483,49 +541,140 @@ def get_proposal(
             "Proposal has no ID."
         )
 
-    ask_price = proposal.get(
-        "ask_price",
-        TEST_STAKE
-    )
+    return proposal
 
-    payout = proposal.get(
-        "payout"
+
+# ============================================================
+# FIND AVAILABLE DURATION
+# ============================================================
+
+def find_available_duration(ws):
+
+    print(
+        "\n"
+        "================================================"
     )
 
     print(
-        "\n🟢 PROPOSAL RECEIVED"
+        "🔎 CHECKING AVAILABLE DURATIONS"
     )
 
     print(
-        f"Proposal ID: {proposal_id}"
+        "================================================"
     )
-
-    print(
-        f"Ask Price: ${float(ask_price):.2f}"
-    )
-
-    if payout is not None:
-
-        print(
-            f"Payout: ${float(payout):.2f}"
-        )
 
     send_telegram(
 
-        f"🟢 ZETA EXECUTION TEST\n\n"
-
-        f"Proposal received successfully.\n\n"
+        f"🔎 ZETA DURATION CHECK\n\n"
 
         f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Direction: {direction}\n"
-        f"Stake: ${TEST_STAKE:.2f}\n"
-        f"Expiry: {TEST_EXPIRY_MINUTES} minute\n"
-        f"Proposal ID: {proposal_id}\n\n"
+        f"Direction: {TEST_DIRECTION}\n"
+        f"Stake: ${TEST_STAKE:.2f}\n\n"
 
-        f"Next step: BUY"
+        f"Checking which contract duration "
+        f"Deriv currently accepts..."
     )
 
-    return proposal
+    request_id = 500
+
+    rejected = []
+
+    for duration in TEST_DURATIONS_MINUTES:
+
+        print(
+            f"\nChecking {duration} minute..."
+        )
+
+        try:
+
+            proposal = request_proposal(
+                ws,
+                TEST_DIRECTION,
+                duration,
+                request_id,
+            )
+
+            proposal_id = proposal.get(
+                "id"
+            )
+
+            ask_price = proposal.get(
+                "ask_price",
+                TEST_STAKE,
+            )
+
+            print(
+                f"🟢 {duration} minute "
+                f"ACCEPTED"
+            )
+
+            print(
+                f"Proposal ID: {proposal_id}"
+            )
+
+            print(
+                f"Ask Price: "
+                f"${float(ask_price):.2f}"
+            )
+
+            send_telegram(
+
+                f"🟢 DURATION ACCEPTED\n\n"
+
+                f"Asset: {DISPLAY_SYMBOL}\n"
+                f"Direction: {TEST_DIRECTION}\n"
+                f"Duration: {duration} minute\n"
+                f"Stake: ${TEST_STAKE:.2f}\n\n"
+
+                f"Proposal ID: {proposal_id}\n\n"
+
+                f"Next step:\n"
+                f"ONE DEMO BUY"
+            )
+
+            return (
+                duration,
+                proposal,
+            )
+
+        except Exception as exc:
+
+            error_text = str(exc)
+
+            rejected.append(
+                (
+                    duration,
+                    error_text,
+                )
+            )
+
+            print(
+                f"🔴 {duration} minute "
+                f"rejected:"
+            )
+
+            print(
+                error_text
+            )
+
+        request_id += 1
+
+    print(
+        "\nNo tested duration was accepted."
+    )
+
+    details = "\n".join(
+        [
+            f"{duration}m: {error}"
+            for duration, error
+            in rejected
+        ]
+    )
+
+    raise RuntimeError(
+        "No available duration found.\n"
+        + details
+    )
 
 
 # ============================================================
@@ -534,7 +683,7 @@ def get_proposal(
 
 def buy_contract(
     ws,
-    proposal
+    proposal,
 ):
 
     proposal_id = proposal.get(
@@ -547,8 +696,34 @@ def buy_contract(
             "Missing proposal ID."
         )
 
+    ask_price = float(
+        proposal.get(
+            "ask_price",
+            TEST_STAKE,
+        )
+        or
+        TEST_STAKE
+    )
+
     print(
-        "\nAttempting DEMO BUY..."
+        "\n"
+        "================================================"
+    )
+
+    print(
+        "🚀 ATTEMPTING ONE DEMO BUY"
+    )
+
+    print(
+        "================================================"
+    )
+
+    print(
+        f"Proposal ID: {proposal_id}"
+    )
+
+    print(
+        f"Price: ${ask_price:.2f}"
     )
 
     request = {
@@ -557,17 +732,17 @@ def buy_contract(
             proposal_id,
 
         "price":
-            TEST_STAKE,
+            ask_price,
 
         "req_id":
-            300,
+            900,
     }
 
     response = ws_request(
         ws,
         request,
         expected_type="buy",
-        timeout=20
+        timeout=20,
     )
 
     buy_data = response.get(
@@ -592,7 +767,7 @@ def buy_contract(
 
     buy_price = buy_data.get(
         "buy_price",
-        TEST_STAKE
+        ask_price,
     )
 
     payout = buy_data.get(
@@ -600,7 +775,16 @@ def buy_contract(
     )
 
     print(
-        "\n🚀 BUY ACCEPTED"
+        "\n"
+        "================================================"
+    )
+
+    print(
+        "✅ BUY ACCEPTED BY DERIV"
+    )
+
+    print(
+        "================================================"
     )
 
     print(
@@ -623,14 +807,16 @@ def buy_contract(
 
         f"Asset: {DISPLAY_SYMBOL}\n"
         f"Direction: {TEST_DIRECTION}\n"
-        f"Stake: ${TEST_STAKE:.2f}\n"
-        f"Expiry: {TEST_EXPIRY_MINUTES} minute\n\n"
+        f"Duration: "
+        f"CHECKED DURATION\n"
+        f"Stake: ${TEST_STAKE:.2f}\n\n"
 
         f"Contract ID: {contract_id}\n"
-        f"Buy Price: ${float(buy_price):.2f}\n\n"
+        f"Buy Price: "
+        f"${float(buy_price):.2f}\n\n"
 
-        f"✅ Deriv ACCEPTED the trade.\n"
-        f"Monitoring result..."
+        f"✅ DERIV ACCEPTED THE BUY.\n"
+        f"Monitoring contract..."
     )
 
     return buy_data
@@ -642,7 +828,7 @@ def buy_contract(
 
 def monitor_contract(
     ws,
-    contract_id
+    contract_id,
 ):
 
     print(
@@ -661,24 +847,24 @@ def monitor_contract(
             1,
 
         "req_id":
-            400,
+            1000,
     }
 
     ws_send(
         ws,
-        request
+        request,
     )
 
     deadline = (
         time.time()
-        + 180
+        + 300
     )
 
     while time.time() < deadline:
 
         message = ws_receive(
             ws,
-            timeout=30
+            timeout=30,
         )
 
         if "error" in message:
@@ -709,7 +895,7 @@ def monitor_contract(
         status = str(
             contract.get(
                 "status",
-                ""
+                "",
             )
         ).lower()
 
@@ -717,8 +903,14 @@ def monitor_contract(
             "is_sold"
         )
 
+        profit = contract.get(
+            "profit",
+            0,
+        )
+
         print(
-            f"Contract status: {status}"
+            f"Contract status: {status} | "
+            f"Profit: {profit}"
         )
 
         if (
@@ -736,20 +928,23 @@ def monitor_contract(
             return contract
 
     raise TimeoutError(
-        "Timed out waiting for contract result."
+        "Timed out waiting for "
+        "contract result."
     )
 
 
 # ============================================================
-# RESULT
+# DETERMINE RESULT
 # ============================================================
 
-def determine_result(contract):
+def determine_result(
+    contract,
+):
 
     profit = float(
         contract.get(
             "profit",
-            0
+            0,
         )
         or
         0
@@ -758,7 +953,7 @@ def determine_result(contract):
     status = str(
         contract.get(
             "status",
-            ""
+            "",
         )
     ).lower()
 
@@ -770,7 +965,7 @@ def determine_result(contract):
 
         return (
             "WIN",
-            profit
+            profit,
         )
 
     if (
@@ -781,23 +976,24 @@ def determine_result(contract):
 
         return (
             "LOSS",
-            profit
+            profit,
         )
 
     return (
         "DRAW",
-        profit
+        profit,
     )
 
 
 # ============================================================
-# EXECUTION TEST RESULT
+# RESULT MESSAGE
 # ============================================================
 
 def send_test_result(
     direction,
+    duration,
     contract_id,
-    contract
+    contract,
 ):
 
     result, profit = determine_result(
@@ -820,28 +1016,34 @@ def send_test_result(
 
         f"Asset: {DISPLAY_SYMBOL}\n"
         f"Direction: {direction}\n"
-        f"Stake: ${TEST_STAKE:.2f}\n"
-        f"Expiry: {TEST_EXPIRY_MINUTES} minute\n\n"
+        f"Duration: {duration} minute\n"
+        f"Stake: ${TEST_STAKE:.2f}\n\n"
 
         f"Contract ID: {contract_id}\n"
         f"Result: {result}\n"
         f"Profit: ${profit:.2f}\n\n"
 
-        f"✅ The DEMO execution path was tested.\n\n"
+        f"✅ Actual Deriv DEMO execution "
+        f"was confirmed.\n\n"
 
         f"Test complete.\n"
         f"The bot will STOP now.\n\n"
 
-        f"Strategy was NOT used for this test."
+        f"Strategy was NOT used."
     )
 
-    send_telegram(message)
+    send_telegram(
+        message
+    )
 
-    print("\n" + message)
+    print(
+        "\n"
+        + message
+    )
 
 
 # ============================================================
-# CONNECT TO DERIV DEMO
+# CONNECT TO DEMO
 # ============================================================
 
 def connect_demo():
@@ -858,7 +1060,7 @@ def connect_demo():
     account_id = str(
         account.get(
             "account_id",
-            ""
+            "",
         )
     )
 
@@ -872,15 +1074,15 @@ def connect_demo():
     account_type = str(
         account.get(
             "account_type",
-            ""
+            "",
         )
     ).lower()
 
     if account_type != "demo":
 
         raise RuntimeError(
-            "SAFETY STOP: "
-            "Selected account is not DEMO."
+            "SAFETY STOP: selected account "
+            "is not DEMO."
         )
 
     print(
@@ -898,7 +1100,7 @@ def connect_demo():
 
     ws = websocket.create_connection(
         ws_url,
-        timeout=30
+        timeout=30,
     )
 
     print(
@@ -908,175 +1110,23 @@ def connect_demo():
 
     send_telegram(
 
-        f"🟢 ZETA DEMO CONNECTION ACTIVE\n\n"
+        f"🟢 ZETA DERIV CONNECTION ACTIVE\n\n"
 
         f"Account: {account_id}\n"
         f"Asset: {DISPLAY_SYMBOL}\n"
         f"Mode: DEMO\n\n"
 
         f"🧪 EXECUTION TEST MODE\n"
-        f"One ${TEST_STAKE:.2f} "
-        f"{TEST_DIRECTION} trade only.\n\n"
+        f"One ${TEST_STAKE:.2f} trade maximum.\n\n"
 
-        f"No strategy signal is being used."
+        f"First available duration will be used."
     )
 
-    return ws, account_id
+    return ws
 
 
 # ============================================================
-# ONE-TRADE EXECUTION TEST
-# ============================================================
-
-def run_execution_test(ws):
-
-    if DEMO_ONLY is not True:
-
-        raise RuntimeError(
-            "Safety stop: DEMO_ONLY is not True."
-        )
-
-    if EXECUTION_TEST is not True:
-
-        raise RuntimeError(
-            "Execution test is disabled."
-        )
-
-    if TEST_STAKE != 1.0:
-
-        raise RuntimeError(
-            "Safety stop: test stake must be $1.00."
-        )
-
-    if TEST_DIRECTION not in {
-        "CALL",
-        "PUT",
-    }:
-
-        raise RuntimeError(
-            "Safety stop: invalid test direction."
-        )
-
-    print(
-        "\n"
-        "================================================"
-    )
-
-    print(
-        "🧪 ZETA EXECUTION TEST"
-    )
-
-    print(
-        "================================================"
-    )
-
-    print(
-        f"Asset: {DISPLAY_SYMBOL}"
-    )
-
-    print(
-        f"Direction: {TEST_DIRECTION}"
-    )
-
-    print(
-        f"Stake: ${TEST_STAKE:.2f}"
-    )
-
-    print(
-        f"Expiry: {TEST_EXPIRY_MINUTES} minute"
-    )
-
-    print(
-        "Mode: DEMO ONLY"
-    )
-
-    print(
-        "Trades allowed: 1"
-    )
-
-    print(
-        "================================================"
-    )
-
-    # --------------------------------------------------------
-    # STEP 1 — PROPOSAL
-    # --------------------------------------------------------
-
-    proposal = get_proposal(
-        ws,
-        TEST_DIRECTION
-    )
-
-    # --------------------------------------------------------
-    # STEP 2 — BUY
-    # --------------------------------------------------------
-
-    buy_data = buy_contract(
-        ws,
-        proposal
-    )
-
-    contract_id = buy_data.get(
-        "contract_id"
-    )
-
-    if not contract_id:
-
-        raise RuntimeError(
-            "Trade was reported without "
-            "a contract ID."
-        )
-
-    # --------------------------------------------------------
-    # STEP 3 — MONITOR
-    # --------------------------------------------------------
-
-    contract = monitor_contract(
-        ws,
-        contract_id
-    )
-
-    # --------------------------------------------------------
-    # STEP 4 — RESULT
-    # --------------------------------------------------------
-
-    send_test_result(
-        TEST_DIRECTION,
-        contract_id,
-        contract
-    )
-
-    return True
-
-
-# ============================================================
-# ERROR REPORT
-# ============================================================
-
-def send_test_error(exc):
-
-    message = (
-
-        f"🔴 ZETA EXECUTION TEST FAILED\n\n"
-
-        f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Mode: DEMO ONLY\n"
-        f"Stake: ${TEST_STAKE:.2f}\n\n"
-
-        f"Error:\n"
-        f"{repr(exc)}\n\n"
-
-        f"❌ No further trade will be attempted.\n"
-        f"Test stopped."
-    )
-
-    send_telegram(message)
-
-    print(message)
-
-
-# ============================================================
-# MAIN
+# MAIN EXECUTION TEST
 # ============================================================
 
 def main():
@@ -1115,17 +1165,108 @@ def main():
                 "EXECUTION_TEST must be True."
             )
 
+        if TEST_STAKE != 1.0:
+
+            raise RuntimeError(
+                "Safety stop: "
+                "test stake must remain $1.00."
+            )
+
+        if TEST_DIRECTION not in {
+            "CALL",
+            "PUT",
+        }:
+
+            raise RuntimeError(
+                "Safety stop: invalid direction."
+            )
+
         # ----------------------------------------------------
         # CONNECT
         # ----------------------------------------------------
 
-        ws, account_id = connect_demo()
+        ws = connect_demo()
 
         # ----------------------------------------------------
-        # RUN EXACTLY ONE TRADE
+        # FIND AVAILABLE DURATION
         # ----------------------------------------------------
 
-        run_execution_test(ws)
+        duration, proposal = (
+            find_available_duration(ws)
+        )
+
+        print(
+            "\n"
+            "================================================"
+        )
+
+        print(
+            "🟢 VALID DURATION FOUND"
+        )
+
+        print(
+            "================================================"
+        )
+
+        print(
+            f"Duration: {duration} minute"
+        )
+
+        print(
+            f"Direction: {TEST_DIRECTION}"
+        )
+
+        print(
+            f"Stake: ${TEST_STAKE:.2f}"
+        )
+
+        print(
+            "Now placing exactly ONE DEMO trade."
+        )
+
+        print(
+            "================================================"
+        )
+
+        # ----------------------------------------------------
+        # ONE BUY ONLY
+        # ----------------------------------------------------
+
+        buy_data = buy_contract(
+            ws,
+            proposal,
+        )
+
+        contract_id = buy_data.get(
+            "contract_id"
+        )
+
+        if not contract_id:
+
+            raise RuntimeError(
+                "Trade was reported without "
+                "a contract ID."
+            )
+
+        # ----------------------------------------------------
+        # MONITOR
+        # ----------------------------------------------------
+
+        contract = monitor_contract(
+            ws,
+            contract_id,
+        )
+
+        # ----------------------------------------------------
+        # RESULT
+        # ----------------------------------------------------
+
+        send_test_result(
+            TEST_DIRECTION,
+            duration,
+            contract_id,
+            contract,
+        )
 
         print(
             "\n"
@@ -1141,15 +1282,15 @@ def main():
         )
 
         print(
-            "One DEMO trade was completed."
-        )
-
-        print(
-            "The bot will now STOP."
+            "One DEMO trade completed."
         )
 
         print(
             "No second trade will be attempted."
+        )
+
+        print(
+            "Bot stopping now."
         )
 
         print(
@@ -1185,7 +1326,20 @@ def main():
             "================================================"
         )
 
-        send_test_error(exc)
+        send_telegram(
+
+            f"🔴 ZETA EXECUTION TEST FAILED\n\n"
+
+            f"Asset: {DISPLAY_SYMBOL}\n"
+            f"Mode: DEMO ONLY\n"
+            f"Stake: ${TEST_STAKE:.2f}\n\n"
+
+            f"Error:\n"
+            f"{repr(exc)}\n\n"
+
+            f"❌ No further trade will be attempted.\n"
+            f"Test stopped."
+        )
 
         sys.exit(1)
 
@@ -1194,11 +1348,9 @@ def main():
         if ws:
 
             try:
-
                 ws.close()
 
             except Exception:
-
                 pass
 
 
