@@ -1,39 +1,47 @@
 import os
 import json
 import time
+import sys
 import requests
 import websocket
 
 
 # ============================================================
-# ZETA MOMENTUM 10 — DERIV DEMO TRADER
+# ZETA MOMENTUM 10 — DERIV DEMO EXECUTION TEST
 # ============================================================
 #
-# MARKET:
-#   EUR/USD ONLY
+# TEMPORARY TEST MODE
 #
-# STRATEGY:
-#   1-minute candles
-#   Momentum 10 percentage calculation
-#   50-value momentum lookback
-#   10% lower extreme
-#   90% upper extreme
-#   3-point momentum reversal
-#   Minimum turn distance = 0.02
-#   CLOSED CANDLES ONLY
+# This version performs ONE real DEMO trade only.
 #
-# EXECUTION:
-#   Deriv Options API
-#   DEMO ONLY
-#   $1 stake
-#   1-minute expiry
+# Purpose:
+#   Prove that the complete execution path works:
+#
+#   DERIV CONNECTION
+#        ↓
+#   PROPOSAL
+#        ↓
+#   BUY
+#        ↓
+#   CONTRACT ID
+#        ↓
+#   1-MINUTE RESULT
+#
+# IMPORTANT:
+#   This test DOES NOT use the Momentum strategy to trigger
+#   the trade.
+#
+#   It deliberately places ONE fixed DEMO trade so we can
+#   determine whether Deriv actually accepts the order.
+#
+# After the trade result is received, the program STOPS.
 #
 # ============================================================
 
 
-# =========================
+# ============================================================
 # CONFIGURATION
-# =========================
+# ============================================================
 
 DERIV_APP_ID = os.getenv("DERIV_APP_ID", "").strip()
 DERIV_PAT = os.getenv("DERIV_PAT", "").strip()
@@ -42,84 +50,38 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 
-# =========================
+# ============================================================
 # MARKET
-# =========================
+# ============================================================
 
 SYMBOL = "frxEURUSD"
 DISPLAY_SYMBOL = "EUR/USD"
 
-TIMEFRAME_SECONDS = 60
-CANDLE_COUNT = 200
 
-
-# =========================
-# MOMENTUM 10
-# =========================
-
-MOMENTUM_PERIOD = 10
-MOMENTUM_LOOKBACK = 50
-
-EXTREME_PERCENTILE = 0.10
-
-REQUIRE_TURN = True
-
-# CALIBRATION CHANGE:
-# Original = 0.03
-# Current = 0.02
-MIN_TURN_DISTANCE = 0.02
-
-
-# =========================
-# TRADING
-# =========================
-
-STAKE = 1.0
-
-EXPIRY_MINUTES = 1
+# ============================================================
+# TEST TRADE
+# ============================================================
 
 # HARD SAFETY LOCK
 DEMO_ONLY = True
 
+# IMPORTANT:
+# This MUST remain True for this temporary test.
+EXECUTION_TEST = True
 
-# =========================
-# TIMING
-# =========================
+# Exactly ONE trade.
+TEST_DIRECTION = "CALL"
 
-POLL_SECONDS = 5
+TEST_STAKE = 1.0
 
-HEARTBEAT_SECONDS = 300
-
-RECONNECT_DELAY = 10
-
-MAX_RECONNECT_DELAY = 60
+TEST_EXPIRY_MINUTES = 1
 
 
-# =========================
+# ============================================================
 # DERIV API
-# =========================
+# ============================================================
 
 REST_BASE = "https://api.derivws.com"
-
-
-# =========================
-# STATE
-# =========================
-
-last_signal_candle = None
-last_extreme_state = None
-
-total_signals = 0
-total_trades = 0
-
-wins = 0
-losses = 0
-draws = 0
-
-session_profit = 0.0
-
-last_heartbeat = 0
-last_status_message = 0
 
 
 # ============================================================
@@ -167,7 +129,7 @@ def send_telegram(message):
 
 
 # ============================================================
-# DERIV REST — GET OPTIONS ACCOUNT
+# GET DERIV OPTIONS ACCOUNT
 # ============================================================
 
 def get_options_account():
@@ -296,7 +258,7 @@ def get_options_account():
 
 
 # ============================================================
-# DERIV REST — REQUEST OTP / WEBSOCKET URL
+# REQUEST DEMO WEBSOCKET URL
 # ============================================================
 
 def request_demo_ws_url(account_id):
@@ -449,504 +411,6 @@ def ws_request(
 
 
 # ============================================================
-# CANDLES
-# ============================================================
-
-def get_candles(ws):
-
-    request = {
-
-        "ticks_history": SYMBOL,
-
-        "style": "candles",
-
-        "granularity":
-            TIMEFRAME_SECONDS,
-
-        "count":
-            CANDLE_COUNT,
-
-        "end":
-            "latest",
-
-        "req_id":
-            100,
-    }
-
-    response = ws_request(
-        ws,
-        request,
-        expected_type="candles",
-        timeout=20
-    )
-
-    candles = response.get(
-        "candles",
-        []
-    )
-
-    if not candles:
-
-        raise RuntimeError(
-            "Deriv returned no EUR/USD candles."
-        )
-
-    return candles
-
-
-# ============================================================
-# MOMENTUM CALCULATION
-# ============================================================
-
-def calculate_momentum(candles):
-
-    closes = []
-
-    for candle in candles:
-
-        try:
-
-            close = float(
-                candle["close"]
-            )
-
-            closes.append(close)
-
-        except Exception:
-
-            continue
-
-    if len(closes) < (
-        MOMENTUM_PERIOD + 3
-    ):
-
-        return []
-
-    momentum = []
-
-    start = MOMENTUM_PERIOD
-
-    for i in range(
-        start,
-        len(closes)
-    ):
-
-        old_price = closes[
-            i - MOMENTUM_PERIOD
-        ]
-
-        if old_price == 0:
-
-            continue
-
-        value = (
-            (
-                (
-                    closes[i]
-                    - old_price
-                )
-                / old_price
-            )
-            * 100.0
-        )
-
-        momentum.append(value)
-
-    return momentum
-
-
-# ============================================================
-# PERCENTILE
-# ============================================================
-
-def percentile(values, percent):
-
-    if not values:
-
-        return None
-
-    ordered = sorted(values)
-
-    if len(ordered) == 1:
-
-        return ordered[0]
-
-    position = (
-        (len(ordered) - 1)
-        * percent
-    )
-
-    lower = int(position)
-
-    upper = lower + 1
-
-    if upper >= len(ordered):
-
-        return ordered[lower]
-
-    weight = (
-        position
-        - lower
-    )
-
-    return (
-        ordered[lower]
-        +
-        (
-            ordered[upper]
-            - ordered[lower]
-        )
-        * weight
-    )
-
-
-# ============================================================
-# MOMENTUM 10 ANALYSIS
-# ============================================================
-
-def analyze_momentum(candles):
-
-    momentum = calculate_momentum(
-        candles
-    )
-
-    if len(momentum) < 4:
-
-        return {
-            "action": None,
-            "reason":
-                "Not enough momentum data."
-        }
-
-    lookback = momentum[
-        -MOMENTUM_LOOKBACK:
-    ]
-
-    if len(lookback) < 4:
-
-        return {
-            "action": None,
-            "reason":
-                "Not enough lookback data."
-        }
-
-    current = lookback[-1]
-
-    previous = lookback[-2]
-
-    previous_two = lookback[-3]
-
-    low_level = percentile(
-        lookback,
-        EXTREME_PERCENTILE
-    )
-
-    high_level = percentile(
-        lookback,
-        1.0 - EXTREME_PERCENTILE
-    )
-
-    if (
-        low_level is None
-        or high_level is None
-    ):
-
-        return {
-            "action": None,
-            "reason":
-                "Unable to calculate extremes."
-        }
-
-    extreme = "NONE"
-
-    action = None
-
-    turn_distance = 0.0
-
-    # --------------------------------------------------------
-    # LOW EXTREME -> CALL
-    # --------------------------------------------------------
-
-    if current <= low_level:
-
-        extreme = "LOW"
-
-        turned_up = (
-            previous < previous_two
-            and
-            current > previous
-        )
-
-        if turned_up:
-
-            turn_distance = abs(
-                current
-                - previous
-            )
-
-            # CALIBRATED THRESHOLD:
-            # 0.02 instead of original 0.03
-            if (
-                turn_distance
-                >= MIN_TURN_DISTANCE
-            ):
-
-                action = "CALL"
-
-    # --------------------------------------------------------
-    # HIGH EXTREME -> PUT
-    # --------------------------------------------------------
-
-    elif current >= high_level:
-
-        extreme = "HIGH"
-
-        turned_down = (
-            previous > previous_two
-            and
-            current < previous
-        )
-
-        if turned_down:
-
-            turn_distance = abs(
-                current
-                - previous
-            )
-
-            # CALIBRATED THRESHOLD:
-            # 0.02 instead of original 0.03
-            if (
-                turn_distance
-                >= MIN_TURN_DISTANCE
-            ):
-
-                action = "PUT"
-
-    # --------------------------------------------------------
-    # REVERSAL STRENGTH
-    # --------------------------------------------------------
-
-    reversal_strength = 0.0
-
-    if previous != 0:
-
-        reversal_strength = (
-            abs(
-                current
-                - previous
-            )
-            /
-            max(
-                abs(previous),
-                0.000001
-            )
-        ) * 100.0
-
-    return {
-
-        "action":
-            action,
-
-        "current":
-            current,
-
-        "previous":
-            previous,
-
-        "previous_two":
-            previous_two,
-
-        "low_level":
-            low_level,
-
-        "high_level":
-            high_level,
-
-        "extreme":
-            extreme,
-
-        "turn_distance":
-            turn_distance,
-
-        "reversal_strength":
-            reversal_strength,
-    }
-
-
-# ============================================================
-# SIGNAL GENERATOR
-# ============================================================
-
-def generate_signal(candles):
-
-    global last_signal_candle
-    global last_extreme_state
-
-    if len(candles) < 20:
-
-        return (
-            None,
-            "Not enough candles."
-        )
-
-    # Closed candles only.
-    closed_candles = candles[:-1]
-
-    if len(closed_candles) < (
-        MOMENTUM_PERIOD + 5
-    ):
-
-        return (
-            None,
-            "Not enough closed candles."
-        )
-
-    analysis = analyze_momentum(
-        closed_candles
-    )
-
-    if not analysis:
-
-        return (
-            None,
-            "No analysis."
-        )
-
-    action = analysis.get(
-        "action"
-    )
-
-    extreme = analysis.get(
-        "extreme"
-    )
-
-    signal_candle = (
-        closed_candles[-1]
-    )
-
-    candle_time = (
-        signal_candle.get("epoch")
-        or
-        signal_candle.get("from")
-        or
-        signal_candle.get("to")
-        or
-        0
-    )
-
-    # Same candle protection.
-    if (
-        action
-        and
-        last_signal_candle
-        == candle_time
-    ):
-
-        return (
-            None,
-            "Signal already processed "
-            "for this candle."
-        )
-
-    # Same extreme protection.
-    if (
-        action
-        and
-        extreme
-        and
-        last_extreme_state
-        == extreme
-    ):
-
-        return (
-            None,
-            f"Already signaled in "
-            f"{extreme} extreme state."
-        )
-
-    # No trade.
-    if action is None:
-
-        reason = (
-            "No Momentum 10 reversal | "
-            f"M={analysis.get('current', 0):.6f} | "
-            f"Prev={analysis.get('previous', 0):.6f} | "
-            f"Prev2={analysis.get('previous_two', 0):.6f} | "
-            f"Low={analysis.get('low_level', 0):.6f} | "
-            f"High={analysis.get('high_level', 0):.6f} | "
-            f"Extreme={extreme}"
-        )
-
-        return (
-            None,
-            reason
-        )
-
-    # Valid signal.
-    last_signal_candle = candle_time
-
-    last_extreme_state = extreme
-
-    signal = {
-
-        "action":
-            action,
-
-        "candle_time":
-            candle_time,
-
-        "current":
-            analysis["current"],
-
-        "previous":
-            analysis["previous"],
-
-        "previous_two":
-            analysis["previous_two"],
-
-        "low_level":
-            analysis["low_level"],
-
-        "high_level":
-            analysis["high_level"],
-
-        "extreme":
-            analysis["extreme"],
-
-        "turn_distance":
-            analysis["turn_distance"],
-
-        "reversal_strength":
-            analysis[
-                "reversal_strength"
-            ],
-    }
-
-    return (
-        signal,
-        None
-    )
-
-
-# ============================================================
-# SIGNAL ID
-# ============================================================
-
-def create_signal_id(signal):
-
-    timestamp = int(
-        time.time()
-    )
-
-    return (
-        f"EURUSD-"
-        f"{signal['action']}-"
-        f"{timestamp}"
-    )
-
-
-# ============================================================
 # PROPOSAL
 # ============================================================
 
@@ -955,13 +419,17 @@ def get_proposal(
     direction
 ):
 
+    print(
+        "\nRequesting DEMO proposal..."
+    )
+
     request = {
 
         "proposal":
             1,
 
         "amount":
-            STAKE,
+            TEST_STAKE,
 
         "basis":
             "stake",
@@ -973,7 +441,7 @@ def get_proposal(
             "USD",
 
         "duration":
-            EXPIRY_MINUTES,
+            TEST_EXPIRY_MINUTES,
 
         "duration_unit":
             "m",
@@ -1002,7 +470,7 @@ def get_proposal(
     if not proposal:
 
         raise RuntimeError(
-            "No proposal returned."
+            "Deriv returned no proposal."
         )
 
     proposal_id = proposal.get(
@@ -1015,11 +483,53 @@ def get_proposal(
             "Proposal has no ID."
         )
 
+    ask_price = proposal.get(
+        "ask_price",
+        TEST_STAKE
+    )
+
+    payout = proposal.get(
+        "payout"
+    )
+
+    print(
+        "\n🟢 PROPOSAL RECEIVED"
+    )
+
+    print(
+        f"Proposal ID: {proposal_id}"
+    )
+
+    print(
+        f"Ask Price: ${float(ask_price):.2f}"
+    )
+
+    if payout is not None:
+
+        print(
+            f"Payout: ${float(payout):.2f}"
+        )
+
+    send_telegram(
+
+        f"🟢 ZETA EXECUTION TEST\n\n"
+
+        f"Proposal received successfully.\n\n"
+
+        f"Asset: {DISPLAY_SYMBOL}\n"
+        f"Direction: {direction}\n"
+        f"Stake: ${TEST_STAKE:.2f}\n"
+        f"Expiry: {TEST_EXPIRY_MINUTES} minute\n"
+        f"Proposal ID: {proposal_id}\n\n"
+
+        f"Next step: BUY"
+    )
+
     return proposal
 
 
 # ============================================================
-# BUY
+# BUY CONTRACT
 # ============================================================
 
 def buy_contract(
@@ -1037,13 +547,17 @@ def buy_contract(
             "Missing proposal ID."
         )
 
+    print(
+        "\nAttempting DEMO BUY..."
+    )
+
     request = {
 
         "buy":
             proposal_id,
 
         "price":
-            STAKE,
+            TEST_STAKE,
 
         "req_id":
             300,
@@ -1076,6 +590,49 @@ def buy_contract(
             "Buy response has no contract ID."
         )
 
+    buy_price = buy_data.get(
+        "buy_price",
+        TEST_STAKE
+    )
+
+    payout = buy_data.get(
+        "payout"
+    )
+
+    print(
+        "\n🚀 BUY ACCEPTED"
+    )
+
+    print(
+        f"Contract ID: {contract_id}"
+    )
+
+    print(
+        f"Buy Price: ${float(buy_price):.2f}"
+    )
+
+    if payout is not None:
+
+        print(
+            f"Payout: ${float(payout):.2f}"
+        )
+
+    send_telegram(
+
+        f"🚀 ZETA DEMO TRADE PLACED\n\n"
+
+        f"Asset: {DISPLAY_SYMBOL}\n"
+        f"Direction: {TEST_DIRECTION}\n"
+        f"Stake: ${TEST_STAKE:.2f}\n"
+        f"Expiry: {TEST_EXPIRY_MINUTES} minute\n\n"
+
+        f"Contract ID: {contract_id}\n"
+        f"Buy Price: ${float(buy_price):.2f}\n\n"
+
+        f"✅ Deriv ACCEPTED the trade.\n"
+        f"Monitoring result..."
+    )
+
     return buy_data
 
 
@@ -1087,6 +644,10 @@ def monitor_contract(
     ws,
     contract_id
 ):
+
+    print(
+        "\nMonitoring contract..."
+    )
 
     request = {
 
@@ -1145,16 +706,20 @@ def monitor_contract(
 
             continue
 
-        is_sold = contract.get(
-            "is_sold"
-        )
-
         status = str(
             contract.get(
                 "status",
                 ""
             )
         ).lower()
+
+        is_sold = contract.get(
+            "is_sold"
+        )
+
+        print(
+            f"Contract status: {status}"
+        )
 
         if (
             is_sold
@@ -1176,7 +741,7 @@ def monitor_contract(
 
 
 # ============================================================
-# DETERMINE RESULT
+# RESULT
 # ============================================================
 
 def determine_result(contract):
@@ -1226,49 +791,17 @@ def determine_result(contract):
 
 
 # ============================================================
-# TRADE RESULT
+# EXECUTION TEST RESULT
 # ============================================================
 
-def handle_trade_result(
-    signal_id,
+def send_test_result(
     direction,
+    contract_id,
     contract
 ):
 
-    global wins
-    global losses
-    global draws
-    global session_profit
-
     result, profit = determine_result(
         contract
-    )
-
-    session_profit += profit
-
-    if result == "WIN":
-
-        wins += 1
-
-    elif result == "LOSS":
-
-        losses += 1
-
-    else:
-
-        draws += 1
-
-    closed = (
-        wins
-        + losses
-        + draws
-    )
-
-    win_rate = (
-        (wins / closed) * 100.0
-        if closed
-        else
-        0.0
     )
 
     emoji = (
@@ -1283,338 +816,28 @@ def handle_trade_result(
 
     message = (
 
-        f"{emoji} "
-        f"ZETA MOMENTUM 10 RESULT\n\n"
+        f"{emoji} ZETA EXECUTION TEST RESULT\n\n"
 
         f"Asset: {DISPLAY_SYMBOL}\n"
         f"Direction: {direction}\n"
-        f"Signal ID: {signal_id}\n"
+        f"Stake: ${TEST_STAKE:.2f}\n"
+        f"Expiry: {TEST_EXPIRY_MINUTES} minute\n\n"
+
+        f"Contract ID: {contract_id}\n"
         f"Result: {result}\n"
         f"Profit: ${profit:.2f}\n\n"
 
-        f"Wins: {wins}\n"
-        f"Losses: {losses}\n"
-        f"Draws: {draws}\n"
-        f"Win Rate: {win_rate:.2f}%\n"
-        f"Session P/L: "
-        f"${session_profit:.2f}"
+        f"✅ The DEMO execution path was tested.\n\n"
+
+        f"Test complete.\n"
+        f"The bot will STOP now.\n\n"
+
+        f"Strategy was NOT used for this test."
     )
 
     send_telegram(message)
 
-    print(message)
-
-
-# ============================================================
-# SIGNAL MESSAGE
-# ============================================================
-
-def send_signal_message(
-    signal,
-    signal_id
-):
-
-    direction = signal["action"]
-
-    emoji = (
-        "🟢"
-        if direction == "CALL"
-        else
-        "🔴"
-    )
-
-    message = (
-
-        f"{emoji} "
-        f"ZETA MOMENTUM 10 SIGNAL\n\n"
-
-        f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Signal: {direction}\n"
-        f"Expiry: "
-        f"{EXPIRY_MINUTES} minute\n"
-        f"Stake: ${STAKE:.2f}\n"
-        f"Mode: DEMO\n"
-        f"Signal ID: {signal_id}\n\n"
-
-        f"Momentum: "
-        f"{signal['current']:.6f}\n"
-
-        f"Previous: "
-        f"{signal['previous']:.6f}\n"
-
-        f"Previous-2: "
-        f"{signal['previous_two']:.6f}\n\n"
-
-        f"Extreme: "
-        f"{signal['extreme']}\n"
-
-        f"Low Level: "
-        f"{signal['low_level']:.6f}\n"
-
-        f"High Level: "
-        f"{signal['high_level']:.6f}\n"
-
-        f"Turn Distance: "
-        f"{signal['turn_distance']:.6f}\n"
-
-        f"Reversal Strength: "
-        f"{signal['reversal_strength']:.2f}%\n\n"
-
-        f"Automatic trading: ON"
-    )
-
-    send_telegram(message)
-
-    print(message)
-
-
-# ============================================================
-# NO TRADE
-# ============================================================
-
-def send_no_trade(reason):
-
-    global last_status_message
-
-    now = time.time()
-
-    if (
-        now
-        - last_status_message
-        < 55
-    ):
-
-        return
-
-    last_status_message = now
-
-    message = (
-
-        f"🟡 ZETA MOMENTUM 10\n\n"
-
-        f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Signal: NO TRADE\n"
-
-        f"Reason: {reason}\n\n"
-
-        f"Connection: ACTIVE\n"
-        f"Automatic trading: ON\n"
-        f"No trade placed."
-    )
-
-    send_telegram(message)
-
-    print(message)
-
-
-# ============================================================
-# HEARTBEAT
-# ============================================================
-
-def send_heartbeat():
-
-    global last_heartbeat
-
-    now = time.time()
-
-    if (
-        now
-        - last_heartbeat
-        < HEARTBEAT_SECONDS
-    ):
-
-        return
-
-    last_heartbeat = now
-
-    closed = (
-        wins
-        + losses
-        + draws
-    )
-
-    win_rate = (
-        (wins / closed) * 100.0
-        if closed
-        else
-        0.0
-    )
-
-    message = (
-
-        f"💓 ZETA MOMENTUM 10 HEARTBEAT\n\n"
-
-        f"Status: RUNNING\n"
-        f"Connection: ACTIVE\n"
-        f"Asset: {DISPLAY_SYMBOL} ONLY\n"
-        f"Strategy: Momentum 10 Reversal\n"
-        f"Expiry: "
-        f"{EXPIRY_MINUTES} minute\n"
-        f"Stake: ${STAKE:.2f}\n"
-        f"Mode: DEMO\n\n"
-
-        f"Signals: {total_signals}\n"
-        f"Trades: {total_trades}\n"
-        f"Wins: {wins}\n"
-        f"Losses: {losses}\n"
-        f"Draws: {draws}\n"
-        f"Win Rate: {win_rate:.2f}%\n"
-        f"Session P/L: "
-        f"${session_profit:.2f}\n\n"
-
-        f"Automatic trading: ON"
-    )
-
-    send_telegram(message)
-
-    print(message)
-
-
-# ============================================================
-# STARTUP
-# ============================================================
-
-def send_startup():
-
-    message = (
-
-        f"🟢 ZETA MOMENTUM 10 STARTED\n\n"
-
-        f"Asset: {DISPLAY_SYMBOL} ONLY\n"
-        f"Chart: 1-minute\n"
-        f"Momentum: 10\n"
-        f"Lookback: 50\n"
-        f"Extreme: 10% / 90%\n"
-        f"Min Turn: "
-        f"{MIN_TURN_DISTANCE}\n"
-        f"Expiry: "
-        f"{EXPIRY_MINUTES} minute\n"
-        f"Stake: ${STAKE:.2f}\n"
-        f"Account: DEMO\n\n"
-
-        f"Automatic trading: ON\n"
-        f"Deriv Options API\n"
-        f"Automatic reconnect: ON"
-    )
-
-    send_telegram(message)
-
-    print(message)
-
-
-# ============================================================
-# TRADING CYCLE
-# ============================================================
-
-def trading_cycle(ws):
-
-    global total_signals
-    global total_trades
-
-    candles = get_candles(ws)
-
-    signal, reason = generate_signal(
-        candles
-    )
-
-    if signal is None:
-
-        send_no_trade(reason)
-
-        send_heartbeat()
-
-        return
-
-    total_signals += 1
-
-    signal_id = create_signal_id(
-        signal
-    )
-
-    direction = signal["action"]
-
-    send_signal_message(
-        signal,
-        signal_id
-    )
-
-    # --------------------------------------------------------
-    # PROPOSAL
-    # --------------------------------------------------------
-
-    proposal = get_proposal(
-        ws,
-        direction
-    )
-
-    # --------------------------------------------------------
-    # BUY
-    # --------------------------------------------------------
-
-    buy_data = buy_contract(
-        ws,
-        proposal
-    )
-
-    contract_id = buy_data.get(
-        "contract_id"
-    )
-
-    if not contract_id:
-
-        raise RuntimeError(
-            "Trade has no contract ID."
-        )
-
-    total_trades += 1
-
-    buy_price = buy_data.get(
-        "buy_price",
-        STAKE
-    )
-
-    message = (
-
-        f"🚀 ZETA TRADE PLACED\n\n"
-
-        f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Direction: {direction}\n"
-        f"Stake: ${STAKE:.2f}\n"
-        f"Expiry: "
-        f"{EXPIRY_MINUTES} minute\n"
-
-        f"Signal ID: {signal_id}\n"
-        f"Contract ID: {contract_id}\n"
-        f"Buy Price: "
-        f"${float(buy_price):.2f}\n"
-
-        f"Mode: DEMO\n\n"
-
-        f"Monitoring result..."
-    )
-
-    send_telegram(message)
-
-    print(message)
-
-    # --------------------------------------------------------
-    # MONITOR
-    # --------------------------------------------------------
-
-    contract = monitor_contract(
-        ws,
-        contract_id
-    )
-
-    # --------------------------------------------------------
-    # RESULT
-    # --------------------------------------------------------
-
-    handle_trade_result(
-        signal_id,
-        direction,
-        contract
-    )
+    print("\n" + message)
 
 
 # ============================================================
@@ -1656,9 +879,14 @@ def connect_demo():
     if account_type != "demo":
 
         raise RuntimeError(
-            "Safety check stopped the bot: "
-            "selected account is not DEMO."
+            "SAFETY STOP: "
+            "Selected account is not DEMO."
         )
+
+    print(
+        f"DEMO account confirmed: "
+        f"{account_id}"
+    )
 
     ws_url = request_demo_ws_url(
         account_id
@@ -1673,22 +901,178 @@ def connect_demo():
         timeout=30
     )
 
+    print(
+        f"🟢 Connected to DEMO "
+        f"account {account_id}"
+    )
+
     send_telegram(
 
-        f"🟢 ZETA DERIV CONNECTED\n\n"
+        f"🟢 ZETA DEMO CONNECTION ACTIVE\n\n"
 
         f"Account: {account_id}\n"
         f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Mode: DEMO\n"
-        f"Automatic trading: ON"
+        f"Mode: DEMO\n\n"
+
+        f"🧪 EXECUTION TEST MODE\n"
+        f"One ${TEST_STAKE:.2f} "
+        f"{TEST_DIRECTION} trade only.\n\n"
+
+        f"No strategy signal is being used."
+    )
+
+    return ws, account_id
+
+
+# ============================================================
+# ONE-TRADE EXECUTION TEST
+# ============================================================
+
+def run_execution_test(ws):
+
+    if DEMO_ONLY is not True:
+
+        raise RuntimeError(
+            "Safety stop: DEMO_ONLY is not True."
+        )
+
+    if EXECUTION_TEST is not True:
+
+        raise RuntimeError(
+            "Execution test is disabled."
+        )
+
+    if TEST_STAKE != 1.0:
+
+        raise RuntimeError(
+            "Safety stop: test stake must be $1.00."
+        )
+
+    if TEST_DIRECTION not in {
+        "CALL",
+        "PUT",
+    }:
+
+        raise RuntimeError(
+            "Safety stop: invalid test direction."
+        )
+
+    print(
+        "\n"
+        "================================================"
     )
 
     print(
-        f"🟢 Connected to "
-        f"DEMO account {account_id}"
+        "🧪 ZETA EXECUTION TEST"
     )
 
-    return ws
+    print(
+        "================================================"
+    )
+
+    print(
+        f"Asset: {DISPLAY_SYMBOL}"
+    )
+
+    print(
+        f"Direction: {TEST_DIRECTION}"
+    )
+
+    print(
+        f"Stake: ${TEST_STAKE:.2f}"
+    )
+
+    print(
+        f"Expiry: {TEST_EXPIRY_MINUTES} minute"
+    )
+
+    print(
+        "Mode: DEMO ONLY"
+    )
+
+    print(
+        "Trades allowed: 1"
+    )
+
+    print(
+        "================================================"
+    )
+
+    # --------------------------------------------------------
+    # STEP 1 — PROPOSAL
+    # --------------------------------------------------------
+
+    proposal = get_proposal(
+        ws,
+        TEST_DIRECTION
+    )
+
+    # --------------------------------------------------------
+    # STEP 2 — BUY
+    # --------------------------------------------------------
+
+    buy_data = buy_contract(
+        ws,
+        proposal
+    )
+
+    contract_id = buy_data.get(
+        "contract_id"
+    )
+
+    if not contract_id:
+
+        raise RuntimeError(
+            "Trade was reported without "
+            "a contract ID."
+        )
+
+    # --------------------------------------------------------
+    # STEP 3 — MONITOR
+    # --------------------------------------------------------
+
+    contract = monitor_contract(
+        ws,
+        contract_id
+    )
+
+    # --------------------------------------------------------
+    # STEP 4 — RESULT
+    # --------------------------------------------------------
+
+    send_test_result(
+        TEST_DIRECTION,
+        contract_id,
+        contract
+    )
+
+    return True
+
+
+# ============================================================
+# ERROR REPORT
+# ============================================================
+
+def send_test_error(exc):
+
+    message = (
+
+        f"🔴 ZETA EXECUTION TEST FAILED\n\n"
+
+        f"Asset: {DISPLAY_SYMBOL}\n"
+        f"Mode: DEMO ONLY\n"
+        f"Stake: ${TEST_STAKE:.2f}\n\n"
+
+        f"Error:\n"
+        f"{repr(exc)}\n\n"
+
+        f"❌ No further trade will be attempted.\n"
+        f"Test stopped."
+    )
+
+    send_telegram(message)
+
+    print(message)
 
 
 # ============================================================
@@ -1697,139 +1081,125 @@ def connect_demo():
 
 def main():
 
-    global last_signal_candle
-    global last_extreme_state
+    ws = None
 
-    if not DERIV_APP_ID:
+    try:
 
-        raise RuntimeError(
-            "DERIV_APP_ID GitHub secret "
-            "is missing."
+        # ----------------------------------------------------
+        # HARD SAFETY CHECKS
+        # ----------------------------------------------------
+
+        if not DERIV_APP_ID:
+
+            raise RuntimeError(
+                "DERIV_APP_ID GitHub secret "
+                "is missing."
+            )
+
+        if not DERIV_PAT:
+
+            raise RuntimeError(
+                "DERIV_PAT GitHub secret "
+                "is missing."
+            )
+
+        if DEMO_ONLY is not True:
+
+            raise RuntimeError(
+                "DEMO_ONLY must be True."
+            )
+
+        if EXECUTION_TEST is not True:
+
+            raise RuntimeError(
+                "EXECUTION_TEST must be True."
+            )
+
+        # ----------------------------------------------------
+        # CONNECT
+        # ----------------------------------------------------
+
+        ws, account_id = connect_demo()
+
+        # ----------------------------------------------------
+        # RUN EXACTLY ONE TRADE
+        # ----------------------------------------------------
+
+        run_execution_test(ws)
+
+        print(
+            "\n"
+            "================================================"
         )
 
-    if not DERIV_PAT:
-
-        raise RuntimeError(
-            "DERIV_PAT GitHub secret "
-            "is missing."
+        print(
+            "✅ EXECUTION TEST COMPLETE"
         )
 
-    if DEMO_ONLY is not True:
-
-        raise RuntimeError(
-            "DEMO_ONLY must be True."
+        print(
+            "================================================"
         )
 
-    send_startup()
+        print(
+            "One DEMO trade was completed."
+        )
 
-    reconnect_delay = RECONNECT_DELAY
+        print(
+            "The bot will now STOP."
+        )
 
-    while True:
+        print(
+            "No second trade will be attempted."
+        )
 
-        ws = None
+        print(
+            "================================================"
+        )
 
-        try:
+    except KeyboardInterrupt:
 
-            ws = connect_demo()
+        print(
+            "\nTest stopped manually."
+        )
 
-            reconnect_delay = RECONNECT_DELAY
+    except Exception as exc:
 
-            last_signal_candle = None
-            last_extreme_state = None
+        print(
+            "\n"
+            "================================================"
+        )
 
-            while True:
+        print(
+            "🔴 EXECUTION TEST FAILED"
+        )
 
-                cycle_start = time.time()
+        print(
+            "================================================"
+        )
 
-                try:
+        print(
+            repr(exc)
+        )
 
-                    trading_cycle(ws)
+        print(
+            "================================================"
+        )
 
-                except (
-                    websocket.WebSocketConnectionClosedException,
-                    websocket.WebSocketTimeoutException,
-                    ConnectionError,
-                    OSError,
-                ) as exc:
+        send_test_error(exc)
 
-                    raise ConnectionError(
-                        "WebSocket connection lost: "
-                        f"{repr(exc)}"
-                    )
+        sys.exit(1)
 
-                elapsed = (
-                    time.time()
-                    - cycle_start
-                )
+    finally:
 
-                sleep_for = max(
-                    1,
-                    POLL_SECONDS
-                    - elapsed
-                )
+        if ws:
 
-                time.sleep(
-                    sleep_for
-                )
+            try:
 
-        except KeyboardInterrupt:
+                ws.close()
 
-            print(
-                "ZETA Momentum 10 stopped."
-            )
+            except Exception:
 
-            if ws:
-
-                try:
-                    ws.close()
-
-                except Exception:
-                    pass
-
-            return
-
-        except Exception as exc:
-
-            error_text = repr(exc)
-
-            print(
-                "\n🔴 "
-                "ZETA MOMENTUM 10 ERROR"
-            )
-
-            print(
-                error_text
-            )
-
-            send_telegram(
-
-                f"🟠 ZETA MOMENTUM 10 "
-                f"DISCONNECTED\n\n"
-
-                f"Reason:\n"
-                f"{error_text}\n\n"
-
-                f"Automatic reconnect: ON\n"
-                f"Retrying in "
-                f"{reconnect_delay} seconds..."
-            )
-
-            if ws:
-
-                try:
-                    ws.close()
-
-                except Exception:
-                    pass
-
-            time.sleep(
-                reconnect_delay
-            )
-
-            reconnect_delay = min(
-                reconnect_delay * 2,
-                MAX_RECONNECT_DELAY
-            )
+                pass
 
 
 # ============================================================
