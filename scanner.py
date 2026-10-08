@@ -7,35 +7,39 @@ import websocket
 
 
 # ============================================================
-# ZETA MOMENTUM 10 — DERIV DEMO EXECUTION TEST
+# ZETA MOMENTUM 10 — DERIV DURATION DISCOVERY
 # ============================================================
 #
 # PURPOSE:
-#   Prove that the actual Deriv execution path works.
+#   Find the shortest EUR/USD contract duration that Deriv
+#   currently accepts.
+#
+# IMPORTANT:
+#   THIS VERSION PLACES ZERO TRADES.
 #
 # FLOW:
 #
 #   DEMO ACCOUNT
 #        ↓
-#   WEBSOCKET
+#   AUTHENTICATED WEBSOCKET
 #        ↓
-#   TEST AVAILABLE DURATIONS
+#   TEST 1m
 #        ↓
-#   ACCEPTED PROPOSAL
+#   TEST 2m
 #        ↓
-#   ONE $1 DEMO BUY
+#   TEST 3m
 #        ↓
-#   CONTRACT ID
+#   TEST 5m
 #        ↓
-#   RESULT
+#   TEST 10m
+#        ↓
+#   TEST 15m
+#        ↓
+#   REPORT ALL RESULTS
 #        ↓
 #   STOP
 #
-# IMPORTANT:
-#   This is NOT the Momentum strategy.
-#
-#   It deliberately performs ONE DEMO trade so we can
-#   verify that Deriv will actually accept a trade.
+# NO BUY REQUEST IS SENT.
 #
 # ============================================================
 
@@ -65,22 +69,22 @@ DISPLAY_SYMBOL = "EUR/USD"
 
 DEMO_ONLY = True
 
-EXECUTION_TEST = True
+DURATION_TEST_ONLY = True
+
+STAKE_FOR_PROPOSAL = 1.0
 
 TEST_DIRECTION = "CALL"
 
-TEST_STAKE = 1.0
-
 
 # ============================================================
-# DURATION DISCOVERY
+# DURATIONS TO TEST
 # ============================================================
 #
-# These are proposal checks only.
-# They DO NOT place trades.
+# Tested from shortest to longest.
 #
-# The first duration accepted by Deriv will be used for
-# the ONE actual demo trade.
+# IMPORTANT:
+#   These are PROPOSAL CHECKS ONLY.
+#   No trade is placed for any duration.
 #
 # ============================================================
 
@@ -110,7 +114,6 @@ def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
 
         print(message)
-
         return
 
     url = (
@@ -487,7 +490,7 @@ def request_proposal(
             1,
 
         "amount":
-            TEST_STAKE,
+            STAKE_FOR_PROPOSAL,
 
         "basis":
             "stake",
@@ -506,9 +509,6 @@ def request_proposal(
 
         "underlying_symbol":
             SYMBOL,
-
-        "subscribe":
-            1,
 
         "req_id":
             req_id,
@@ -545,10 +545,10 @@ def request_proposal(
 
 
 # ============================================================
-# FIND AVAILABLE DURATION
+# TEST ALL DURATIONS
 # ============================================================
 
-def find_available_duration(ws):
+def test_all_durations(ws):
 
     print(
         "\n"
@@ -556,7 +556,23 @@ def find_available_duration(ws):
     )
 
     print(
-        "🔎 CHECKING AVAILABLE DURATIONS"
+        "🔎 TESTING EUR/USD CONTRACT DURATIONS"
+    )
+
+    print(
+        "================================================"
+    )
+
+    print(
+        "No trades will be placed."
+    )
+
+    print(
+        "Testing:"
+    )
+
+    print(
+        "1m → 2m → 3m → 5m → 10m → 15m"
     )
 
     print(
@@ -565,24 +581,28 @@ def find_available_duration(ws):
 
     send_telegram(
 
-        f"🔎 ZETA DURATION CHECK\n\n"
+        f"🔎 ZETA DURATION DISCOVERY\n\n"
 
         f"Asset: {DISPLAY_SYMBOL}\n"
         f"Direction: {TEST_DIRECTION}\n"
-        f"Stake: ${TEST_STAKE:.2f}\n\n"
+        f"Proposal stake: ${STAKE_FOR_PROPOSAL:.2f}\n\n"
 
-        f"Checking which contract duration "
-        f"Deriv currently accepts..."
+        f"Testing:\n"
+        f"1m → 2m → 3m → 5m → 10m → 15m\n\n"
+
+        f"🚫 NO TRADE WILL BE PLACED.\n"
+        f"Finding the shortest accepted expiry..."
     )
 
-    request_id = 500
+    results = []
 
-    rejected = []
+    request_id = 500
 
     for duration in TEST_DURATIONS_MINUTES:
 
         print(
-            f"\nChecking {duration} minute..."
+            "\n"
+            f"Checking {duration} minute..."
         )
 
         try:
@@ -599,13 +619,31 @@ def find_available_duration(ws):
             )
 
             ask_price = proposal.get(
-                "ask_price",
-                TEST_STAKE,
+                "ask_price"
             )
 
+            if ask_price is not None:
+
+                ask_price_text = (
+                    f"${float(ask_price):.2f}"
+                )
+
+            else:
+
+                ask_price_text = "N/A"
+
+            result = {
+                "duration": duration,
+                "accepted": True,
+                "proposal_id": proposal_id,
+                "ask_price": ask_price,
+                "error": None,
+            }
+
+            results.append(result)
+
             print(
-                f"🟢 {duration} minute "
-                f"ACCEPTED"
+                f"🟢 {duration}m ACCEPTED"
             )
 
             print(
@@ -613,44 +651,25 @@ def find_available_duration(ws):
             )
 
             print(
-                f"Ask Price: "
-                f"${float(ask_price):.2f}"
-            )
-
-            send_telegram(
-
-                f"🟢 DURATION ACCEPTED\n\n"
-
-                f"Asset: {DISPLAY_SYMBOL}\n"
-                f"Direction: {TEST_DIRECTION}\n"
-                f"Duration: {duration} minute\n"
-                f"Stake: ${TEST_STAKE:.2f}\n\n"
-
-                f"Proposal ID: {proposal_id}\n\n"
-
-                f"Next step:\n"
-                f"ONE DEMO BUY"
-            )
-
-            return (
-                duration,
-                proposal,
+                f"Ask Price: {ask_price_text}"
             )
 
         except Exception as exc:
 
             error_text = str(exc)
 
-            rejected.append(
-                (
-                    duration,
-                    error_text,
-                )
-            )
+            result = {
+                "duration": duration,
+                "accepted": False,
+                "proposal_id": None,
+                "ask_price": None,
+                "error": error_text,
+            }
+
+            results.append(result)
 
             print(
-                f"🔴 {duration} minute "
-                f"rejected:"
+                f"🔴 {duration}m REJECTED"
             )
 
             print(
@@ -659,51 +678,140 @@ def find_available_duration(ws):
 
         request_id += 1
 
-    print(
-        "\nNo tested duration was accepted."
-    )
+        # Small pause between requests so the
+        # broker is not hit with rapid requests.
+        time.sleep(1)
 
-    details = "\n".join(
-        [
-            f"{duration}m: {error}"
-            for duration, error
-            in rejected
-        ]
-    )
-
-    raise RuntimeError(
-        "No available duration found.\n"
-        + details
-    )
+    return results
 
 
 # ============================================================
-# BUY CONTRACT
+# SEND FINAL DURATION REPORT
 # ============================================================
 
-def buy_contract(
-    ws,
-    proposal,
-):
+def send_duration_report(results):
 
-    proposal_id = proposal.get(
-        "id"
-    )
+    accepted = [
+        item
+        for item in results
+        if item["accepted"]
+    ]
 
-    if not proposal_id:
+    rejected = [
+        item
+        for item in results
+        if not item["accepted"]
+    ]
 
-        raise RuntimeError(
-            "Missing proposal ID."
+    if accepted:
+
+        shortest = min(
+            item["duration"]
+            for item in accepted
         )
 
-    ask_price = float(
-        proposal.get(
-            "ask_price",
-            TEST_STAKE,
-        )
-        or
-        TEST_STAKE
+    else:
+
+        shortest = None
+
+    # --------------------------------------------------------
+    # Build Telegram report
+    # --------------------------------------------------------
+
+    lines = []
+
+    lines.append(
+        "📊 ZETA DURATION TEST RESULT"
     )
+
+    lines.append("")
+    lines.append(
+        f"Asset: {DISPLAY_SYMBOL}"
+    )
+    lines.append(
+        "Chart strategy target: 1-minute candles"
+    )
+    lines.append("")
+    lines.append(
+        "Contract duration results:"
+    )
+
+    for item in results:
+
+        duration = item["duration"]
+
+        if item["accepted"]:
+
+            lines.append(
+                f"🟢 {duration}m — ACCEPTED"
+            )
+
+        else:
+
+            error = item["error"]
+
+            # Keep Telegram readable.
+            if len(error) > 180:
+
+                error = (
+                    error[:177]
+                    + "..."
+                )
+
+            lines.append(
+                f"🔴 {duration}m — REJECTED"
+            )
+
+            lines.append(
+                f"   {error}"
+            )
+
+    lines.append("")
+
+    if shortest is not None:
+
+        lines.append(
+            f"🏆 SHORTEST ACCEPTED: "
+            f"{shortest} minute"
+        )
+
+        lines.append("")
+
+        lines.append(
+            "Recommended configuration:"
+        )
+
+        lines.append(
+            "1-minute candles"
+        )
+
+        lines.append(
+            f"{shortest}-minute contract expiry"
+        )
+
+        lines.append(
+            "Momentum 10 strategy"
+        )
+
+    else:
+
+        lines.append(
+            "❌ NONE OF THE TESTED "
+            "DURATIONS WERE ACCEPTED."
+        )
+
+    lines.append("")
+    lines.append(
+        "🚫 NO TRADE WAS PLACED."
+    )
+
+    lines.append(
+        "Duration discovery complete."
+    )
+
+    message = "\n".join(lines)
+
+    send_telegram(message)
 
     print(
         "\n"
@@ -711,335 +819,14 @@ def buy_contract(
     )
 
     print(
-        "🚀 ATTEMPTING ONE DEMO BUY"
-    )
-
-    print(
-        "================================================"
-    )
-
-    print(
-        f"Proposal ID: {proposal_id}"
-    )
-
-    print(
-        f"Price: ${ask_price:.2f}"
-    )
-
-    request = {
-
-        "buy":
-            proposal_id,
-
-        "price":
-            ask_price,
-
-        "req_id":
-            900,
-    }
-
-    response = ws_request(
-        ws,
-        request,
-        expected_type="buy",
-        timeout=20,
-    )
-
-    buy_data = response.get(
-        "buy"
-    )
-
-    if not buy_data:
-
-        raise RuntimeError(
-            "Deriv returned no buy data."
-        )
-
-    contract_id = buy_data.get(
-        "contract_id"
-    )
-
-    if not contract_id:
-
-        raise RuntimeError(
-            "Buy response has no contract ID."
-        )
-
-    buy_price = buy_data.get(
-        "buy_price",
-        ask_price,
-    )
-
-    payout = buy_data.get(
-        "payout"
-    )
-
-    print(
-        "\n"
-        "================================================"
-    )
-
-    print(
-        "✅ BUY ACCEPTED BY DERIV"
-    )
-
-    print(
-        "================================================"
-    )
-
-    print(
-        f"Contract ID: {contract_id}"
-    )
-
-    print(
-        f"Buy Price: ${float(buy_price):.2f}"
-    )
-
-    if payout is not None:
-
-        print(
-            f"Payout: ${float(payout):.2f}"
-        )
-
-    send_telegram(
-
-        f"🚀 ZETA DEMO TRADE PLACED\n\n"
-
-        f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Direction: {TEST_DIRECTION}\n"
-        f"Duration: "
-        f"CHECKED DURATION\n"
-        f"Stake: ${TEST_STAKE:.2f}\n\n"
-
-        f"Contract ID: {contract_id}\n"
-        f"Buy Price: "
-        f"${float(buy_price):.2f}\n\n"
-
-        f"✅ DERIV ACCEPTED THE BUY.\n"
-        f"Monitoring contract..."
-    )
-
-    return buy_data
-
-
-# ============================================================
-# MONITOR CONTRACT
-# ============================================================
-
-def monitor_contract(
-    ws,
-    contract_id,
-):
-
-    print(
-        "\nMonitoring contract..."
-    )
-
-    request = {
-
-        "proposal_open_contract":
-            1,
-
-        "contract_id":
-            int(contract_id),
-
-        "subscribe":
-            1,
-
-        "req_id":
-            1000,
-    }
-
-    ws_send(
-        ws,
-        request,
-    )
-
-    deadline = (
-        time.time()
-        + 300
-    )
-
-    while time.time() < deadline:
-
-        message = ws_receive(
-            ws,
-            timeout=30,
-        )
-
-        if "error" in message:
-
-            error = message["error"]
-
-            raise RuntimeError(
-                "Contract monitor error: "
-                f"{error.get('code')} - "
-                f"{error.get('message')}"
-            )
-
-        if (
-            message.get("msg_type")
-            != "proposal_open_contract"
-        ):
-
-            continue
-
-        contract = message.get(
-            "proposal_open_contract"
-        )
-
-        if not contract:
-
-            continue
-
-        status = str(
-            contract.get(
-                "status",
-                "",
-            )
-        ).lower()
-
-        is_sold = contract.get(
-            "is_sold"
-        )
-
-        profit = contract.get(
-            "profit",
-            0,
-        )
-
-        print(
-            f"Contract status: {status} | "
-            f"Profit: {profit}"
-        )
-
-        if (
-            is_sold
-            or
-            status in {
-                "won",
-                "lost",
-                "sold",
-                "expired",
-                "cancelled",
-            }
-        ):
-
-            return contract
-
-    raise TimeoutError(
-        "Timed out waiting for "
-        "contract result."
-    )
-
-
-# ============================================================
-# DETERMINE RESULT
-# ============================================================
-
-def determine_result(
-    contract,
-):
-
-    profit = float(
-        contract.get(
-            "profit",
-            0,
-        )
-        or
-        0
-    )
-
-    status = str(
-        contract.get(
-            "status",
-            "",
-        )
-    ).lower()
-
-    if (
-        status == "won"
-        or
-        profit > 0
-    ):
-
-        return (
-            "WIN",
-            profit,
-        )
-
-    if (
-        status == "lost"
-        or
-        profit < 0
-    ):
-
-        return (
-            "LOSS",
-            profit,
-        )
-
-    return (
-        "DRAW",
-        profit,
-    )
-
-
-# ============================================================
-# RESULT MESSAGE
-# ============================================================
-
-def send_test_result(
-    direction,
-    duration,
-    contract_id,
-    contract,
-):
-
-    result, profit = determine_result(
-        contract
-    )
-
-    emoji = (
-        "🟢"
-        if result == "WIN"
-        else
-        "🔴"
-        if result == "LOSS"
-        else
-        "🟡"
-    )
-
-    message = (
-
-        f"{emoji} ZETA EXECUTION TEST RESULT\n\n"
-
-        f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Direction: {direction}\n"
-        f"Duration: {duration} minute\n"
-        f"Stake: ${TEST_STAKE:.2f}\n\n"
-
-        f"Contract ID: {contract_id}\n"
-        f"Result: {result}\n"
-        f"Profit: ${profit:.2f}\n\n"
-
-        f"✅ Actual Deriv DEMO execution "
-        f"was confirmed.\n\n"
-
-        f"Test complete.\n"
-        f"The bot will STOP now.\n\n"
-
-        f"Strategy was NOT used."
-    )
-
-    send_telegram(
         message
     )
 
     print(
-        "\n"
-        + message
+        "================================================"
     )
+
+    return shortest
 
 
 # ============================================================
@@ -1116,17 +903,17 @@ def connect_demo():
         f"Asset: {DISPLAY_SYMBOL}\n"
         f"Mode: DEMO\n\n"
 
-        f"🧪 EXECUTION TEST MODE\n"
-        f"One ${TEST_STAKE:.2f} trade maximum.\n\n"
+        f"🔎 DURATION DISCOVERY MODE\n"
+        f"Testing contract durations only.\n\n"
 
-        f"First available duration will be used."
+        f"🚫 NO TRADE WILL BE PLACED."
     )
 
     return ws
 
 
 # ============================================================
-# MAIN EXECUTION TEST
+# MAIN
 # ============================================================
 
 def main():
@@ -1159,17 +946,17 @@ def main():
                 "DEMO_ONLY must be True."
             )
 
-        if EXECUTION_TEST is not True:
+        if DURATION_TEST_ONLY is not True:
 
             raise RuntimeError(
-                "EXECUTION_TEST must be True."
+                "DURATION_TEST_ONLY must be True."
             )
 
-        if TEST_STAKE != 1.0:
+        if STAKE_FOR_PROPOSAL != 1.0:
 
             raise RuntimeError(
-                "Safety stop: "
-                "test stake must remain $1.00."
+                "Safety stop: proposal stake "
+                "must remain $1.00."
             )
 
         if TEST_DIRECTION not in {
@@ -1188,12 +975,24 @@ def main():
         ws = connect_demo()
 
         # ----------------------------------------------------
-        # FIND AVAILABLE DURATION
+        # TEST ALL DURATIONS
         # ----------------------------------------------------
 
-        duration, proposal = (
-            find_available_duration(ws)
+        results = test_all_durations(
+            ws
         )
+
+        # ----------------------------------------------------
+        # FINAL REPORT
+        # ----------------------------------------------------
+
+        shortest = send_duration_report(
+            results
+        )
+
+        # ----------------------------------------------------
+        # STOP
+        # ----------------------------------------------------
 
         print(
             "\n"
@@ -1201,96 +1000,36 @@ def main():
         )
 
         print(
-            "🟢 VALID DURATION FOUND"
+            "✅ DURATION DISCOVERY COMPLETE"
         )
 
         print(
             "================================================"
         )
 
-        print(
-            f"Duration: {duration} minute"
-        )
+        if shortest is not None:
 
-        print(
-            f"Direction: {TEST_DIRECTION}"
-        )
-
-        print(
-            f"Stake: ${TEST_STAKE:.2f}"
-        )
-
-        print(
-            "Now placing exactly ONE DEMO trade."
-        )
-
-        print(
-            "================================================"
-        )
-
-        # ----------------------------------------------------
-        # ONE BUY ONLY
-        # ----------------------------------------------------
-
-        buy_data = buy_contract(
-            ws,
-            proposal,
-        )
-
-        contract_id = buy_data.get(
-            "contract_id"
-        )
-
-        if not contract_id:
-
-            raise RuntimeError(
-                "Trade was reported without "
-                "a contract ID."
+            print(
+                f"Shortest accepted duration: "
+                f"{shortest} minute"
             )
 
-        # ----------------------------------------------------
-        # MONITOR
-        # ----------------------------------------------------
+        else:
 
-        contract = monitor_contract(
-            ws,
-            contract_id,
-        )
+            print(
+                "No tested duration was accepted."
+            )
 
-        # ----------------------------------------------------
-        # RESULT
-        # ----------------------------------------------------
-
-        send_test_result(
-            TEST_DIRECTION,
-            duration,
-            contract_id,
-            contract,
+        print(
+            ""
         )
 
         print(
-            "\n"
-            "================================================"
+            "🚫 ZERO TRADES WERE PLACED."
         )
 
         print(
-            "✅ EXECUTION TEST COMPLETE"
-        )
-
-        print(
-            "================================================"
-        )
-
-        print(
-            "One DEMO trade completed."
-        )
-
-        print(
-            "No second trade will be attempted."
-        )
-
-        print(
-            "Bot stopping now."
+            "The bot is stopping now."
         )
 
         print(
@@ -1311,7 +1050,7 @@ def main():
         )
 
         print(
-            "🔴 EXECUTION TEST FAILED"
+            "🔴 DURATION TEST FAILED"
         )
 
         print(
@@ -1328,16 +1067,15 @@ def main():
 
         send_telegram(
 
-            f"🔴 ZETA EXECUTION TEST FAILED\n\n"
+            f"🔴 ZETA DURATION TEST FAILED\n\n"
 
             f"Asset: {DISPLAY_SYMBOL}\n"
-            f"Mode: DEMO ONLY\n"
-            f"Stake: ${TEST_STAKE:.2f}\n\n"
+            f"Mode: DEMO ONLY\n\n"
 
             f"Error:\n"
             f"{repr(exc)}\n\n"
 
-            f"❌ No further trade will be attempted.\n"
+            f"🚫 No trade was placed.\n"
             f"Test stopped."
         )
 
@@ -1348,9 +1086,11 @@ def main():
         if ws:
 
             try:
+
                 ws.close()
 
             except Exception:
+
                 pass
 
 
