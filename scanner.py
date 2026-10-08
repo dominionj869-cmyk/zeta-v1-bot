@@ -32,10 +32,9 @@ TIMEFRAME_SECONDS = 60
 
 MOMENTUM_PERIOD = 10
 MOMENTUM_LOOKBACK = 50
-EXTREME_PERCENTILE = 0.10
 
-REQUIRE_TURN = True
-MIN_TURN_DISTANCE = 0.02
+# Bottom 10% / Top 10%
+EXTREME_PERCENTILE = 0.10
 
 EXPIRY_MINUTES = 15
 STAKE = 1.0
@@ -71,8 +70,11 @@ ws = None
 account_id = None
 
 last_signal_candle = None
-last_extreme_state = None
 last_processed_candle = None
+
+# Tracks whether Momentum is currently in an extreme.
+# It resets when Momentum returns to the middle.
+extreme_state = None
 
 completed_trades = 0
 wins = 0
@@ -106,6 +108,7 @@ def log(message):
 # ============================================================
 
 def telegram(message):
+
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
 
@@ -121,13 +124,18 @@ def telegram(message):
     }
 
     try:
+
         requests.post(
             url,
             json=payload,
             timeout=15,
         )
+
     except Exception as exc:
-        log(f"Telegram error: {exc}")
+
+        log(
+            f"Telegram error: {exc}"
+        )
 
 
 # ============================================================
@@ -135,6 +143,7 @@ def telegram(message):
 # ============================================================
 
 def load_state():
+
     global completed_trades
     global wins
     global losses
@@ -144,27 +153,41 @@ def load_state():
         return
 
     try:
+
         with open(
             STATE_FILE,
             "r",
             encoding="utf-8"
         ) as f:
+
             data = json.load(f)
 
         completed_trades = int(
-            data.get("completed_trades", 0)
+            data.get(
+                "completed_trades",
+                0
+            )
         )
 
         wins = int(
-            data.get("wins", 0)
+            data.get(
+                "wins",
+                0
+            )
         )
 
         losses = int(
-            data.get("losses", 0)
+            data.get(
+                "losses",
+                0
+            )
         )
 
         total_profit = float(
-            data.get("total_profit", 0.0)
+            data.get(
+                "total_profit",
+                0.0
+            )
         )
 
         log(
@@ -176,15 +199,22 @@ def load_state():
         )
 
     except Exception as exc:
-        log(f"Could not load state: {exc}")
+
+        log(
+            f"Could not load state: {exc}"
+        )
 
 
 def save_state():
+
     data = {
         "completed_trades": completed_trades,
         "wins": wins,
         "losses": losses,
-        "total_profit": round(total_profit, 2),
+        "total_profit": round(
+            total_profit,
+            2
+        ),
         "target_trades": TARGET_TRADES,
         "symbol": SYMBOL,
         "momentum_period": MOMENTUM_PERIOD,
@@ -192,11 +222,13 @@ def save_state():
     }
 
     try:
+
         with open(
             STATE_FILE,
             "w",
             encoding="utf-8"
         ) as f:
+
             json.dump(
                 data,
                 f,
@@ -204,7 +236,10 @@ def save_state():
             )
 
     except Exception as exc:
-        log(f"Could not save state: {exc}")
+
+        log(
+            f"Could not save state: {exc}"
+        )
 
 
 # ============================================================
@@ -212,6 +247,7 @@ def save_state():
 # ============================================================
 
 def next_req_id():
+
     global request_counter
 
     request_counter += 1
@@ -224,47 +260,58 @@ def next_req_id():
 # ============================================================
 
 def validate_environment():
+
     if not APP_ID:
+
         raise RuntimeError(
             "DERIV_APP_ID secret is missing."
         )
 
     if not PAT:
+
         raise RuntimeError(
             "DERIV_PAT secret is missing."
         )
 
     if not TELEGRAM_TOKEN:
+
         raise RuntimeError(
             "TELEGRAM_TOKEN secret is missing."
         )
 
     if not TELEGRAM_CHAT_ID:
+
         raise RuntimeError(
             "TELEGRAM_CHAT_ID secret is missing."
         )
 
     if DEMO_ONLY is not True:
+
         raise RuntimeError(
             "SAFETY STOP: DEMO_ONLY must be True."
         )
 
     if AUTO_TRADE is not True:
+
         raise RuntimeError(
-            "AUTO_TRADE must be enabled for the demo test."
+            "AUTO_TRADE must be enabled for "
+            "the demo test."
         )
 
     if EXPIRY_MINUTES != 15:
+
         raise RuntimeError(
             "This test requires 15-minute expiry."
         )
 
     if MOMENTUM_PERIOD != 10:
+
         raise RuntimeError(
             "This test requires Momentum 10."
         )
 
     if STAKE != 1.0:
+
         raise RuntimeError(
             "This test requires a $1 stake."
         )
@@ -275,6 +322,7 @@ def validate_environment():
 # ============================================================
 
 def rest_headers():
+
     return {
         "Authorization": f"Bearer {PAT}",
         "Deriv-App-ID": APP_ID,
@@ -287,6 +335,7 @@ def rest_headers():
 # ============================================================
 
 def get_demo_account():
+
     url = (
         f"{API_BASE}/trading/v1/options/accounts"
     )
@@ -298,6 +347,7 @@ def get_demo_account():
     )
 
     if response.status_code != 200:
+
         raise RuntimeError(
             f"Account request failed: "
             f"HTTP {response.status_code} "
@@ -311,13 +361,18 @@ def get_demo_account():
     accounts = []
 
     if isinstance(data, list):
+
         accounts = data
 
     elif isinstance(data, dict):
+
         accounts = [data]
 
     for account in accounts:
-        aid = account.get("account_id")
+
+        aid = account.get(
+            "account_id"
+        )
 
         account_type = str(
             account.get(
@@ -336,12 +391,17 @@ def get_demo_account():
         if (
             aid
             and account_type == "demo"
-            and status in ("active", "")
+            and status in (
+                "active",
+                ""
+            )
         ):
+
             return account
 
     raise RuntimeError(
-        "No active Deriv demo Options account found."
+        "No active Deriv demo Options "
+        "account found."
     )
 
 
@@ -350,9 +410,13 @@ def get_demo_account():
 # ============================================================
 
 def get_ws_url(account):
-    aid = account.get("account_id")
+
+    aid = account.get(
+        "account_id"
+    )
 
     if not aid:
+
         raise RuntimeError(
             "Demo account has no account_id."
         )
@@ -369,6 +433,7 @@ def get_ws_url(account):
     )
 
     if response.status_code != 200:
+
         raise RuntimeError(
             f"OTP request failed: "
             f"HTTP {response.status_code} "
@@ -377,19 +442,27 @@ def get_ws_url(account):
 
     body = response.json()
 
-    data = body.get("data", {})
+    data = body.get(
+        "data",
+        {}
+    )
 
-    ws_url = data.get("url")
+    ws_url = data.get(
+        "url"
+    )
 
     if not ws_url:
+
         raise RuntimeError(
-            "Deriv OTP response contained no WebSocket URL."
+            "Deriv OTP response contained "
+            "no WebSocket URL."
         )
 
     if "/options/ws/demo" not in ws_url:
+
         raise RuntimeError(
-            "SAFETY STOP: "
-            "WebSocket URL is not the demo endpoint."
+            "SAFETY STOP: WebSocket URL "
+            "is not the demo endpoint."
         )
 
     return ws_url
@@ -400,14 +473,19 @@ def get_ws_url(account):
 # ============================================================
 
 def connect():
+
     global ws
     global account_id
 
     account = get_demo_account()
 
-    account_id = account.get("account_id")
+    account_id = account.get(
+        "account_id"
+    )
 
-    balance = account.get("balance")
+    balance = account.get(
+        "balance"
+    )
 
     currency = account.get(
         "currency",
@@ -419,7 +497,9 @@ def connect():
         f"Balance: {balance} {currency}"
     )
 
-    ws_url = get_ws_url(account)
+    ws_url = get_ws_url(
+        account
+    )
 
     log(
         "Connecting to authenticated "
@@ -432,7 +512,9 @@ def connect():
         enable_multithread=True,
     )
 
-    ws.settimeout(WS_TIMEOUT)
+    ws.settimeout(
+        WS_TIMEOUT
+    )
 
     log(
         "🟢 DEMO WebSocket connected."
@@ -442,11 +524,14 @@ def connect():
 
 
 def close_ws():
+
     global ws
 
     try:
+
         if ws:
             ws.close()
+
     except Exception:
         pass
 
@@ -458,7 +543,9 @@ def close_ws():
 # ============================================================
 
 def ws_send(payload):
+
     if ws is None:
+
         raise RuntimeError(
             "WebSocket is not connected."
         )
@@ -477,18 +564,27 @@ def ws_request(
     expected_types=None,
     timeout=20
 ):
+
     if expected_types is None:
+
         expected_types = set()
 
     req_id = next_req_id()
 
-    request = dict(payload)
+    request = dict(
+        payload
+    )
 
     request["req_id"] = req_id
 
-    ws_send(request)
+    ws_send(
+        request
+    )
 
-    deadline = time.time() + timeout
+    deadline = (
+        time.time()
+        + timeout
+    )
 
     while time.time() < deadline:
 
@@ -497,14 +593,18 @@ def ws_request(
             deadline - time.time()
         )
 
-        ws.settimeout(remaining)
+        ws.settimeout(
+            remaining
+        )
 
         raw = ws.recv()
 
         if not raw:
             continue
 
-        data = json.loads(raw)
+        data = json.loads(
+            raw
+        )
 
         if data.get("error"):
 
@@ -524,14 +624,21 @@ def ws_request(
                 f"{code} - {message}"
             )
 
-        if data.get("req_id") == req_id:
+        if data.get(
+            "req_id"
+        ) == req_id:
+
             return data
 
-        if data.get("msg_type") in expected_types:
+        if data.get(
+            "msg_type"
+        ) in expected_types:
+
             return data
 
     raise TimeoutError(
-        f"Timed out waiting for request {req_id}."
+        f"Timed out waiting for "
+        f"request {req_id}."
     )
 
 
@@ -541,10 +648,6 @@ def ws_request(
 
 def get_candles():
 
-    # IMPORTANT:
-    # No "subscribe" field is used here.
-    # We are polling closed candles directly.
-
     response = ws_request(
         {
             "ticks_history": SYMBOL,
@@ -553,7 +656,9 @@ def get_candles():
             "style": "candles",
             "granularity": TIMEFRAME_SECONDS,
         },
-        expected_types={"candles"},
+        expected_types={
+            "candles"
+        },
         timeout=20,
     )
 
@@ -563,6 +668,7 @@ def get_candles():
     )
 
     if not candles:
+
         raise RuntimeError(
             "Deriv returned no candles."
         )
@@ -572,6 +678,7 @@ def get_candles():
     for candle in candles:
 
         try:
+
             clean.append(
                 {
                     "epoch": int(
@@ -596,12 +703,14 @@ def get_candles():
             continue
 
     clean.sort(
-        key=lambda item: item["epoch"]
+        key=lambda item:
+        item["epoch"]
     )
 
     if len(clean) < (
         MOMENTUM_PERIOD + 5
     ):
+
         raise RuntimeError(
             f"Not enough candles: "
             f"{len(clean)}"
@@ -621,12 +730,16 @@ def calculate_momentum(candles):
     for candle in candles:
 
         try:
+
             close = float(
                 candle["close"]
             )
 
             if close > 0:
-                closes.append(close)
+
+                closes.append(
+                    close
+                )
 
         except Exception:
             continue
@@ -634,6 +747,7 @@ def calculate_momentum(candles):
     if len(closes) < (
         MOMENTUM_PERIOD + 3
     ):
+
         return []
 
     momentum = []
@@ -658,7 +772,9 @@ def calculate_momentum(candles):
             / old_price
         ) * 100.0
 
-        momentum.append(value)
+        momentum.append(
+            value
+        )
 
     return momentum
 
@@ -667,14 +783,20 @@ def calculate_momentum(candles):
 # PERCENTILE
 # ============================================================
 
-def percentile(values, percent):
+def percentile(
+    values,
+    percent
+):
 
     if not values:
         return None
 
-    ordered = sorted(values)
+    ordered = sorted(
+        values
+    )
 
     if len(ordered) == 1:
+
         return ordered[0]
 
     position = (
@@ -682,15 +804,23 @@ def percentile(values, percent):
         * percent
     )
 
-    lower = int(position)
+    lower = int(
+        position
+    )
 
     upper = lower + 1
 
-    if upper >= len(ordered):
-        return ordered[lower]
+    if upper >= len(
+        ordered
+    ):
+
+        return ordered[
+            lower
+        ]
 
     weight = (
-        position - lower
+        position
+        - lower
     )
 
     return (
@@ -709,11 +839,14 @@ def percentile(values, percent):
 
 def analyze_momentum(candles):
 
+    global extreme_state
+
     momentum = calculate_momentum(
         candles
     )
 
     if len(momentum) < 4:
+
         return None
 
     lookback = momentum[
@@ -721,6 +854,7 @@ def analyze_momentum(candles):
     ]
 
     if len(lookback) < 4:
+
         return None
 
     current = lookback[-1]
@@ -743,21 +877,35 @@ def analyze_momentum(candles):
         low_level is None
         or high_level is None
     ):
-        return None
 
-    extreme = "NONE"
+        return None
 
     action = None
 
+    current_zone = "MIDDLE"
 
     # ========================================================
-    # LOW EXTREME -> TURN UP -> CALL
+    # LOW EXTREME
     # ========================================================
 
     if current <= low_level:
 
-        extreme = "LOW"
+        current_zone = "LOW"
 
+        # Enter the LOW state.
+        if extreme_state != "LOW":
+
+            extreme_state = "LOW"
+
+            log(
+                f"Momentum entered LOW "
+                f"extreme: "
+                f"{current:.5f}% "
+                f"(level "
+                f"{low_level:.5f}%)"
+            )
+
+        # Reversal upward.
         turned_up = (
             previous < previous_two
             and current > previous
@@ -765,25 +913,30 @@ def analyze_momentum(candles):
 
         if turned_up:
 
-            turn_distance = abs(
-                current - previous
-            )
-
-            if (
-                turn_distance
-                >= MIN_TURN_DISTANCE
-            ):
-                action = "CALL"
-
+            action = "CALL"
 
     # ========================================================
-    # HIGH EXTREME -> TURN DOWN -> PUT
+    # HIGH EXTREME
     # ========================================================
 
     elif current >= high_level:
 
-        extreme = "HIGH"
+        current_zone = "HIGH"
 
+        # Enter the HIGH state.
+        if extreme_state != "HIGH":
+
+            extreme_state = "HIGH"
+
+            log(
+                f"Momentum entered HIGH "
+                f"extreme: "
+                f"{current:.5f}% "
+                f"(level "
+                f"{high_level:.5f}%)"
+            )
+
+        # Reversal downward.
         turned_down = (
             previous > previous_two
             and current < previous
@@ -791,51 +944,35 @@ def analyze_momentum(candles):
 
         if turned_down:
 
-            turn_distance = abs(
-                current - previous
+            action = "PUT"
+
+    # ========================================================
+    # MIDDLE / RESET
+    # ========================================================
+
+    else:
+
+        if extreme_state is not None:
+
+            log(
+                f"Momentum returned to "
+                f"MIDDLE. Resetting "
+                f"extreme state "
+                f"from {extreme_state}."
             )
 
-            if (
-                turn_distance
-                >= MIN_TURN_DISTANCE
-            ):
-                action = "PUT"
+        extreme_state = None
 
-
-    result = {
+    return {
         "action": action,
         "current": current,
         "previous": previous,
         "previous_two": previous_two,
         "low_level": low_level,
         "high_level": high_level,
-        "extreme": extreme,
+        "extreme": current_zone,
+        "state": extreme_state,
     }
-
-
-    if action is not None:
-
-        reversal_strength = 0.0
-
-        if previous != 0:
-
-            reversal_strength = (
-                abs(
-                    current
-                    - previous
-                )
-                / max(
-                    abs(previous),
-                    0.000001
-                )
-            ) * 100.0
-
-        result[
-            "reversal_strength"
-        ] = reversal_strength
-
-
-    return result
 
 
 # ============================================================
@@ -848,6 +985,7 @@ def get_proposal(action):
         "CALL",
         "PUT"
     ):
+
         raise RuntimeError(
             f"Invalid action: {action}"
         )
@@ -863,7 +1001,9 @@ def get_proposal(action):
             "duration_unit": "m",
             "underlying_symbol": SYMBOL,
         },
-        expected_types={"proposal"},
+        expected_types={
+            "proposal"
+        },
         timeout=20,
     )
 
@@ -872,6 +1012,7 @@ def get_proposal(action):
     )
 
     if not proposal:
+
         raise RuntimeError(
             "No proposal returned."
         )
@@ -885,17 +1026,21 @@ def get_proposal(action):
     )
 
     if not proposal_id:
+
         raise RuntimeError(
             "Proposal has no ID."
         )
 
     if ask_price is None:
+
         raise RuntimeError(
             "Proposal has no ask price."
         )
 
     return {
-        "id": str(proposal_id),
+        "id": str(
+            proposal_id
+        ),
         "ask_price": float(
             ask_price
         ),
@@ -910,6 +1055,7 @@ def get_proposal(action):
 def buy_contract(proposal):
 
     if DEMO_ONLY is not True:
+
         raise RuntimeError(
             "SAFETY STOP: "
             "DEMO_ONLY is not True."
@@ -920,7 +1066,9 @@ def buy_contract(proposal):
             "buy": proposal["id"],
             "price": proposal["ask_price"],
         },
-        expected_types={"buy"},
+        expected_types={
+            "buy"
+        },
         timeout=20,
     )
 
@@ -929,6 +1077,7 @@ def buy_contract(proposal):
     )
 
     if not buy:
+
         raise RuntimeError(
             "No buy result returned."
         )
@@ -938,8 +1087,10 @@ def buy_contract(proposal):
     )
 
     if not contract_id:
+
         raise RuntimeError(
-            "Buy result has no contract ID."
+            "Buy result has no "
+            "contract ID."
         )
 
     return buy
@@ -949,7 +1100,9 @@ def buy_contract(proposal):
 # MONITOR CONTRACT
 # ============================================================
 
-def monitor_contract(contract_id):
+def monitor_contract(
+    contract_id
+):
 
     log(
         f"Monitoring contract "
@@ -968,10 +1121,6 @@ def monitor_contract(contract_id):
     last_status = None
 
     while time.time() < deadline:
-
-        # IMPORTANT:
-        # No "subscribe" field here.
-        # We poll the contract status directly.
 
         response = ws_request(
             {
@@ -1013,7 +1162,10 @@ def monitor_contract(contract_id):
             last_status = status
 
         if (
-            is_sold in (1, True)
+            is_sold in (
+                1,
+                True
+            )
             or status in (
                 "won",
                 "lost",
@@ -1042,11 +1194,16 @@ def monitor_contract(contract_id):
                 ):
 
                     profit = (
-                        float(payout)
-                        - float(buy_price)
+                        float(
+                            payout
+                        )
+                        - float(
+                            buy_price
+                        )
                     )
 
             if profit is None:
+
                 profit = 0.0
 
             return {
@@ -1158,7 +1315,9 @@ def record_result(
         f"{EXPIRY_MINUTES} minutes"
     )
 
-    telegram(message)
+    telegram(
+        message
+    )
 
     log(
         f"{outcome}: "
@@ -1186,6 +1345,7 @@ def send_heartbeat():
         now - last_heartbeat
         < HEARTBEAT_SECONDS
     ):
+
         return
 
     last_heartbeat = now
@@ -1230,7 +1390,6 @@ def process_signal(
 ):
 
     global last_signal_candle
-    global last_extreme_state
     global active_contract
 
     action = analysis.get(
@@ -1241,6 +1400,7 @@ def process_signal(
         "CALL",
         "PUT"
     ):
+
         return
 
     if active_contract is not None:
@@ -1262,31 +1422,11 @@ def process_signal(
         last_signal_candle
         == candle_epoch
     ):
-        return
-
-    extreme = analysis.get(
-        "extreme"
-    )
-
-    if (
-        last_extreme_state
-        is not None
-        and last_extreme_state
-        == extreme
-    ):
-
-        last_signal_candle = (
-            candle_epoch
-        )
 
         return
 
     last_signal_candle = (
         candle_epoch
-    )
-
-    last_extreme_state = (
-        extreme
     )
 
     signal_id = make_signal_id(
@@ -1310,11 +1450,6 @@ def process_signal(
         "high_level"
     ]
 
-    reversal_strength = analysis.get(
-        "reversal_strength",
-        0.0
-    )
-
     log(
         f"🚨 SIGNAL | "
         f"{signal_id} | "
@@ -1335,9 +1470,7 @@ def process_signal(
         f"Low extreme: "
         f"{low_level:.5f}%\n"
         f"High extreme: "
-        f"{high_level:.5f}%\n"
-        f"Reversal: "
-        f"{reversal_strength:.3f}%\n\n"
+        f"{high_level:.5f}%\n\n"
         f"Expiry: "
         f"{EXPIRY_MINUTES} minutes\n"
         f"Stake: $1\n"
@@ -1356,7 +1489,8 @@ def process_signal(
         log(
             f"Proposal accepted | "
             f"ID {proposal['id']} | "
-            f"Ask ${proposal['ask_price']:.2f}"
+            f"Ask "
+            f"${proposal['ask_price']:.2f}"
         )
 
         buy = buy_contract(
@@ -1497,7 +1631,7 @@ def startup_message():
         f"Momentum: 10\n"
         f"Lookback: 50\n"
         f"Extreme zones: 10% / 90%\n"
-        f"Turn threshold: 0.02\n"
+        f"Reversal: EXTREME → TURN\n"
         f"Expiry: 15 minutes\n"
         f"Stake: $1\n\n"
         f"Target: 50 completed trades\n"
@@ -1640,8 +1774,10 @@ def run_forever():
                     f"NO TRADE | "
                     f"Momentum "
                     f"{analysis['current']:.5f}% | "
-                    f"Extreme "
-                    f"{analysis['extreme']}"
+                    f"Zone "
+                    f"{analysis['extreme']} | "
+                    f"State "
+                    f"{analysis['state']}"
                 )
 
             else:
@@ -1658,7 +1794,6 @@ def run_forever():
                 return
 
             time.sleep(5)
-
 
         # ====================================================
         # CONNECTION / TIMEOUT RECOVERY
@@ -1685,7 +1820,6 @@ def run_forever():
                 RECONNECT_SECONDS
             )
 
-
         # ====================================================
         # REST / NETWORK RECOVERY
         # ====================================================
@@ -1702,7 +1836,6 @@ def run_forever():
             time.sleep(
                 RECONNECT_SECONDS
             )
-
 
         # ====================================================
         # GENERAL RECOVERY
@@ -1763,6 +1896,7 @@ def main():
     startup_message()
 
     run_forever()
+
 
 if __name__ == "__main__":
     main()
