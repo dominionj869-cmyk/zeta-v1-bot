@@ -1,1868 +1,1061 @@
 import os
-import json
+import csv
 import time
-import signal
+import threading
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import requests
-import websocket
-from datetime import datetime, timezone
+import iqoptionapi.constants as OP_code
+from iqoptionapi.stable_api import IQ_Option
 
 
 # ============================================================
-# ZETA MOMENTUM 10
-# DERIV DEMO — 50 TRADE TEST
+# MOMENTUM 10 EXTREME-REVERSAL
+# PRACTICE MODE WITH DAILY PROFIT / LOSS STOPS
 # ============================================================
-
-APP_ID = os.getenv("DERIV_APP_ID", "").strip()
-PAT = os.getenv("DERIV_PAT", "").strip()
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-
-API_BASE = "https://api.derivws.com"
-
-SYMBOL = "frxEURUSD"
-DISPLAY_SYMBOL = "EUR/USD"
-
-
-# ============================================================
-# STRATEGY
-# ============================================================
-
-TIMEFRAME_SECONDS = 60
 
 MOMENTUM_PERIOD = 10
 MOMENTUM_LOOKBACK = 50
-
-# Bottom 10% / Top 10%
 EXTREME_PERCENTILE = 0.10
+REQUIRE_TURN = True
+MIN_TURN_DISTANCE = 0.03
 
-EXPIRY_MINUTES = 15
+CANDLE_SECONDS = 60
+EXPIRY_MINUTES = 1
+
+AUTO_TRADE = True
+BALANCE_MODE = "PRACTICE"
 STAKE = 1.0
-
 TARGET_TRADES = 50
 
+DAILY_PROFIT_TARGET = 20.0
+DAILY_LOSS_LIMIT = -5.0
+DAILY_TIMEZONE = "Africa/Lagos"
 
-# ============================================================
-# SAFETY
-# ============================================================
-
-DEMO_ONLY = True
-AUTO_TRADE = True
-
-CANDLE_COUNT = 180
-
+SCAN_INTERVAL = 2
+ASSET_REFRESH_SECONDS = 900
 HEARTBEAT_SECONDS = 300
-RECONNECT_SECONDS = 10
+RECONNECT_SECONDS = 15
+MAX_ASSETS = 70
 
-REQUEST_TIMEOUT = 20
-WS_TIMEOUT = 40
-
-STATE_FILE = "trade_state.json"
-
-RUNNING = True
+LOG_FILE = "momentum_signal_log.csv"
+CANDLE_REQUEST_TIMEOUT = 8
 
 
 # ============================================================
-# STATE
+# SECRETS
 # ============================================================
 
-ws = None
-account_id = None
+IQ_EMAIL = os.getenv("IQ_EMAIL", "")
+IQ_PASSWORD = os.getenv("IQ_PASSWORD", "")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-last_signal_candle = None
-last_processed_candle = None
 
-# Tracks whether Momentum is currently in an extreme.
-# It resets when Momentum returns to the middle.
-extreme_state = None
+# ============================================================
+# GLOBAL STATE
+# ============================================================
 
-completed_trades = 0
+api = None
+otc_assets = []
+otc_active_ids = {}
+
+trade_count = 0
 wins = 0
 losses = 0
-total_profit = 0.0
+pending_results = 0
 
-active_contract = None
+daily_net_profit = 0.0
+daily_limit_stopped = False
+daily_date = None
+daily_lock = threading.RLock()
+trade_lock = threading.Lock()
+active_order_ids = set()
 
-last_heartbeat = 0
-
-request_counter = 100
+last_signal_candle = {}
+extreme_state = {}
+stop_event = threading.Event()
 
 
 # ============================================================
-# LOGGING
+# DAILY ACCOUNTING
 # ============================================================
 
-def log(message):
-    now = datetime.now(timezone.utc).strftime(
-        "%Y-%m-%d %H:%M:%S UTC"
-    )
+def get_daily_date():
+    return datetime.now(
+        ZoneInfo(DAILY_TIMEZONE)
+    ).date().isoformat()
 
-    print(
-        f"[{now}] {message}",
-        flush=True
-    )
+
+def read_today_profit_from_log():
+    total = 0.0
+    today = get_daily_date()
+
+    if not os.path.exists(LOG_FILE):
+        return total
+
+    try:
+        with open(
+            LOG_FILE,
+            "r",
+            newline="",
+            encoding="utf-8",
+        ) as file:
+            reader = csv.DictReader(file)
+
+            for row in reader:
+                stamp = row.get("time", "")
+                profit_text = row.get("profit", "")
+
+                try:
+                    parsed = datetime.fromisoformat(
+                        stamp.replace("Z", "+00:00")
+                    )
+                    local_day = parsed.astimezone(
+                        ZoneInfo(DAILY_TIMEZONE)
+                    ).date().isoformat()
+                    profit = float(profit_text)
+                except Exception:
+                    continue
+
+                if local_day == today:
+                    total += profit
+
+    except Exception as exc:
+        print(
+            "Daily log recovery error: " + str(exc),
+            flush=True,
+        )
+
+    return round(total, 2)
+
+
+def check_daily_limits():
+    global daily_date
+    global daily_net_profit
+    global daily_limit_stopped
+
+    with daily_lock:
+        today = get_daily_date()
+
+        if daily_date != today:
+            daily_date = today
+            daily_net_profit = read_today_profit_from_log()
+            daily_limit_stopped = False
+
+            print(
+                "Daily P/L restored: $"
+                + str(round(daily_net_profit, 2)),
+                flush=True,
+            )
+
+        if daily_net_profit >= DAILY_PROFIT_TARGET:
+            daily_limit_stopped = True
+
+        if daily_net_profit <= DAILY_LOSS_LIMIT:
+            daily_limit_stopped = True
+
+        return daily_limit_stopped
+
+
+def update_daily_profit(profit):
+    global daily_net_profit
+    global daily_limit_stopped
+
+    with daily_lock:
+        if daily_date != get_daily_date():
+            print(
+                "Trade result crossed a calendar-day boundary. "
+                "Daily total will be recalculated.",
+                flush=True,
+            )
+            # check_daily_limits performs date reset and log recovery.
+            pass
+
+        daily_net_profit = round(
+            read_today_profit_from_log(),
+            2,
+        )
+
+        if daily_net_profit >= DAILY_PROFIT_TARGET:
+            daily_limit_stopped = True
+        elif daily_net_profit <= DAILY_LOSS_LIMIT:
+            daily_limit_stopped = True
+
+        print(
+            "DAILY NET P/L: $"
+            + str(daily_net_profit),
+            flush=True,
+        )
 
 
 # ============================================================
 # TELEGRAM
 # ============================================================
 
-def telegram(message):
-
+def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
 
     url = (
-        f"https://api.telegram.org/"
-        f"bot{TELEGRAM_TOKEN}/sendMessage"
+        "https://api.telegram.org/bot"
+        + TELEGRAM_TOKEN
+        + "/sendMessage"
     )
-
-    payload = {
+    data = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
-        "disable_web_page_preview": True,
+        "parse_mode": "HTML",
     }
 
     try:
-
-        requests.post(
+        response = requests.post(
             url,
-            json=payload,
+            data=data,
             timeout=15,
         )
-
+        if not response.ok:
+            print(
+                "Telegram HTTP error: "
+                + str(response.status_code),
+                flush=True,
+            )
     except Exception as exc:
-
-        log(
-            f"Telegram error: {exc}"
-        )
+        print("Telegram error:", exc, flush=True)
 
 
 # ============================================================
-# STATE FILE
+# CSV LOG
 # ============================================================
 
-def load_state():
-
-    global completed_trades
-    global wins
-    global losses
-    global total_profit
-
-    if not os.path.exists(STATE_FILE):
+def init_log():
+    if os.path.exists(LOG_FILE):
         return
 
     try:
-
         with open(
-            STATE_FILE,
-            "r",
-            encoding="utf-8"
-        ) as f:
-
-            data = json.load(f)
-
-        completed_trades = int(
-            data.get(
-                "completed_trades",
-                0
-            )
-        )
-
-        wins = int(
-            data.get(
-                "wins",
-                0
-            )
-        )
-
-        losses = int(
-            data.get(
-                "losses",
-                0
-            )
-        )
-
-        total_profit = float(
-            data.get(
-                "total_profit",
-                0.0
-            )
-        )
-
-        log(
-            f"State restored: "
-            f"{completed_trades}/{TARGET_TRADES} "
-            f"trades | "
-            f"{wins}W/{losses}L | "
-            f"P/L ${total_profit:.2f}"
-        )
-
-    except Exception as exc:
-
-        log(
-            f"Could not load state: {exc}"
-        )
-
-
-def save_state():
-
-    data = {
-        "completed_trades": completed_trades,
-        "wins": wins,
-        "losses": losses,
-        "total_profit": round(
-            total_profit,
-            2
-        ),
-        "target_trades": TARGET_TRADES,
-        "symbol": SYMBOL,
-        "momentum_period": MOMENTUM_PERIOD,
-        "expiry_minutes": EXPIRY_MINUTES,
-    }
-
-    try:
-
-        with open(
-            STATE_FILE,
+            LOG_FILE,
             "w",
-            encoding="utf-8"
-        ) as f:
-
-            json.dump(
-                data,
-                f,
-                indent=2
-            )
-
+            newline="",
+            encoding="utf-8",
+        ) as file:
+            writer = csv.writer(file)
+            writer.writerow([
+                "time",
+                "asset",
+                "direction",
+                "signal_id",
+                "entry_price",
+                "result",
+                "profit",
+            ])
     except Exception as exc:
-
-        log(
-            f"Could not save state: {exc}"
-        )
+        print("Log init error:", exc, flush=True)
 
 
-# ============================================================
-# REQUEST IDS
-# ============================================================
-
-def next_req_id():
-
-    global request_counter
-
-    request_counter += 1
-
-    return request_counter
-
-
-# ============================================================
-# ENVIRONMENT
-# ============================================================
-
-def validate_environment():
-
-    if not APP_ID:
-
-        raise RuntimeError(
-            "DERIV_APP_ID secret is missing."
-        )
-
-    if not PAT:
-
-        raise RuntimeError(
-            "DERIV_PAT secret is missing."
-        )
-
-    if not TELEGRAM_TOKEN:
-
-        raise RuntimeError(
-            "TELEGRAM_TOKEN secret is missing."
-        )
-
-    if not TELEGRAM_CHAT_ID:
-
-        raise RuntimeError(
-            "TELEGRAM_CHAT_ID secret is missing."
-        )
-
-    if DEMO_ONLY is not True:
-
-        raise RuntimeError(
-            "SAFETY STOP: DEMO_ONLY must be True."
-        )
-
-    if AUTO_TRADE is not True:
-
-        raise RuntimeError(
-            "AUTO_TRADE must be enabled for "
-            "the demo test."
-        )
-
-    if EXPIRY_MINUTES != 15:
-
-        raise RuntimeError(
-            "This test requires 15-minute expiry."
-        )
-
-    if MOMENTUM_PERIOD != 10:
-
-        raise RuntimeError(
-            "This test requires Momentum 10."
-        )
-
-    if STAKE != 1.0:
-
-        raise RuntimeError(
-            "This test requires a $1 stake."
-        )
+def log_trade(
+    asset,
+    direction,
+    signal_id,
+    entry_price,
+    result,
+    profit,
+):
+    try:
+        with open(
+            LOG_FILE,
+            "a",
+            newline="",
+            encoding="utf-8",
+        ) as file:
+            writer = csv.writer(file)
+            writer.writerow([
+                datetime.now(ZoneInfo(DAILY_TIMEZONE)).isoformat(),
+                asset,
+                direction,
+                signal_id,
+                entry_price,
+                result,
+                profit,
+            ])
+    except Exception as exc:
+        print("Log error:", exc, flush=True)
 
 
 # ============================================================
-# DERIV REST HEADERS
+# IQ OPTION CONNECTION
 # ============================================================
 
-def rest_headers():
+def connect_iq():
+    global api
 
-    return {
-        "Authorization": f"Bearer {PAT}",
-        "Deriv-App-ID": APP_ID,
-        "Content-Type": "application/json",
-    }
-
-
-# ============================================================
-# FIND DEMO OPTIONS ACCOUNT
-# ============================================================
-
-def get_demo_account():
-
-    url = (
-        f"{API_BASE}/trading/v1/options/accounts"
-    )
-
-    response = requests.get(
-        url,
-        headers=rest_headers(),
-        timeout=REQUEST_TIMEOUT,
-    )
-
-    if response.status_code != 200:
-
-        raise RuntimeError(
-            f"Account request failed: "
-            f"HTTP {response.status_code} "
-            f"{response.text[:500]}"
+    if not IQ_EMAIL or not IQ_PASSWORD:
+        print(
+            "Missing IQ_EMAIL or IQ_PASSWORD secret.",
+            flush=True,
         )
+        return False
 
-    body = response.json()
-
-    data = body.get("data")
-
-    accounts = []
-
-    if isinstance(data, list):
-
-        accounts = data
-
-    elif isinstance(data, dict):
-
-        accounts = [data]
-
-    for account in accounts:
-
-        aid = account.get(
-            "account_id"
-        )
-
-        account_type = str(
-            account.get(
-                "account_type",
-                ""
-            )
-        ).lower()
-
-        status = str(
-            account.get(
-                "status",
-                ""
-            )
-        ).lower()
-
-        if (
-            aid
-            and account_type == "demo"
-            and status in (
-                "active",
-                ""
-            )
-        ):
-
-            return account
-
-    raise RuntimeError(
-        "No active Deriv demo Options "
-        "account found."
-    )
-
-
-# ============================================================
-# GET DEMO WEBSOCKET URL
-# ============================================================
-
-def get_ws_url(account):
-
-    aid = account.get(
-        "account_id"
-    )
-
-    if not aid:
-
-        raise RuntimeError(
-            "Demo account has no account_id."
-        )
-
-    url = (
-        f"{API_BASE}/trading/v1/options/accounts/"
-        f"{aid}/otp"
-    )
-
-    response = requests.post(
-        url,
-        headers=rest_headers(),
-        timeout=REQUEST_TIMEOUT,
-    )
-
-    if response.status_code != 200:
-
-        raise RuntimeError(
-            f"OTP request failed: "
-            f"HTTP {response.status_code} "
-            f"{response.text[:500]}"
-        )
-
-    body = response.json()
-
-    data = body.get(
-        "data",
-        {}
-    )
-
-    ws_url = data.get(
-        "url"
-    )
-
-    if not ws_url:
-
-        raise RuntimeError(
-            "Deriv OTP response contained "
-            "no WebSocket URL."
-        )
-
-    if "/options/ws/demo" not in ws_url:
-
-        raise RuntimeError(
-            "SAFETY STOP: WebSocket URL "
-            "is not the demo endpoint."
-        )
-
-    return ws_url
-
-
-# ============================================================
-# CONNECT
-# ============================================================
-
-def connect():
-
-    global ws
-    global account_id
-
-    account = get_demo_account()
-
-    account_id = account.get(
-        "account_id"
-    )
-
-    balance = account.get(
-        "balance"
-    )
-
-    currency = account.get(
-        "currency",
-        "USD"
-    )
-
-    log(
-        f"Demo account: {account_id} | "
-        f"Balance: {balance} {currency}"
-    )
-
-    ws_url = get_ws_url(
-        account
-    )
-
-    log(
-        "Connecting to authenticated "
-        "DEMO WebSocket..."
-    )
-
-    ws = websocket.create_connection(
-        ws_url,
-        timeout=WS_TIMEOUT,
-        enable_multithread=True,
-    )
-
-    ws.settimeout(
-        WS_TIMEOUT
-    )
-
-    log(
-        "🟢 DEMO WebSocket connected."
-    )
-
-    return ws
-
-
-def close_ws():
-
-    global ws
+    print("Connecting to IQ Option...", flush=True)
 
     try:
+        candidate = IQ_Option(IQ_EMAIL, IQ_PASSWORD)
+        connected, reason = candidate.connect()
 
-        if ws:
-            ws.close()
-
-    except Exception:
-        pass
-
-    ws = None
-
-
-# ============================================================
-# WEBSOCKET SEND
-# ============================================================
-
-def ws_send(payload):
-
-    if ws is None:
-
-        raise RuntimeError(
-            "WebSocket is not connected."
-        )
-
-    ws.send(
-        json.dumps(payload)
-    )
-
-
-# ============================================================
-# WEBSOCKET REQUEST
-# ============================================================
-
-def ws_request(
-    payload,
-    expected_types=None,
-    timeout=20
-):
-
-    if expected_types is None:
-
-        expected_types = set()
-
-    req_id = next_req_id()
-
-    request = dict(
-        payload
-    )
-
-    request["req_id"] = req_id
-
-    ws_send(
-        request
-    )
-
-    deadline = (
-        time.time()
-        + timeout
-    )
-
-    while time.time() < deadline:
-
-        remaining = max(
-            1,
-            deadline - time.time()
-        )
-
-        ws.settimeout(
-            remaining
-        )
-
-        raw = ws.recv()
-
-        if not raw:
-            continue
-
-        data = json.loads(
-            raw
-        )
-
-        if data.get("error"):
-
-            error = data["error"]
-
-            code = error.get(
-                "code",
-                "APIError"
+        if not connected:
+            print(
+                "IQ OPTION CONNECTION FAILED: "
+                + str(reason),
+                flush=True,
             )
+            return False
 
-            message = error.get(
-                "message",
-                "Unknown error"
-            )
-
-            raise RuntimeError(
-                f"{code} - {message}"
-            )
-
-        if data.get(
-            "req_id"
-        ) == req_id:
-
-            return data
-
-        if data.get(
-            "msg_type"
-        ) in expected_types:
-
-            return data
-
-    raise TimeoutError(
-        f"Timed out waiting for "
-        f"request {req_id}."
-    )
-
-
-# ============================================================
-# GET CANDLES
-# ============================================================
-
-def get_candles():
-
-    response = ws_request(
-        {
-            "ticks_history": SYMBOL,
-            "end": "latest",
-            "count": CANDLE_COUNT,
-            "style": "candles",
-            "granularity": TIMEFRAME_SECONDS,
-        },
-        expected_types={
-            "candles"
-        },
-        timeout=20,
-    )
-
-    candles = response.get(
-        "candles",
-        []
-    )
-
-    if not candles:
-
-        raise RuntimeError(
-            "Deriv returned no candles."
-        )
-
-    clean = []
-
-    for candle in candles:
+        candidate.change_balance(BALANCE_MODE)
 
         try:
-
-            clean.append(
-                {
-                    "epoch": int(
-                        candle["epoch"]
-                    ),
-                    "open": float(
-                        candle["open"]
-                    ),
-                    "high": float(
-                        candle["high"]
-                    ),
-                    "low": float(
-                        candle["low"]
-                    ),
-                    "close": float(
-                        candle["close"]
-                    ),
-                }
-            )
-
+            balance_name = str(candidate.get_balance_mode()).upper()
         except Exception:
-            continue
+            balance_name = ""
 
-    clean.sort(
-        key=lambda item:
-        item["epoch"]
-    )
+        if balance_name and "PRACTICE" not in balance_name:
+            print(
+                "SAFETY STOP: account mode is not PRACTICE: "
+                + balance_name,
+                flush=True,
+            )
+            try:
+                candidate.api.close()
+            except Exception:
+                pass
+            return False
 
-    if len(clean) < (
-        MOMENTUM_PERIOD + 5
-    ):
-
-        raise RuntimeError(
-            f"Not enough candles: "
-            f"{len(clean)}"
+        api = candidate
+        print("IQ OPTION CONNECTED", flush=True)
+        print(
+            "Balance mode verified: "
+            + (balance_name or "change_balance accepted; mode API unavailable"),
+            flush=True,
         )
+        return True
 
-    return clean
+    except Exception as exc:
+        print("Connection error:", exc, flush=True)
+        api = None
+        return False
 
 
 # ============================================================
-# MOMENTUM
+# OTC ASSET DISCOVERY (ORIGINAL LOGIC)
+# ============================================================
+
+def get_otc_assets():
+    global otc_assets
+    global otc_active_ids
+
+    print("Preparing OTC assets...", flush=True)
+
+    try:
+        init_data = None
+
+        try:
+            init_data = api.get_all_init_v2()
+        except Exception as exc:
+            print(
+                "get_all_init_v2 warning: " + str(exc),
+                flush=True,
+            )
+
+        new_assets = []
+        new_active_ids = {}
+
+        if isinstance(init_data, dict):
+            sections = [
+                init_data.get("turbo", {}),
+                init_data.get("binary", {}),
+            ]
+
+            for section in sections:
+                if not isinstance(section, dict):
+                    continue
+
+                actives = section.get("actives", {})
+                if not isinstance(actives, dict):
+                    continue
+
+                for key, info in actives.items():
+                    if not isinstance(info, dict):
+                        continue
+
+                    active_id = info.get("active_id")
+                    if active_id is None:
+                        active_id = key
+
+                    try:
+                        active_id = int(active_id)
+                    except Exception:
+                        continue
+
+                    name = info.get("name", "")
+                    if not name:
+                        continue
+
+                    name = str(name)
+                    if "." in name:
+                        name = name.split(".", 1)[1]
+
+                    if "-OTC" not in name:
+                        continue
+
+                    if info.get("enabled") is False:
+                        continue
+
+                    if info.get("is_suspended") is True:
+                        continue
+
+                    if name in new_active_ids:
+                        continue
+
+                    new_assets.append(name)
+                    new_active_ids[name] = active_id
+
+                    if len(new_assets) >= MAX_ASSETS:
+                        break
+
+                if len(new_assets) >= MAX_ASSETS:
+                    break
+
+        if not new_assets:
+            print(
+                "Primary OTC discovery returned no assets.",
+                flush=True,
+            )
+
+            try:
+                legacy_data = api.get_all_init()
+            except Exception as exc:
+                print(
+                    "get_all_init warning: " + str(exc),
+                    flush=True,
+                )
+                legacy_data = None
+
+            if isinstance(legacy_data, dict):
+                result = legacy_data.get("result", {})
+
+                if isinstance(result, dict):
+                    sections = [
+                        result.get("turbo", {}),
+                        result.get("binary", {}),
+                    ]
+
+                    for section in sections:
+                        if not isinstance(section, dict):
+                            continue
+
+                        actives = section.get("actives", {})
+                        if not isinstance(actives, dict):
+                            continue
+
+                        for key, info in actives.items():
+                            if not isinstance(info, dict):
+                                continue
+
+                            try:
+                                active_id = int(key)
+                            except Exception:
+                                continue
+
+                            name = info.get("name", "")
+                            if not name:
+                                continue
+
+                            name = str(name)
+                            if "." in name:
+                                name = name.split(".", 1)[1]
+
+                            if "-OTC" not in name:
+                                continue
+
+                            if info.get("enabled") is False:
+                                continue
+
+                            if info.get("is_suspended") is True:
+                                continue
+
+                            if name in new_active_ids:
+                                continue
+
+                            new_assets.append(name)
+                            new_active_ids[name] = active_id
+
+                            if len(new_assets) >= MAX_ASSETS:
+                                break
+
+                        if len(new_assets) >= MAX_ASSETS:
+                            break
+
+        if not new_assets:
+            print("No OPEN OTC assets found.", flush=True)
+            return False
+
+        otc_assets = new_assets
+        otc_active_ids = new_active_ids
+
+        for asset_name, active_id in otc_active_ids.items():
+            OP_code.ACTIVES[asset_name] = active_id
+
+        print("OTC ASSETS READY", flush=True)
+        print(
+            "Found "
+            + str(len(otc_assets))
+            + " OPEN OTC assets.",
+            flush=True,
+        )
+        print(
+            "IQ active-code mappings loaded: "
+            + str(len(otc_active_ids)),
+            flush=True,
+        )
+        return True
+
+    except Exception as exc:
+        print("OTC discovery error:", exc, flush=True)
+        return False
+
+
+# ============================================================
+# CANDLE DATA (ORIGINAL LOGIC)
+# ============================================================
+
+def get_candles(asset, count):
+    active_id = otc_active_ids.get(asset)
+
+    if active_id is None:
+        print("No active ID for " + asset, flush=True)
+        return []
+
+    try:
+        api.api.candles.candles_data = []
+
+        server_time = time.time()
+        try:
+            server_time = api.api.timesync.server_timestamp
+        except Exception:
+            pass
+
+        api.api.getcandles(
+            active_id,
+            CANDLE_SECONDS,
+            count,
+            server_time,
+        )
+
+        started = time.time()
+
+        while time.time() - started < CANDLE_REQUEST_TIMEOUT:
+            candles = api.api.candles.candles_data
+            if candles:
+                break
+            time.sleep(0.1)
+
+        candles = api.api.candles.candles_data
+        if not candles:
+            return []
+
+        result = []
+
+        for candle in candles:
+            if not isinstance(candle, dict):
+                continue
+
+            try:
+                result.append({
+                    "from": float(candle.get("from")),
+                    "open": float(candle.get("open")),
+                    "close": float(candle.get("close")),
+                    "high": float(candle.get("max")),
+                    "low": float(candle.get("min")),
+                })
+            except Exception:
+                continue
+
+        return result
+
+    except Exception as exc:
+        print(
+            "Candle error " + asset + ": " + str(exc),
+            flush=True,
+        )
+        return []
+
+
+def remove_open_candle(candles):
+    if len(candles) < 2:
+        return candles
+
+    now = time.time()
+    last = candles[-1]
+    candle_from = last.get("from", 0)
+
+    if now - candle_from < CANDLE_SECONDS:
+        return candles[:-1]
+
+    return candles
+
+
+# ============================================================
+# MOMENTUM 10 (SIGNAL RULES UNCHANGED)
 # ============================================================
 
 def calculate_momentum(candles):
+    values = []
 
-    closes = []
+    if len(candles) <= MOMENTUM_PERIOD:
+        return values
 
-    for candle in candles:
+    for index in range(MOMENTUM_PERIOD, len(candles)):
+        current = candles[index]["close"]
+        previous = candles[index - MOMENTUM_PERIOD]["close"]
 
-        try:
-
-            close = float(
-                candle["close"]
-            )
-
-            if close > 0:
-
-                closes.append(
-                    close
-                )
-
-        except Exception:
+        if previous == 0:
             continue
 
-    if len(closes) < (
-        MOMENTUM_PERIOD + 3
-    ):
+        momentum = (current / previous) * 100.0
+        values.append(momentum)
 
-        return []
+    return values
 
-    momentum = []
-
-    for i in range(
-        MOMENTUM_PERIOD,
-        len(closes)
-    ):
-
-        old_price = closes[
-            i - MOMENTUM_PERIOD
-        ]
-
-        if old_price == 0:
-            continue
-
-        value = (
-            (
-                closes[i]
-                - old_price
-            )
-            / old_price
-        ) * 100.0
-
-        momentum.append(
-            value
-        )
-
-    return momentum
-
-
-# ============================================================
-# PERCENTILE
-# ============================================================
-
-def percentile(
-    values,
-    percent
-):
-
-    if not values:
-        return None
-
-    ordered = sorted(
-        values
-    )
-
-    if len(ordered) == 1:
-
-        return ordered[0]
-
-    position = (
-        (len(ordered) - 1)
-        * percent
-    )
-
-    lower = int(
-        position
-    )
-
-    upper = lower + 1
-
-    if upper >= len(
-        ordered
-    ):
-
-        return ordered[
-            lower
-        ]
-
-    weight = (
-        position
-        - lower
-    )
-
-    return (
-        ordered[lower]
-        + (
-            ordered[upper]
-            - ordered[lower]
-        )
-        * weight
-    )
-
-
-# ============================================================
-# ANALYZE MOMENTUM
-# ============================================================
 
 def analyze_momentum(candles):
-
-    global extreme_state
-
-    momentum = calculate_momentum(
-        candles
-    )
-
-    if len(momentum) < 4:
-
+    if len(candles) < MOMENTUM_LOOKBACK + 3:
         return None
 
-    lookback = momentum[
-        -MOMENTUM_LOOKBACK:
-    ]
+    momentum_values = calculate_momentum(candles)
 
-    if len(lookback) < 4:
-
+    if len(momentum_values) < MOMENTUM_LOOKBACK + 3:
         return None
 
-    current = lookback[-1]
+    recent = momentum_values[-MOMENTUM_LOOKBACK:]
+    current = momentum_values[-1]
+    previous = momentum_values[-2]
+    previous_previous = momentum_values[-3]
+    sorted_values = sorted(recent)
 
-    previous = lookback[-2]
+    low_index = int(len(sorted_values) * EXTREME_PERCENTILE)
+    high_index = int(len(sorted_values) * (1.0 - EXTREME_PERCENTILE))
 
-    previous_two = lookback[-3]
+    if low_index >= len(sorted_values):
+        low_index = len(sorted_values) - 1
 
-    low_level = percentile(
-        lookback,
-        EXTREME_PERCENTILE
-    )
+    if high_index >= len(sorted_values):
+        high_index = len(sorted_values) - 1
 
-    high_level = percentile(
-        lookback,
-        1.0 - EXTREME_PERCENTILE
-    )
+    low_threshold = sorted_values[low_index]
+    high_threshold = sorted_values[high_index]
+    recent_low = min(recent)
+    recent_high = max(recent)
 
-    if (
-        low_level is None
-        or high_level is None
-    ):
+    signal = None
+    extreme = None
+    reversal_strength = 0.0
 
-        return None
+    if current <= low_threshold:
+        extreme = "LOW"
 
-    action = None
+        if current > previous and previous < previous_previous:
+            turn_distance = current - previous
 
-    current_zone = "MIDDLE"
+            if turn_distance >= MIN_TURN_DISTANCE:
+                signal = "CALL"
 
-    # ========================================================
-    # LOW EXTREME
-    # ========================================================
+                if recent_low != 0:
+                    reversal_strength = (
+                        turn_distance / abs(recent_low)
+                    ) * 100.0
 
-    if current <= low_level:
+    elif current >= high_threshold:
+        extreme = "HIGH"
 
-        current_zone = "LOW"
+        if current < previous and previous > previous_previous:
+            turn_distance = previous - current
 
-        # Enter the LOW state.
-        if extreme_state != "LOW":
+            if turn_distance >= MIN_TURN_DISTANCE:
+                signal = "PUT"
 
-            extreme_state = "LOW"
-
-            log(
-                f"Momentum entered LOW "
-                f"extreme: "
-                f"{current:.5f}% "
-                f"(level "
-                f"{low_level:.5f}%)"
-            )
-
-        # Reversal upward.
-        turned_up = (
-            previous < previous_two
-            and current > previous
-        )
-
-        if turned_up:
-
-            action = "CALL"
-
-    # ========================================================
-    # HIGH EXTREME
-    # ========================================================
-
-    elif current >= high_level:
-
-        current_zone = "HIGH"
-
-        # Enter the HIGH state.
-        if extreme_state != "HIGH":
-
-            extreme_state = "HIGH"
-
-            log(
-                f"Momentum entered HIGH "
-                f"extreme: "
-                f"{current:.5f}% "
-                f"(level "
-                f"{high_level:.5f}%)"
-            )
-
-        # Reversal downward.
-        turned_down = (
-            previous > previous_two
-            and current < previous
-        )
-
-        if turned_down:
-
-            action = "PUT"
-
-    # ========================================================
-    # MIDDLE / RESET
-    # ========================================================
-
-    else:
-
-        if extreme_state is not None:
-
-            log(
-                f"Momentum returned to "
-                f"MIDDLE. Resetting "
-                f"extreme state "
-                f"from {extreme_state}."
-            )
-
-        extreme_state = None
+                if recent_high != 0:
+                    reversal_strength = (
+                        turn_distance / abs(recent_high)
+                    ) * 100.0
 
     return {
-        "action": action,
-        "current": current,
+        "signal": signal,
+        "extreme": extreme,
+        "momentum": current,
         "previous": previous,
-        "previous_two": previous_two,
-        "low_level": low_level,
-        "high_level": high_level,
-        "extreme": current_zone,
-        "state": extreme_state,
+        "previous_previous": previous_previous,
+        "recent_low": recent_low,
+        "recent_high": recent_high,
+        "low_threshold": low_threshold,
+        "high_threshold": high_threshold,
+        "reversal_strength": reversal_strength,
     }
 
 
 # ============================================================
-# PROPOSAL
+# SIGNAL MESSAGE (ORIGINAL CONTENT)
 # ============================================================
 
-def get_proposal(action):
-
-    if action not in (
-        "CALL",
-        "PUT"
-    ):
-
-        raise RuntimeError(
-            f"Invalid action: {action}"
-        )
-
-    response = ws_request(
-        {
-            "proposal": 1,
-            "amount": STAKE,
-            "basis": "stake",
-            "contract_type": action,
-            "currency": "USD",
-            "duration": EXPIRY_MINUTES,
-            "duration_unit": "m",
-            "underlying_symbol": SYMBOL,
-        },
-        expected_types={
-            "proposal"
-        },
-        timeout=20,
-    )
-
-    proposal = response.get(
-        "proposal"
-    )
-
-    if not proposal:
-
-        raise RuntimeError(
-            "No proposal returned."
-        )
-
-    proposal_id = proposal.get(
-        "id"
-    )
-
-    ask_price = proposal.get(
-        "ask_price"
-    )
-
-    if not proposal_id:
-
-        raise RuntimeError(
-            "Proposal has no ID."
-        )
-
-    if ask_price is None:
-
-        raise RuntimeError(
-            "Proposal has no ask price."
-        )
-
-    return {
-        "id": str(
-            proposal_id
-        ),
-        "ask_price": float(
-            ask_price
-        ),
-        "proposal": proposal,
-    }
-
-
-# ============================================================
-# BUY CONTRACT
-# ============================================================
-
-def buy_contract(proposal):
-
-    if DEMO_ONLY is not True:
-
-        raise RuntimeError(
-            "SAFETY STOP: "
-            "DEMO_ONLY is not True."
-        )
-
-    response = ws_request(
-        {
-            "buy": proposal["id"],
-            "price": proposal["ask_price"],
-        },
-        expected_types={
-            "buy"
-        },
-        timeout=20,
-    )
-
-    buy = response.get(
-        "buy"
-    )
-
-    if not buy:
-
-        raise RuntimeError(
-            "No buy result returned."
-        )
-
-    contract_id = buy.get(
-        "contract_id"
-    )
-
-    if not contract_id:
-
-        raise RuntimeError(
-            "Buy result has no "
-            "contract ID."
-        )
-
-    return buy
-
-
-# ============================================================
-# MONITOR CONTRACT
-# ============================================================
-
-def monitor_contract(
-    contract_id
-):
-
-    log(
-        f"Monitoring contract "
-        f"{contract_id}..."
-    )
-
-    deadline = (
-        time.time()
-        + (
-            EXPIRY_MINUTES
-            * 60
-        )
-        + 180
-    )
-
-    last_status = None
-
-    while time.time() < deadline:
-
-        response = ws_request(
-            {
-                "proposal_open_contract": 1,
-                "contract_id": int(
-                    contract_id
-                ),
-            },
-            expected_types={
-                "proposal_open_contract"
-            },
-            timeout=20,
-        )
-
-        contract = response.get(
-            "proposal_open_contract",
-            {}
-        )
-
-        status = str(
-            contract.get(
-                "status",
-                ""
-            )
-        ).lower()
-
-        is_sold = contract.get(
-            "is_sold"
-        )
-
-        if status != last_status:
-
-            log(
-                f"Contract "
-                f"{contract_id} status: "
-                f"{status or 'OPEN'}"
-            )
-
-            last_status = status
-
-        if (
-            is_sold in (
-                1,
-                True
-            )
-            or status in (
-                "won",
-                "lost",
-                "sold",
-                "expired",
-            )
-        ):
-
-            profit = contract.get(
-                "profit"
-            )
-
-            if profit is None:
-
-                payout = contract.get(
-                    "payout"
-                )
-
-                buy_price = contract.get(
-                    "buy_price"
-                )
-
-                if (
-                    payout is not None
-                    and buy_price is not None
-                ):
-
-                    profit = (
-                        float(
-                            payout
-                        )
-                        - float(
-                            buy_price
-                        )
-                    )
-
-            if profit is None:
-
-                profit = 0.0
-
-            return {
-                "status": status,
-                "profit": float(
-                    profit
-                ),
-                "contract": contract,
-            }
-
-        time.sleep(3)
-
-    raise TimeoutError(
-        f"Contract {contract_id} "
-        f"did not settle in time."
-    )
-
-
-# ============================================================
-# SIGNAL ID
-# ============================================================
-
-def make_signal_id(
-    action,
-    candle_epoch
-):
-
-    return (
-        f"EURUSD-"
-        f"{action}-"
-        f"{int(candle_epoch)}"
-    )
-
-
-# ============================================================
-# RECORD RESULT
-# ============================================================
-
-def record_result(
+def build_signal_message(
+    asset,
+    direction,
+    analysis,
+    price,
     signal_id,
-    action,
-    result
 ):
+    return (
+        "🔔 <b>MOMENTUM 10 SIGNAL</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Asset: " + asset + "\n"
+        "Direction: " + direction + "\n"
+        "Timeframe: 1M\n"
+        "Expiry: 1 minute\n"
+        "Strategy: Momentum 10 Extreme-Reversal\n"
+        "Extreme: " + str(analysis["extreme"]) + "\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Momentum: " + str(round(analysis["momentum"], 5)) + "\n"
+        "Previous: " + str(round(analysis["previous"], 5)) + "\n"
+        "Previous 2: " + str(round(analysis["previous_previous"], 5)) + "\n"
+        "Recent Low: " + str(round(analysis["recent_low"], 5)) + "\n"
+        "Recent High: " + str(round(analysis["recent_high"], 5)) + "\n"
+        "Low Threshold: " + str(round(analysis["low_threshold"], 5)) + "\n"
+        "High Threshold: " + str(round(analysis["high_threshold"], 5)) + "\n"
+        "Reversal Strength: "
+        + str(round(analysis["reversal_strength"], 1))
+        + "%\n"
+        "Price: " + str(price) + "\n"
+        "Signal ID: " + signal_id
+    )
 
-    global completed_trades
+
+# ============================================================
+# TRADE RESULT MONITOR
+# ============================================================
+
+def monitor_trade(
+    order_id,
+    asset,
+    direction,
+    signal_id,
+    entry_price,
+):
+    global pending_results
     global wins
     global losses
-    global total_profit
-    global active_contract
 
-    profit = float(
-        result.get(
-            "profit",
-            0.0
+    try:
+        time.sleep((EXPIRY_MINUTES * 60) + 5)
+        result = None
+
+        for _ in range(20):
+            try:
+                result = api.check_win_v4(order_id)
+            except Exception:
+                result = None
+
+            if result is not None:
+                break
+
+            time.sleep(1)
+
+        if result is None:
+            print(
+                "Could not get result for " + asset
+                + ". Daily limit remains conservative only "
+                "until result is recovered.",
+                flush=True,
+            )
+            return
+
+        try:
+            profit = float(result)
+        except Exception:
+            print(
+                "Unparseable trade result; not counted as zero.",
+                flush=True,
+            )
+            return
+
+        if profit > 0:
+            wins += 1
+            result_text = "WIN"
+        elif profit < 0:
+            losses += 1
+            result_text = "LOSS"
+        else:
+            result_text = "DRAW"
+
+        log_trade(
+            asset,
+            direction,
+            signal_id,
+            entry_price,
+            result_text,
+            profit,
         )
+        update_daily_profit(profit)
+
+        print(
+            "RESULT " + asset + " " + result_text
+            + " " + str(profit),
+            flush=True,
+        )
+
+        send_telegram(
+            "📊 <b>MOMENTUM 10 RESULT</b>\n"
+            "Asset: " + asset + "\n"
+            "Direction: " + direction + "\n"
+            "Result: " + result_text + "\n"
+            "Profit: " + str(profit) + "\n"
+            "Daily net P/L: $" + str(round(daily_net_profit, 2)) + "\n"
+            "Signal ID: " + signal_id
+        )
+
+        if check_daily_limits():
+            send_telegram(
+                "🛑 <b>DAILY LIMIT REACHED</b>\n"
+                "Daily net P/L: $"
+                + str(round(daily_net_profit, 2))
+                + "\nNo new trades will be opened."
+            )
+
+    except Exception as exc:
+        print("Result monitor error: " + str(exc), flush=True)
+
+    finally:
+        with trade_lock:
+            pending_results -= 1
+            active_order_ids.discard(order_id)
+
+
+# ============================================================
+# EXECUTE TRADE
+# ============================================================
+
+def execute_trade(
+    asset,
+    direction,
+    signal_id,
+    entry_price,
+):
+    global trade_count
+    global pending_results
+
+    with trade_lock:
+        if check_daily_limits():
+            print("Daily limit reached. Trade blocked.", flush=True)
+            return False
+
+        if trade_count >= TARGET_TRADES:
+            print("Trade-count target reached. Trade blocked.", flush=True)
+            return False
+
+        if pending_results > 0:
+            print(
+                "Existing result pending; skipping new trade "
+                "to keep daily limits controlled.",
+                flush=True,
+            )
+            return False
+
+        try:
+            if not api.check_connect():
+                print("Connection lost; trade blocked.", flush=True)
+                return False
+        except Exception:
+            print("Connection check failed; trade blocked.", flush=True)
+            return False
+
+        action = direction.lower()
+
+        print(
+            "Attempting trade: " + asset + " " + action,
+            flush=True,
+        )
+
+        try:
+            order_result = api.buy(
+                STAKE,
+                asset,
+                action,
+                EXPIRY_MINUTES,
+            )
+        except Exception as exc:
+            print("Trade request error: " + str(exc), flush=True)
+            return False
+
+        if isinstance(order_result, tuple):
+            success = order_result[0]
+            order_id = order_result[1]
+        else:
+            success = bool(order_result)
+            order_id = order_result
+
+        if not success or order_id is None:
+            print(
+                "TRADE FAILED " + asset + " " + direction,
+                flush=True,
+            )
+            return False
+
+        trade_count += 1
+        pending_results += 1
+        active_order_ids.add(order_id)
+
+    print(
+        "TRADE OPENED " + asset + " " + direction
+        + " Order: " + str(order_id),
+        flush=True,
     )
 
-    completed_trades += 1
-
-    total_profit += profit
-
-    if profit > 0:
-
-        wins += 1
-        outcome = "WIN"
-        emoji = "🟢"
-
-    elif profit < 0:
-
-        losses += 1
-        outcome = "LOSS"
-        emoji = "🔴"
-
-    else:
-
-        outcome = "BREAKEVEN"
-        emoji = "🟡"
-
-    active_contract = None
-
-    win_rate = 0.0
-
-    if completed_trades > 0:
-
-        win_rate = (
-            wins
-            / completed_trades
-        ) * 100.0
-
-    save_state()
-
-    message = (
-        f"{emoji} ZETA TRADE RESULT\n\n"
-        f"Signal: {signal_id}\n"
-        f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Direction: {action}\n"
-        f"Outcome: {outcome}\n"
-        f"Profit: ${profit:.2f}\n\n"
-        f"Trade: "
-        f"{completed_trades}/"
-        f"{TARGET_TRADES}\n"
-        f"Record: "
-        f"{wins}W / {losses}L\n"
-        f"Win rate: "
-        f"{win_rate:.2f}%\n"
-        f"Total P/L: "
-        f"${total_profit:.2f}\n\n"
-        f"Expiry: "
-        f"{EXPIRY_MINUTES} minutes"
+    send_telegram(
+        "✅ <b>TRADE OPENED</b>\n"
+        "Asset: " + asset + "\n"
+        "Direction: " + direction + "\n"
+        "Stake: $" + str(STAKE) + "\n"
+        "Expiry: 1 minute\n"
+        "Daily target: +$" + str(DAILY_PROFIT_TARGET) + "\n"
+        "Daily loss limit: -$" + str(abs(DAILY_LOSS_LIMIT)) + "\n"
+        "Signal ID: " + signal_id
     )
 
-    telegram(
-        message
+    thread = threading.Thread(
+        target=monitor_trade,
+        args=(
+            order_id,
+            asset,
+            direction,
+            signal_id,
+            entry_price,
+        ),
+        daemon=True,
     )
+    thread.start()
+    return True
 
-    log(
-        f"{outcome}: "
-        f"{signal_id} | "
-        f"P/L ${profit:.2f} | "
-        f"{completed_trades}/"
-        f"{TARGET_TRADES} | "
-        f"{wins}W/"
-        f"{losses}L | "
-        f"${total_profit:.2f}"
-    )
+
+# ============================================================
+# PROCESS ASSET
+# ============================================================
+
+def process_asset(asset):
+    try:
+        if check_daily_limits():
+            return
+
+        print("Scanning: " + asset, flush=True)
+
+        candles = get_candles(
+            asset,
+            MOMENTUM_LOOKBACK + MOMENTUM_PERIOD + 10,
+        )
+
+        if not candles:
+            return
+
+        candles = remove_open_candle(candles)
+
+        if len(candles) < MOMENTUM_LOOKBACK + 3:
+            return
+
+        analysis = analyze_momentum(candles)
+        if not analysis:
+            return
+
+        signal = analysis["signal"]
+        if signal is None:
+            return
+
+        current_candle = candles[-1]
+        candle_id = current_candle["from"]
+
+        if last_signal_candle.get(asset) == candle_id:
+            return
+
+        extreme = analysis["extreme"]
+        if extreme_state.get(asset) == extreme:
+            return
+
+        last_signal_candle[asset] = candle_id
+        extreme_state[asset] = extreme
+
+        price = current_candle["close"]
+        signal_id = (
+            "M10-" + asset.replace("-", "") + "-"
+            + signal + "-" + str(int(time.time()))
+        )
+
+        message = build_signal_message(
+            asset,
+            signal,
+            analysis,
+            price,
+            signal_id,
+        )
+
+        print("", flush=True)
+        print(message.replace("<b>", "").replace("</b>", ""), flush=True)
+        send_telegram(message)
+
+        if AUTO_TRADE:
+            execute_trade(
+                asset,
+                signal,
+                signal_id,
+                price,
+            )
+
+    except Exception as exc:
+        print(
+            "Process asset error " + asset + ": " + str(exc),
+            flush=True,
+        )
 
 
 # ============================================================
 # HEARTBEAT
 # ============================================================
 
-def send_heartbeat():
-
-    global last_heartbeat
-
-    now = time.time()
-
-    if (
-        now - last_heartbeat
-        < HEARTBEAT_SECONDS
-    ):
-
-        return
-
-    last_heartbeat = now
+def heartbeat():
+    with daily_lock:
+        current_daily_profit = daily_net_profit
+        stopped = daily_limit_stopped
 
     win_rate = 0.0
+    if trade_count > 0:
+        win_rate = (wins / trade_count) * 100.0
 
-    if completed_trades > 0:
-
-        win_rate = (
-            wins
-            / completed_trades
-        ) * 100.0
-
-    telegram(
-        f"💓 ZETA MOMENTUM 10\n\n"
-        f"Status: RUNNING\n"
-        f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Chart: 1-minute\n"
-        f"Momentum: 10\n"
-        f"Expiry: 15 minutes\n"
-        f"Stake: $1\n\n"
-        f"Progress: "
-        f"{completed_trades}/"
-        f"{TARGET_TRADES}\n"
-        f"Record: "
-        f"{wins}W / {losses}L\n"
-        f"Win rate: "
-        f"{win_rate:.2f}%\n"
-        f"P/L: "
-        f"${total_profit:.2f}\n\n"
-        f"DEMO ONLY"
+    print("", flush=True)
+    print("MOMENTUM 10 BOT ALIVE", flush=True)
+    print("Connection: OK", flush=True)
+    print("Balance: " + BALANCE_MODE, flush=True)
+    print("Auto Trading: " + str(AUTO_TRADE), flush=True)
+    print("Strategy: Momentum 10", flush=True)
+    print("Timeframe: 1M", flush=True)
+    print("Expiry: 1 minute", flush=True)
+    print("OTC Assets: " + str(len(otc_assets)), flush=True)
+    print(
+        "Trades: " + str(trade_count) + "/" + str(TARGET_TRADES),
+        flush=True,
     )
-
-
-# ============================================================
-# PROCESS SIGNAL
-# ============================================================
-
-def process_signal(
-    candles,
-    analysis
-):
-
-    global last_signal_candle
-    global active_contract
-
-    action = analysis.get(
-        "action"
-    )
-
-    if action not in (
-        "CALL",
-        "PUT"
-    ):
-
-        return
-
-    if active_contract is not None:
-
-        log(
-            "Signal skipped: "
-            "existing contract active."
-        )
-
-        return
-
-    signal_candle = candles[-1]
-
-    candle_epoch = signal_candle[
-        "epoch"
-    ]
-
-    if (
-        last_signal_candle
-        == candle_epoch
-    ):
-
-        return
-
-    last_signal_candle = (
-        candle_epoch
-    )
-
-    signal_id = make_signal_id(
-        action,
-        candle_epoch
-    )
-
-    current = analysis[
-        "current"
-    ]
-
-    previous = analysis[
-        "previous"
-    ]
-
-    low_level = analysis[
-        "low_level"
-    ]
-
-    high_level = analysis[
-        "high_level"
-    ]
-
-    log(
-        f"🚨 SIGNAL | "
-        f"{signal_id} | "
-        f"{action} | "
-        f"Momentum "
-        f"{current:.5f}%"
-    )
-
-    telegram(
-        f"🚨 ZETA SIGNAL\n\n"
-        f"ID: {signal_id}\n"
-        f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Direction: {action}\n\n"
-        f"Momentum: "
-        f"{current:.5f}%\n"
-        f"Previous: "
-        f"{previous:.5f}%\n"
-        f"Low extreme: "
-        f"{low_level:.5f}%\n"
-        f"High extreme: "
-        f"{high_level:.5f}%\n\n"
-        f"Expiry: "
-        f"{EXPIRY_MINUTES} minutes\n"
-        f"Stake: $1\n"
-        f"Trade #"
-        f"{completed_trades + 1}/"
-        f"{TARGET_TRADES}\n\n"
-        f"DEMO ONLY"
-    )
-
-    try:
-
-        proposal = get_proposal(
-            action
-        )
-
-        log(
-            f"Proposal accepted | "
-            f"ID {proposal['id']} | "
-            f"Ask "
-            f"${proposal['ask_price']:.2f}"
-        )
-
-        buy = buy_contract(
-            proposal
-        )
-
-        contract_id = buy.get(
-            "contract_id"
-        )
-
-        active_contract = {
-            "contract_id": contract_id,
-            "signal_id": signal_id,
-            "action": action,
-        }
-
-        log(
-            f"🟢 DEMO TRADE PLACED | "
-            f"Contract {contract_id}"
-        )
-
-        telegram(
-            f"🟢 ZETA TRADE OPENED\n\n"
-            f"ID: {signal_id}\n"
-            f"Contract: {contract_id}\n"
-            f"Asset: {DISPLAY_SYMBOL}\n"
-            f"Direction: {action}\n"
-            f"Stake: $1\n"
-            f"Expiry: 15 minutes\n\n"
-            f"Monitoring..."
-        )
-
-        result = monitor_contract(
-            contract_id
-        )
-
-        record_result(
-            signal_id,
-            action,
-            result
-        )
-
-    except Exception as exc:
-
-        active_contract = None
-
-        log(
-            f"Trade processing error: "
-            f"{exc}"
-        )
-
-        telegram(
-            f"⚠️ ZETA TRADE ERROR\n\n"
-            f"ID: {signal_id}\n"
-            f"Direction: {action}\n"
-            f"Error:\n"
-            f"{str(exc)[:500]}\n\n"
-            f"Bot will reconnect/retry."
-        )
-
-        raise
-
-
-# ============================================================
-# FINISH TEST
-# ============================================================
-
-def finish_test():
-
-    win_rate = 0.0
-
-    if completed_trades > 0:
-
-        win_rate = (
-            wins
-            / completed_trades
-        ) * 100.0
-
-    log("=" * 60)
-
-    log(
-        "50-TRADE TEST COMPLETE"
-    )
-
-    log(
-        f"Trades: "
-        f"{completed_trades}"
-    )
-
-    log(
-        f"Wins: {wins}"
-    )
-
-    log(
-        f"Losses: {losses}"
-    )
-
-    log(
-        f"Win rate: "
-        f"{win_rate:.2f}%"
-    )
-
-    log(
-        f"Total P/L: "
-        f"${total_profit:.2f}"
-    )
-
-    log("=" * 60)
-
-    telegram(
-        f"🏁 ZETA 50-TRADE TEST COMPLETE\n\n"
-        f"Strategy: Momentum 10\n"
-        f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Chart: 1-minute\n"
-        f"Expiry: 15 minutes\n\n"
-        f"Trades: {completed_trades}\n"
-        f"Wins: {wins}\n"
-        f"Losses: {losses}\n"
-        f"Win rate: "
-        f"{win_rate:.2f}%\n"
-        f"Total P/L: "
-        f"${total_profit:.2f}\n\n"
-        f"Next step: evaluate results "
-        f"before changing Momentum."
-    )
-
-
-# ============================================================
-# STARTUP
-# ============================================================
-
-def startup_message():
-
-    telegram(
-        f"🚀 ZETA MOMENTUM 10 STARTED\n\n"
-        f"Asset: {DISPLAY_SYMBOL}\n"
-        f"Chart: 1-minute\n"
-        f"Momentum: 10\n"
-        f"Lookback: 50\n"
-        f"Extreme zones: 10% / 90%\n"
-        f"Reversal: EXTREME → TURN\n"
-        f"Expiry: 15 minutes\n"
-        f"Stake: $1\n\n"
-        f"Target: 50 completed trades\n"
-        f"Automatic trading: ON\n"
-        f"Mode: DEMO ONLY\n"
-        f"Continuous reconnect: ON"
-    )
-
-
-# ============================================================
-# SHUTDOWN
-# ============================================================
-
-def shutdown_handler(
-    signum,
-    frame
-):
-
-    global RUNNING
-
-    RUNNING = False
-
-    log(
-        "Shutdown requested."
-    )
-
-    close_ws()
-
-
-signal.signal(
-    signal.SIGTERM,
-    shutdown_handler
-)
-
-signal.signal(
-    signal.SIGINT,
-    shutdown_handler
-)
-
-
-# ============================================================
-# CONTINUOUS RUNNER
-# ============================================================
-
-def run_forever():
-
-    global ws
-    global last_processed_candle
-
-    while RUNNING:
-
-        if completed_trades >= TARGET_TRADES:
-
-            finish_test()
-
-            return
-
-        try:
-
-            if ws is None:
-
-                log(
-                    "Connecting to "
-                    "Deriv DEMO..."
-                )
-
-                connect()
-
-                log(
-                    f"Resuming test: "
-                    f"{completed_trades}/"
-                    f"{TARGET_TRADES}"
-                )
-
-            send_heartbeat()
-
-            candles = get_candles()
-
-            if len(candles) < 2:
-
-                time.sleep(5)
-
-                continue
-
-            # Last candle = currently forming.
-            # Second-last = newest closed candle.
-
-            closed_candle = candles[-2]
-
-            candle_epoch = (
-                closed_candle["epoch"]
-            )
-
-            # Process each closed candle once.
-
-            if (
-                last_processed_candle
-                == candle_epoch
-            ):
-
-                time.sleep(5)
-
-                continue
-
-            last_processed_candle = (
-                candle_epoch
-            )
-
-            candle_time = (
-                datetime.fromtimestamp(
-                    candle_epoch,
-                    timezone.utc
-                ).strftime(
-                    "%H:%M:%S UTC"
-                )
-            )
-
-            log(
-                f"New closed candle: "
-                f"{candle_time}"
-            )
-
-            analysis = analyze_momentum(
-                candles[:-1]
-            )
-
-            if analysis is None:
-
-                time.sleep(5)
-
-                continue
-
-            action = analysis.get(
-                "action"
-            )
-
-            if action is None:
-
-                log(
-                    f"NO TRADE | "
-                    f"Momentum "
-                    f"{analysis['current']:.5f}% | "
-                    f"Zone "
-                    f"{analysis['extreme']} | "
-                    f"State "
-                    f"{analysis['state']}"
-                )
-
-            else:
-
-                process_signal(
-                    candles[:-1],
-                    analysis
-                )
-
-            if completed_trades >= TARGET_TRADES:
-
-                finish_test()
-
-                return
-
-            time.sleep(5)
-
-        # ====================================================
-        # CONNECTION / TIMEOUT RECOVERY
-        # ====================================================
-
-        except (
-            websocket.WebSocketConnectionClosedException,
-            websocket.WebSocketTimeoutException,
-            TimeoutError,
-        ) as exc:
-
-            log(
-                f"Connection/timeout error: "
-                f"{exc}"
-            )
-
-            log(
-                "Reconnecting..."
-            )
-
-            close_ws()
-
-            time.sleep(
-                RECONNECT_SECONDS
-            )
-
-        # ====================================================
-        # REST / NETWORK RECOVERY
-        # ====================================================
-
-        except requests.RequestException as exc:
-
-            log(
-                f"Network/REST error: "
-                f"{exc}"
-            )
-
-            close_ws()
-
-            time.sleep(
-                RECONNECT_SECONDS
-            )
-
-        # ====================================================
-        # GENERAL RECOVERY
-        # ====================================================
-
-        except Exception as exc:
-
-            log(
-                f"Runtime error: "
-                f"{exc}"
-            )
-
-            close_ws()
-
-            telegram(
-                f"⚠️ ZETA RECOVERY\n\n"
-                f"Temporary error:\n"
-                f"{str(exc)[:500]}\n\n"
-                f"Reconnecting automatically.\n"
-                f"Progress: "
-                f"{completed_trades}/"
-                f"{TARGET_TRADES}"
-            )
-
-            time.sleep(
-                RECONNECT_SECONDS
-            )
+    print("Pending Results: " + str(pending_results), flush=True)
+    print("Wins: " + str(wins), flush=True)
+    print("Losses: " + str(losses), flush=True)
+    print("Win Rate: " + str(round(win_rate, 1)) + "%", flush=True)
+    print("Daily net P/L: $" + str(round(current_daily_profit, 2)), flush=True)
+    print("Daily target: +$" + str(DAILY_PROFIT_TARGET), flush=True)
+    print("Daily loss limit: -$" + str(abs(DAILY_LOSS_LIMIT)), flush=True)
+    print("Daily stopped: " + str(stopped), flush=True)
 
 
 # ============================================================
@@ -1870,33 +1063,119 @@ def run_forever():
 # ============================================================
 
 def main():
+    global api
 
-    log("=" * 60)
+    init_log()
 
-    log(
-        "ZETA MOMENTUM 10"
+    # Restore today's completed P/L before connecting/trading.
+    check_daily_limits()
+
+    print("MOMENTUM 10 BOT STARTING", flush=True)
+    print("Mode: " + BALANCE_MODE, flush=True)
+    print("Auto Trading: " + str(AUTO_TRADE), flush=True)
+    print("Strategy: Momentum 10 Extreme-Reversal", flush=True)
+    print("Timeframe: 1M", flush=True)
+    print("Expiry: 1 minute", flush=True)
+    print("Stake: $" + str(STAKE), flush=True)
+    print("Trade target: " + str(TARGET_TRADES), flush=True)
+    print("Daily net profit target: +$" + str(DAILY_PROFIT_TARGET), flush=True)
+    print("Daily net loss limit: -$" + str(abs(DAILY_LOSS_LIMIT)), flush=True)
+    print("Timezone: " + DAILY_TIMEZONE, flush=True)
+    print("Continuous scanning: ON", flush=True)
+
+    last_asset_refresh = 0
+    last_heartbeat = 0
+
+    while not stop_event.is_set():
+        if check_daily_limits():
+            print(
+                "DAILY LIMIT REACHED. No new trades will be opened.",
+                flush=True,
+            )
+            break
+
+        if trade_count >= TARGET_TRADES:
+            print("TRADE COUNT TARGET REACHED.", flush=True)
+            send_telegram(
+                "🎯 <b>TRADE COUNT TARGET REACHED</b>\n"
+                "Trades: " + str(trade_count) + "\n"
+                "Wins: " + str(wins) + "\n"
+                "Losses: " + str(losses)
+            )
+            break
+
+        if api is None:
+            if not connect_iq():
+                time.sleep(RECONNECT_SECONDS)
+                continue
+
+        try:
+            if not api.check_connect():
+                print("IQ Option disconnected.", flush=True)
+                api = None
+                otc_assets = []
+                otc_active_ids = {}
+                time.sleep(RECONNECT_SECONDS)
+                continue
+        except Exception:
+            api = None
+            otc_assets = []
+            otc_active_ids = {}
+            time.sleep(RECONNECT_SECONDS)
+            continue
+
+        if not otc_assets:
+            if not get_otc_assets():
+                print("OTC assets unavailable. Retrying...", flush=True)
+                time.sleep(RECONNECT_SECONDS)
+                continue
+
+            last_asset_refresh = time.time()
+            last_heartbeat = time.time()
+
+        now = time.time()
+
+        if now - last_asset_refresh >= ASSET_REFRESH_SECONDS:
+            if get_otc_assets():
+                last_asset_refresh = now
+
+        if now - last_heartbeat >= HEARTBEAT_SECONDS:
+            heartbeat()
+            last_heartbeat = now
+
+        for asset in list(otc_assets):
+            if stop_event.is_set():
+                break
+            if check_daily_limits():
+                break
+            if trade_count >= TARGET_TRADES:
+                break
+            process_asset(asset)
+            time.sleep(SCAN_INTERVAL)
+
+        time.sleep(SCAN_INTERVAL)
+
+    # Wait briefly for in-flight result monitors before process exit.
+    wait_started = time.time()
+    while pending_results > 0 and time.time() - wait_started < 180:
+        print(
+            "Waiting for pending results: "
+            + str(pending_results),
+            flush=True,
+        )
+        time.sleep(2)
+
+    print(
+        "Scanner stopped. Daily net P/L: $"
+        + str(round(daily_net_profit, 2)),
+        flush=True,
     )
-
-    log(
-        "DERIV DEMO — 50 TRADE TEST"
-    )
-
-    log("=" * 60)
-
-    validate_environment()
-
-    load_state()
-
-    if completed_trades >= TARGET_TRADES:
-
-        finish_test()
-
-        return
-
-    startup_message()
-
-    run_forever()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Bot stopped.", flush=True)
+    except Exception as exc:
+        print("FATAL ERROR: " + str(exc), flush=True)
