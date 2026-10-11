@@ -1,2 +1,2 @@
-requests>=2.28,<3
-websocket-client>=1.5,<22
+requests
+git+https://github.com/iqoptionapi/iqoptionapi.git
