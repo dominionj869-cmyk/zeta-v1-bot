@@ -1,3 +1,4 @@
+
 import os
 import csv
 import time
@@ -10,14 +11,12 @@ from iqoptionapi.stable_api import IQ_Option
 
 
 # ============================================================
-# MOMENTUM 10 EXTREME-REVERSAL - PRACTICE MODE
+# MOMENTUM 10 - PRACTICE MODE WITH STRICT RISK CONTROLS
 # ============================================================
 
 MOMENTUM_PERIOD = 10
 MOMENTUM_LOOKBACK = 50
 EXTREME_PERCENTILE = 0.10
-
-REQUIRE_TURN = True
 MIN_TURN_DISTANCE = 0.03
 
 CANDLE_SECONDS = 60
@@ -41,23 +40,12 @@ CANDLE_REQUEST_TIMEOUT = 8
 LOG_FILE = "momentum_signal_log.csv"
 STATE_FILE = "momentum_daily_state.csv"
 
-
-# ============================================================
-# SECRETS
-# ============================================================
-
 IQ_EMAIL = os.getenv("IQ_EMAIL", "")
 IQ_PASSWORD = os.getenv("IQ_PASSWORD", "")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-
-# ============================================================
-# GLOBAL STATE
-# ============================================================
-
 api = None
-
 otc_assets = []
 otc_active_ids = {}
 
@@ -69,17 +57,20 @@ pending_results = 0
 daily_net = 0.0
 daily_date = datetime.now().strftime("%Y-%m-%d")
 
+# A result we cannot verify must never be treated as resolved.
+safety_halt = False
+limit_notice_sent = False
+
 daily_net_lock = threading.RLock()
 trade_lock = threading.Lock()
 stop_event = threading.Event()
 
-limit_notice_sent = False
 last_signal_candle = {}
 extreme_state = {}
 
 
 # ============================================================
-# DAILY STATE
+# PERSISTENT STATE
 # ============================================================
 
 def save_daily_state():
@@ -93,21 +84,28 @@ def save_daily_state():
                 file.write(str(trade_count) + "\n")
                 file.write(str(wins) + "\n")
                 file.write(str(losses) + "\n")
+                file.write("1\n" if safety_halt else "0\n")
 
             os.replace(temp_file, STATE_FILE)
 
         except Exception as exc:
-            print("Daily state save error:", exc, flush=True)
+            print("STATE SAVE FAILED:", exc, flush=True)
+            raise RuntimeError("Cannot safely save daily state.") from exc
 
 
 def load_daily_state():
     global daily_net, daily_date
-    global trade_count, wins, losses
+    global trade_count, wins, losses, safety_halt
 
     today = datetime.now().strftime("%Y-%m-%d")
 
     if not os.path.exists(STATE_FILE):
         daily_date = today
+        daily_net = 0.0
+        trade_count = 0
+        wins = 0
+        losses = 0
+        safety_halt = False
         save_daily_state()
         return
 
@@ -116,35 +114,58 @@ def load_daily_state():
             values = file.read().splitlines()
 
         if len(values) < 5:
-            raise ValueError("Incomplete daily state file.")
+            raise ValueError("State file is incomplete.")
 
         saved_date = values[0]
+        saved_net = float(values[1])
+        saved_trades = int(values[2])
+        saved_wins = int(values[3])
+        saved_losses = int(values[4])
+        saved_halt = len(values) >= 6 and values[5] == "1"
+
+        if saved_trades < 0 or saved_wins < 0 or saved_losses < 0:
+            raise ValueError("Invalid counters in state file.")
 
         if saved_date != today:
+            # An unresolved-result halt must survive a date change.
+            if saved_halt:
+                daily_date = saved_date
+                daily_net = saved_net
+                trade_count = saved_trades
+                wins = saved_wins
+                losses = saved_losses
+                safety_halt = True
+                print(
+                    "SAFETY HALT: previous trade needs investigation.",
+                    flush=True,
+                )
+                return
+
             daily_date = today
             daily_net = 0.0
             trade_count = 0
             wins = 0
             losses = 0
+            safety_halt = False
             save_daily_state()
             return
 
         daily_date = saved_date
-        daily_net = float(values[1])
-        trade_count = int(values[2])
-        wins = int(values[3])
-        losses = int(values[4])
+        daily_net = saved_net
+        trade_count = saved_trades
+        wins = saved_wins
+        losses = saved_losses
+        safety_halt = saved_halt
 
     except Exception as exc:
         raise RuntimeError(
-            "Cannot safely load daily state: " + str(exc)
+            "Cannot safely load state. Trading is blocked: " + str(exc)
         ) from exc
 
 
 def check_new_day():
     global daily_date, daily_net
-    global trade_count, wins, losses
-    global limit_notice_sent
+    global trade_count, wins, losses, limit_notice_sent
 
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -152,8 +173,7 @@ def check_new_day():
         if today == daily_date:
             return
 
-        # Never reset while trades are still unresolved.
-        if pending_results > 0:
+        if pending_results > 0 or safety_halt:
             return
 
         daily_date = today
@@ -162,28 +182,28 @@ def check_new_day():
         wins = 0
         losses = 0
         limit_notice_sent = False
-
         save_daily_state()
 
-    print("New trading day. Daily counters reset.", flush=True)
+    print("New trading day. Counters reset.", flush=True)
 
 
 # ============================================================
-# DAILY LIMITS
+# RISK CONTROLS
 # ============================================================
 
 def daily_limit_reached():
     with daily_net_lock:
-        if daily_net >= DAILY_PROFIT_TARGET:
-            return True, "Daily net profit target of $10 reached."
+        if safety_halt:
+            return True, "SAFETY HALT: trade result requires investigation."
 
-        # Conservative check: avoid another $1 loss
-        # when it could reach or cross the $5 loss limit.
-        if daily_net - STAKE <= -DAILY_LOSS_LIMIT:
-            return True, "Daily loss protection activated."
+        if daily_net >= DAILY_PROFIT_TARGET:
+            return True, "Daily net profit target reached."
+
+        if daily_net <= -DAILY_LOSS_LIMIT:
+            return True, "Daily net loss limit reached."
 
         if trade_count >= TARGET_TRADES:
-            return True, "Daily limit of 50 trades reached."
+            return True, "Daily trade limit reached."
 
     return False, ""
 
@@ -196,25 +216,21 @@ def announce_limit(reason):
             return
 
         limit_notice_sent = True
-        current_net = daily_net
-        current_trades = trade_count
-        current_wins = wins
-        current_losses = losses
 
-    message = (
-        "MOMENTUM 10 TRADING PAUSED\n"
-        + reason
-        + "\nDaily net: $"
-        + str(round(current_net, 2))
-        + "\nTrades opened: "
-        + str(current_trades)
-        + "\nWins: "
-        + str(current_wins)
-        + "\nLosses: "
-        + str(current_losses)
-        + "\nPending results: "
-        + str(pending_results)
-    )
+        message = (
+            "MOMENTUM 10 TRADING PAUSED\n"
+            + reason
+            + "\nDaily net: $"
+            + str(round(daily_net, 2))
+            + "\nTrades opened: "
+            + str(trade_count)
+            + "\nWins: "
+            + str(wins)
+            + "\nLosses: "
+            + str(losses)
+            + "\nUnresolved trades: "
+            + str(pending_results)
+        )
 
     print(message, flush=True)
     send_telegram(message)
@@ -228,19 +244,12 @@ def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
 
-    url = (
-        "https://api.telegram.org/bot"
-        + TELEGRAM_TOKEN
-        + "/sendMessage"
-    )
+    url = "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/sendMessage"
 
     try:
         response = requests.post(
             url,
-            data={
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": message,
-            },
+            data={"chat_id": TELEGRAM_CHAT_ID, "text": message},
             timeout=15,
         )
 
@@ -252,49 +261,31 @@ def send_telegram(message):
 
 
 # ============================================================
-# CSV LOG
+# CSV LOGGING
 # ============================================================
 
 def init_log():
     if os.path.exists(LOG_FILE):
         return
 
+    with open(LOG_FILE, "w", newline="", encoding="utf-8") as file:
+        csv.writer(file).writerow([
+            "time", "asset", "direction", "signal_id",
+            "entry_price", "result", "profit", "daily_net"
+        ])
+
+
+def log_trade(asset, direction, signal_id, entry_price,
+              result, profit, current_net):
     try:
-        with open(
-            LOG_FILE, "w", newline="", encoding="utf-8"
-        ) as file:
-            writer = csv.writer(file)
-            writer.writerow([
-                "time", "asset", "direction", "signal_id",
-                "entry_price", "result", "profit", "daily_net"
-            ])
-
-    except Exception as exc:
-        print("Log init error:", exc, flush=True)
-
-
-def log_trade(
-    asset, direction, signal_id, entry_price,
-    result, profit, current_net
-):
-    try:
-        with open(
-            LOG_FILE, "a", newline="", encoding="utf-8"
-        ) as file:
-            writer = csv.writer(file)
-            writer.writerow([
+        with open(LOG_FILE, "a", newline="", encoding="utf-8") as file:
+            csv.writer(file).writerow([
                 datetime.now(timezone.utc).isoformat(),
-                asset,
-                direction,
-                signal_id,
-                entry_price,
-                result,
-                profit,
-                current_net,
+                asset, direction, signal_id, entry_price,
+                result, profit, current_net,
             ])
-
     except Exception as exc:
-        print("Log error:", exc, flush=True)
+        print("LOG ERROR:", exc, flush=True)
 
 
 # ============================================================
@@ -315,34 +306,33 @@ def connect_iq():
         connected, reason = new_api.connect()
 
         if not connected:
-            print("IQ OPTION CONNECTION FAILED:", reason, flush=True)
+            print("CONNECTION FAILED:", reason, flush=True)
             return False
 
         new_api.change_balance(BALANCE_MODE)
 
         if not new_api.check_connect():
-            print("IQ Option connection check failed.", flush=True)
+            print("Connection verification failed.", flush=True)
             return False
 
         api = new_api
 
         print("IQ OPTION CONNECTED", flush=True)
-        print("Practice mode active.", flush=True)
+        print("Requested balance mode:", BALANCE_MODE, flush=True)
 
         send_telegram(
             "MOMENTUM 10 CONNECTED\n"
-            "Mode: PRACTICE\n"
-            "Strategy: Extreme-Reversal\n"
+            "Requested mode: PRACTICE\n"
             "Stake: $1\n"
-            "Daily profit target: +$10\n"
-            "Daily loss protection: -$5\n"
-            "Trade limit: 50"
+            "Daily net profit target: +$10\n"
+            "Daily net loss limit: -$5\n"
+            "Maximum unresolved trades: 1"
         )
 
         return True
 
     except Exception as exc:
-        print("Connection error:", exc, flush=True)
+        print("CONNECTION ERROR:", exc, flush=True)
         api = None
         return False
 
@@ -354,31 +344,23 @@ def connect_iq():
 def get_otc_assets():
     global otc_assets, otc_active_ids
 
-    print("Preparing OTC assets...", flush=True)
+    print("Discovering OTC assets...", flush=True)
 
     try:
-        init_data = None
-
         try:
             init_data = api.get_all_init_v2()
-        except Exception as exc:
-            print("Init V2 warning:", exc, flush=True)
+        except Exception:
+            init_data = None
 
         new_assets = []
         new_ids = {}
 
-        if isinstance(init_data, dict):
-            sections = [
-                init_data.get("turbo", {}),
-                init_data.get("binary", {}),
-            ]
-
+        def collect(sections):
             for section in sections:
                 if not isinstance(section, dict):
                     continue
 
                 actives = section.get("actives", {})
-
                 if not isinstance(actives, dict):
                     continue
 
@@ -386,20 +368,7 @@ def get_otc_assets():
                     if not isinstance(info, dict):
                         continue
 
-                    active_id = info.get("active_id", key)
-
-                    try:
-                        active_id = int(active_id)
-                    except Exception:
-                        continue
-
-                    name = info.get("name", "")
-
-                    if not name:
-                        continue
-
-                    name = str(name)
-
+                    name = str(info.get("name", ""))
                     if "." in name:
                         name = name.split(".", 1)[1]
 
@@ -412,84 +381,37 @@ def get_otc_assets():
                     if info.get("is_suspended") is True:
                         continue
 
-                    if name in new_ids:
+                    try:
+                        active_id = int(info.get("active_id", key))
+                    except Exception:
                         continue
 
-                    new_assets.append(name)
-                    new_ids[name] = active_id
+                    if name not in new_ids:
+                        new_assets.append(name)
+                        new_ids[name] = active_id
 
                     if len(new_assets) >= MAX_ASSETS:
-                        break
+                        return
 
-                if len(new_assets) >= MAX_ASSETS:
-                    break
+        if isinstance(init_data, dict):
+            collect([
+                init_data.get("turbo", {}),
+                init_data.get("binary", {}),
+            ])
 
         if not new_assets:
-            print("Trying legacy OTC discovery...", flush=True)
-
             try:
                 legacy = api.get_all_init()
-            except Exception as exc:
-                print("Legacy init warning:", exc, flush=True)
+            except Exception:
                 legacy = None
 
             if isinstance(legacy, dict):
                 result = legacy.get("result", {})
-
                 if isinstance(result, dict):
-                    sections = [
+                    collect([
                         result.get("turbo", {}),
                         result.get("binary", {}),
-                    ]
-
-                    for section in sections:
-                        if not isinstance(section, dict):
-                            continue
-
-                        actives = section.get("actives", {})
-
-                        if not isinstance(actives, dict):
-                            continue
-
-                        for key, info in actives.items():
-                            if not isinstance(info, dict):
-                                continue
-
-                            try:
-                                active_id = int(key)
-                            except Exception:
-                                continue
-
-                            name = info.get("name", "")
-
-                            if not name:
-                                continue
-
-                            name = str(name)
-
-                            if "." in name:
-                                name = name.split(".", 1)[1]
-
-                            if "-OTC" not in name:
-                                continue
-
-                            if info.get("enabled") is False:
-                                continue
-
-                            if info.get("is_suspended") is True:
-                                continue
-
-                            if name in new_ids:
-                                continue
-
-                            new_assets.append(name)
-                            new_ids[name] = active_id
-
-                            if len(new_assets) >= MAX_ASSETS:
-                                break
-
-                        if len(new_assets) >= MAX_ASSETS:
-                            break
+                    ])
 
         if not new_assets:
             print("No OPEN OTC assets found.", flush=True)
@@ -498,16 +420,14 @@ def get_otc_assets():
         otc_assets = new_assets
         otc_active_ids = new_ids
 
-        for name, active_id in otc_active_ids.items():
+        for name, active_id in new_ids.items():
             OP_code.ACTIVES[name] = active_id
 
         print("OTC assets ready:", len(otc_assets), flush=True)
-        print("Active-code mappings:", len(otc_active_ids), flush=True)
-
         return True
 
     except Exception as exc:
-        print("OTC discovery error:", exc, flush=True)
+        print("OTC DISCOVERY ERROR:", exc, flush=True)
         return False
 
 
@@ -516,57 +436,44 @@ def get_otc_assets():
 # ============================================================
 
 def get_candles(asset, count):
-    active_id = otc_active_ids.get(asset)
+    if api is None:
+        return []
 
+    active_id = otc_active_ids.get(asset)
     if active_id is None:
-        print("No active ID for", asset, flush=True)
         return []
 
     try:
         api.api.candles.candles_data = []
 
         server_time = time.time()
-
         try:
             server_time = api.api.timesync.server_timestamp
         except Exception:
             pass
 
         api.api.getcandles(
-            active_id,
-            CANDLE_SECONDS,
-            count,
-            server_time,
+            active_id, CANDLE_SECONDS, count, server_time
         )
 
         started = time.time()
 
         while time.time() - started < CANDLE_REQUEST_TIMEOUT:
             candles = api.api.candles.candles_data
-
             if candles:
                 break
-
             time.sleep(0.1)
-
-        candles = api.api.candles.candles_data
-
-        if not candles:
-            return []
 
         result = []
 
-        for candle in candles:
-            if not isinstance(candle, dict):
-                continue
-
+        for candle in api.api.candles.candles_data:
             try:
                 result.append({
-                    "from": float(candle.get("from")),
-                    "open": float(candle.get("open")),
-                    "close": float(candle.get("close")),
-                    "high": float(candle.get("max")),
-                    "low": float(candle.get("min")),
+                    "from": float(candle["from"]),
+                    "open": float(candle["open"]),
+                    "close": float(candle["close"]),
+                    "high": float(candle["max"]),
+                    "low": float(candle["min"]),
                 })
             except Exception:
                 continue
@@ -575,7 +482,7 @@ def get_candles(asset, count):
         return result
 
     except Exception as exc:
-        print("Candle error", asset, exc, flush=True)
+        print("CANDLE ERROR:", asset, exc, flush=True)
         return []
 
 
@@ -583,17 +490,14 @@ def remove_open_candle(candles):
     if len(candles) < 2:
         return candles
 
-    now = time.time()
-    last = candles[-1]
-
-    if now - last.get("from", 0) < CANDLE_SECONDS:
+    if time.time() - candles[-1]["from"] < CANDLE_SECONDS:
         return candles[:-1]
 
     return candles
 
 
 # ============================================================
-# MOMENTUM 10 - ORIGINAL EXTREME-REVERSAL LOGIC
+# MOMENTUM 10 EXTREME-REVERSAL STRATEGY
 # ============================================================
 
 def calculate_momentum(candles):
@@ -609,8 +513,7 @@ def calculate_momentum(candles):
         if previous == 0:
             continue
 
-        momentum = (current / previous) * 100.0
-        values.append(momentum)
+        values.append((current / previous) * 100.0)
 
     return values
 
@@ -619,22 +522,20 @@ def analyze_momentum(candles):
     if len(candles) < MOMENTUM_LOOKBACK + 3:
         return None
 
-    momentum_values = calculate_momentum(candles)
+    values = calculate_momentum(candles)
 
-    if len(momentum_values) < MOMENTUM_LOOKBACK + 3:
+    if len(values) < MOMENTUM_LOOKBACK + 3:
         return None
 
-    recent = momentum_values[-MOMENTUM_LOOKBACK:]
-    current = momentum_values[-1]
-    previous = momentum_values[-2]
-    previous_previous = momentum_values[-3]
+    recent = values[-MOMENTUM_LOOKBACK:]
+    current = values[-1]
+    previous = values[-2]
+    previous_previous = values[-3]
 
     sorted_values = sorted(recent)
 
     low_index = int(len(sorted_values) * EXTREME_PERCENTILE)
     high_index = int(len(sorted_values) * (1.0 - EXTREME_PERCENTILE))
-
-    low_index = min(low_index, len(sorted_values) - 1)
     high_index = min(high_index, len(sorted_values) - 1)
 
     low_threshold = sorted_values[low_index]
@@ -651,29 +552,21 @@ def analyze_momentum(candles):
         extreme = "LOW"
 
         if current > previous and previous < previous_previous:
-            turn_distance = current - previous
+            distance = current - previous
 
-            if turn_distance >= MIN_TURN_DISTANCE:
+            if distance >= MIN_TURN_DISTANCE:
                 signal = "CALL"
-
-                if recent_low != 0:
-                    reversal_strength = (
-                        turn_distance / abs(recent_low)
-                    ) * 100.0
+                reversal_strength = distance / abs(recent_low) * 100.0
 
     elif current >= high_threshold:
         extreme = "HIGH"
 
         if current < previous and previous > previous_previous:
-            turn_distance = previous - current
+            distance = previous - current
 
-            if turn_distance >= MIN_TURN_DISTANCE:
+            if distance >= MIN_TURN_DISTANCE:
                 signal = "PUT"
-
-                if recent_high != 0:
-                    reversal_strength = (
-                        turn_distance / abs(recent_high)
-                    ) * 100.0
+                reversal_strength = distance / abs(recent_high) * 100.0
 
     return {
         "signal": signal,
@@ -709,7 +602,8 @@ def build_signal_message(asset, direction, analysis, price, signal_id):
         "Recent High: " + str(round(analysis["recent_high"], 5)) + "\n"
         "Low Threshold: " + str(round(analysis["low_threshold"], 5)) + "\n"
         "High Threshold: " + str(round(analysis["high_threshold"], 5)) + "\n"
-        "Reversal Strength: " + str(round(analysis["reversal_strength"], 1)) + "%\n"
+        "Reversal Strength: "
+        + str(round(analysis["reversal_strength"], 1)) + "%\n"
         "Price: " + str(price) + "\n"
         "Signal ID: " + signal_id
     )
@@ -720,19 +614,19 @@ def build_signal_message(asset, direction, analysis, price, signal_id):
 # ============================================================
 
 def monitor_trade(order_id, asset, direction, signal_id, entry_price):
-    global pending_results, wins, losses, daily_net
+    global pending_results, wins, losses, daily_net, safety_halt
 
     try:
         time.sleep(EXPIRY_MINUTES * 60 + 5)
 
         result = None
 
-        for _ in range(20):
+        for attempt in range(20):
             try:
-                if api is not None:
+                if api is not None and api.check_connect():
                     result = api.check_win_v4(order_id)
-            except Exception:
-                result = None
+            except Exception as exc:
+                print("RESULT CHECK WARNING:", exc, flush=True)
 
             if result is not None:
                 break
@@ -740,17 +634,27 @@ def monitor_trade(order_id, asset, direction, signal_id, entry_price):
             time.sleep(1)
 
         if result is None:
-            print("Result unresolved for", asset, flush=True)
-            send_telegram(
-                "TRADE RESULT UNKNOWN\n"
+            with daily_net_lock:
+                safety_halt = True
+                save_daily_state()
+
+            message = (
+                "CRITICAL SAFETY HALT\n"
+                "Trade result could not be verified.\n"
                 "Asset: " + asset + "\n"
-                "Order ID: " + str(order_id)
-                + "\nCheck the broker history before restarting."
+                "Order ID: " + str(order_id) + "\n"
+                "No more trades are allowed.\n"
+                "Check IQ Option trade history before resuming."
             )
+
+            print(message, flush=True)
+            send_telegram(message)
             return
 
         profit = float(result)
 
+        # IQ Option's result is expected to be net profit/loss.
+        # A zero result is treated conservatively as a $1 loss.
         if profit > 0:
             result_text = "WIN"
             net_change = profit
@@ -765,23 +669,21 @@ def monitor_trade(order_id, asset, direction, signal_id, entry_price):
                 losses += 1
 
             daily_net = round(daily_net + net_change, 2)
-            current_net = daily_net
 
+            if daily_net <= -DAILY_LOSS_LIMIT:
+                daily_net = min(daily_net, -DAILY_LOSS_LIMIT)
+
+            current_net = daily_net
             save_daily_state()
 
         log_trade(
-            asset,
-            direction,
-            signal_id,
-            entry_price,
-            result_text,
-            net_change,
-            current_net,
+            asset, direction, signal_id, entry_price,
+            result_text, net_change, current_net,
         )
 
         print(
-            "RESULT", asset, result_text,
-            "Net trade:", net_change,
+            "RESULT:", asset, result_text,
+            "Trade net:", net_change,
             "Daily net:", current_net,
             flush=True,
         )
@@ -791,18 +693,25 @@ def monitor_trade(order_id, asset, direction, signal_id, entry_price):
             "Asset: " + asset + "\n"
             "Direction: " + direction + "\n"
             "Result: " + result_text + "\n"
-            "Net trade result: $" + str(round(net_change, 2)) + "\n"
+            "Trade net: $" + str(round(net_change, 2)) + "\n"
             "Daily net: $" + str(current_net) + "\n"
-            "Trades opened: " + str(trade_count) + "/" + str(TARGET_TRADES)
+            "Trades: " + str(trade_count) + "/" + str(TARGET_TRADES)
         )
 
         stopped, reason = daily_limit_reached()
-
         if stopped:
             announce_limit(reason)
 
     except Exception as exc:
-        print("Result monitor error:", exc, flush=True)
+        with daily_net_lock:
+            safety_halt = True
+            save_daily_state()
+
+        print("RESULT MONITOR FAILED:", exc, flush=True)
+        send_telegram(
+            "CRITICAL SAFETY HALT: result monitor failed. "
+            "Check broker history before restarting."
+        )
 
     finally:
         with daily_net_lock:
@@ -810,7 +719,7 @@ def monitor_trade(order_id, asset, direction, signal_id, entry_price):
 
 
 # ============================================================
-# EXECUTE TRADE
+# EXECUTE TRADE - ONE UNRESOLVED TRADE MAXIMUM
 # ============================================================
 
 def execute_trade(asset, direction, signal_id, entry_price):
@@ -829,30 +738,49 @@ def execute_trade(asset, direction, signal_id, entry_price):
             announce_limit(reason)
             return False
 
+        # Critical: do not open another trade until the previous
+        # trade has a verified result.
+        with daily_net_lock:
+            if pending_results > 0:
+                return False
+
+            # Do not risk crossing the daily loss boundary.
+            if daily_net - STAKE < -DAILY_LOSS_LIMIT:
+                announce_reason = "Next trade could exceed the loss limit."
+            else:
+                announce_reason = ""
+
+        if announce_reason:
+            announce_limit(announce_reason)
+            return False
+
         if api is None or not api.check_connect():
             print("Disconnected; trade skipped.", flush=True)
             return False
 
-        action = direction.lower()
-
-        print("Attempting trade:", asset, action, flush=True)
+        print("Attempting practice trade:", asset, direction, flush=True)
 
         order_result = api.buy(
-            STAKE,
-            asset,
-            action,
-            EXPIRY_MINUTES,
+            STAKE, asset, direction.lower(), EXPIRY_MINUTES
         )
 
-        if isinstance(order_result, tuple):
-            success = order_result[0]
-            order_id = order_result[1]
-        else:
-            success = bool(order_result)
-            order_id = order_result
+        if not isinstance(order_result, tuple) or len(order_result) < 2:
+            # An uncertain order response must not trigger another order.
+            with daily_net_lock:
+                safety_halt = True
+                save_daily_state()
 
-        if not success:
-            print("TRADE FAILED:", asset, direction, flush=True)
+            send_telegram(
+                "CRITICAL SAFETY HALT\n"
+                "Order response is uncertain.\n"
+                "Check broker history before restarting."
+            )
+            return False
+
+        success, order_id = order_result
+
+        if not success or not order_id:
+            print("TRADE NOT CONFIRMED:", asset, direction, flush=True)
             return False
 
         with daily_net_lock:
@@ -874,21 +802,26 @@ def execute_trade(asset, direction, signal_id, entry_price):
 
         thread = threading.Thread(
             target=monitor_trade,
-            args=(
-                order_id,
-                asset,
-                direction,
-                signal_id,
-                entry_price,
-            ),
+            args=(order_id, asset, direction, signal_id, entry_price),
             daemon=False,
         )
-
         thread.start()
         return True
 
     except Exception as exc:
         print("TRADE EXCEPTION:", asset, direction, exc, flush=True)
+
+        # An exception after order submission may leave the order
+        # status uncertain. Halt instead of blindly submitting again.
+        with daily_net_lock:
+            safety_halt = True
+            save_daily_state()
+
+        send_telegram(
+            "CRITICAL SAFETY HALT\n"
+            "Trade submission status may be uncertain.\n"
+            "Check broker history before restarting."
+        )
         return False
 
     finally:
@@ -902,16 +835,16 @@ def execute_trade(asset, direction, signal_id, entry_price):
 def process_asset(asset):
     try:
         stopped, reason = daily_limit_reached()
-
         if stopped:
             announce_limit(reason)
             return
 
+        # Scan signals, but never submit another trade while one
+        # is still awaiting a verified result.
         print("Scanning:", asset, flush=True)
 
         candles = get_candles(
-            asset,
-            MOMENTUM_LOOKBACK + MOMENTUM_PERIOD + 10,
+            asset, MOMENTUM_LOOKBACK + MOMENTUM_PERIOD + 10
         )
 
         if not candles:
@@ -923,38 +856,26 @@ def process_asset(asset):
             return
 
         analysis = analyze_momentum(candles)
-
-        if not analysis:
+        if not analysis or analysis["signal"] is None:
             return
 
         signal = analysis["signal"]
-
-        if signal is None:
-            return
-
-        current_candle = candles[-1]
-        candle_id = current_candle["from"]
+        candle_id = candles[-1]["from"]
 
         if last_signal_candle.get(asset) == candle_id:
             return
 
-        extreme = analysis["extreme"]
-
-        if extreme_state.get(asset) == extreme:
+        if extreme_state.get(asset) == analysis["extreme"]:
             return
 
         last_signal_candle[asset] = candle_id
-        extreme_state[asset] = extreme
+        extreme_state[asset] = analysis["extreme"]
 
-        price = current_candle["close"]
+        price = candles[-1]["close"]
 
         signal_id = (
-            "M10-"
-            + asset.replace("-", "")
-            + "-"
-            + signal
-            + "-"
-            + str(int(time.time()))
+            "M10-" + asset.replace("-", "") + "-"
+            + signal + "-" + str(int(time.time()))
         )
 
         message = build_signal_message(
@@ -968,7 +889,7 @@ def process_asset(asset):
             execute_trade(asset, signal, signal_id, price)
 
     except Exception as exc:
-        print("Process asset error", asset, exc, flush=True)
+        print("PROCESS ASSET ERROR:", asset, exc, flush=True)
 
 
 # ============================================================
@@ -982,28 +903,26 @@ def heartbeat():
         current_wins = wins
         current_losses = losses
         current_pending = pending_results
+        current_halt = safety_halt
 
     resolved = current_wins + current_losses
-    win_rate = 0.0
-
-    if resolved > 0:
-        win_rate = current_wins / resolved * 100.0
+    win_rate = current_wins / resolved * 100.0 if resolved else 0.0
 
     print("", flush=True)
     print("MOMENTUM 10 BOT ALIVE", flush=True)
-    print("Connection: OK", flush=True)
-    print("Balance:", BALANCE_MODE, flush=True)
-    print("Auto Trading:", AUTO_TRADE, flush=True)
-    print("OTC Assets:", len(otc_assets), flush=True)
-    print("Trades opened:", str(current_trades) + "/" + str(TARGET_TRADES), flush=True)
+    print("Connection:", "OK" if api and api.check_connect() else "CHECK",
+          flush=True)
+    print("Balance mode requested:", BALANCE_MODE, flush=True)
+    print("Auto trading:", AUTO_TRADE, flush=True)
+    print("OTC assets:", len(otc_assets), flush=True)
+    print("Trades:", str(current_trades) + "/" + str(TARGET_TRADES), flush=True)
     print("Resolved:", resolved, flush=True)
-    print("Pending results:", current_pending, flush=True)
+    print("Pending:", current_pending, flush=True)
     print("Wins:", current_wins, flush=True)
     print("Losses:", current_losses, flush=True)
     print("Win rate:", str(round(win_rate, 1)) + "%", flush=True)
     print("Daily net: $" + str(round(current_net, 2)), flush=True)
-    print("Profit target: +$" + str(DAILY_PROFIT_TARGET), flush=True)
-    print("Loss limit: -$" + str(DAILY_LOSS_LIMIT), flush=True)
+    print("Safety halt:", current_halt, flush=True)
 
 
 # ============================================================
@@ -1018,11 +937,15 @@ def main():
 
     print("MOMENTUM 10 BOT STARTING", flush=True)
     print("Mode:", BALANCE_MODE, flush=True)
-    print("Auto Trading:", AUTO_TRADE, flush=True)
     print("Stake: $", STAKE, flush=True)
-    print("Daily profit target: +$10", flush=True)
-    print("Daily loss limit: -$5", flush=True)
+    print("Daily net profit target: +$10", flush=True)
+    print("Daily net loss limit: -$5", flush=True)
+    print("Maximum unresolved trades: 1", flush=True)
     print("Trade limit:", TARGET_TRADES, flush=True)
+
+    if safety_halt:
+        announce_limit("Saved safety halt requires manual investigation.")
+        return
 
     last_asset_refresh = 0
     last_heartbeat = 0
@@ -1037,8 +960,6 @@ def main():
             stopped_reason = reason
             announce_limit(reason)
 
-            # Do not open more trades, but allow existing
-            # trade monitors time to finish.
             if pending_results == 0:
                 break
 
@@ -1081,7 +1002,6 @@ def main():
                 break
 
             stopped, reason = daily_limit_reached()
-
             if stopped:
                 stopped_reason = reason
                 announce_limit(reason)
@@ -1103,7 +1023,8 @@ def main():
             "Trades opened: " + str(trade_count) + "/" + str(TARGET_TRADES) + "\n"
             "Wins: " + str(wins) + "\n"
             "Losses: " + str(losses) + "\n"
-            "Pending results: " + str(pending_results)
+            "Pending results: " + str(pending_results) + "\n"
+            "Safety halt: " + str(safety_halt)
         )
 
     print(summary, flush=True)
