@@ -12,8 +12,8 @@ from iqoptionapi.stable_api import IQ_Option
 # RISK MANAGEMENT ONLY
 # scanner.py remains unchanged.
 
-DAILY_PROFIT_TARGET = 10.0
-DAILY_LOSS_LIMIT = -5.0
+DAILY_PROFIT_TARGET = 20
+DAILY_LOSS_LIMIT = -10.5
 MAX_STAKE = 1.0
 STATE_FILE = "risk_state.json"
 TIMEZONE = ZoneInfo("Africa/Lagos")
