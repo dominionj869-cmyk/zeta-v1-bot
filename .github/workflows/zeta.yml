@@ -1,4 +1,3 @@
-
 name: Momentum 10 IQ Option Scanner
 
 on:
@@ -31,11 +30,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Check scanner and risk manager
+      - name: Check scanner
         run: |
-          python -m py_compile scanner.py risk_manager.py
+          python -m py_compile scanner.py
 
-      - name: Run Momentum 10 scanner with risk management
+      - name: Run Momentum 10 scanner
         env:
           IQ_EMAIL: ${{ secrets.IQ_EMAIL }}
           IQ_PASSWORD: ${{ secrets.IQ_PASSWORD }}
@@ -43,4 +42,4 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
         run: |
-          python risk_manager.py
+          python scanner.py
