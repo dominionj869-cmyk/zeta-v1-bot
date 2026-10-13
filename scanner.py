@@ -14,12 +14,12 @@ from iqoptionapi.stable_api import IQ_Option
 # IQ OPTION OTC - PRACTICE MODE
 # ============================================================
 
-MOMENTUM_PERIOD = 10
+MOMENTUM_PERIOD = 20
 MOMENTUM_LOOKBACK = 50
-EXTREME_PERCENTILE = 0.10
+EXTREME_PERCENTILE = 0.08
 
 REQUIRE_TURN = True
-MIN_TURN_DISTANCE = 0.03
+MIN_TURN_DISTANCE = 0.06
 
 CANDLE_SECONDS = 60
 EXPIRY_MINUTES = 1
