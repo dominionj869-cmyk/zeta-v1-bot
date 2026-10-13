@@ -16,7 +16,7 @@ IQ OPTION OTC - PRACTICE MODE
 
 ============================================================
 
-MOMENTUM_PERIOD = 10
+MOMENTUM_PERIOD = 20
 MOMENTUM_LOOKBACK = 50
 EXTREME_PERCENTILE = 0.08
 
