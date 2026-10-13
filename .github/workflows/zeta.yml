@@ -6,10 +6,10 @@ on:
   schedule:
     on:
   workflow_dispatch:
+
 concurrency:
   group: momentum-10-iq-option-scanner
   cancel-in-progress: false
-
 jobs:
   scan:
     runs-on: ubuntu-latest
