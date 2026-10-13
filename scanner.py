@@ -15,7 +15,7 @@ from iqoptionapi.stable_api import IQ_Option
 # ============================================================
 
 MOMENTUM_PERIOD = 10
-MOMENTUM_LOOKBACK = 80
+MOMENTUM_LOOKBACK = 50
 EXTREME_PERCENTILE = 0.08
 
 REQUIRE_TURN = True
