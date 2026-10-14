@@ -9,5 +9,14 @@
   "last_signal_candle": {
     "AUDUSD-OTC": 1792012200
   },
-  "active_order": null
+  "active_order": {
+    "order_id": 14356156349,
+    "asset": "AUDUSD-OTC",
+    "direction": "call",
+    "momentum": -0.11426,
+    "momentum20": -0.01001,
+    "candle_time": 1792012200,
+    "opened_at": 1792012268.3480673,
+    "trade_date": "2026-10-14"
+  }
 }
