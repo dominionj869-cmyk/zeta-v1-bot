@@ -12,7 +12,16 @@ from iqoptionapi.stable_api import IQ_Option
 
 
 # MOMENTUM 10 CONTROLLED PRACTICE TEST
-WATCHLIST = ["EURUSD-OTC"]
+WATCHLIST = [
+    "EURUSD",
+    "GBPUSD",
+    "AUDUSD",
+    "USDJPY",
+    "EURUSD-OTC",
+    "GBPUSD-OTC",
+    "AUDUSD-OTC",
+    "USDJPY-OTC"
+]
 
 MOMENTUM_PERIOD = 10
 MOMENTUM_LOOKBACK = 50
