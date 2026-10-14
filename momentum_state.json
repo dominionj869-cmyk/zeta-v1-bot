@@ -6,6 +6,8 @@
   "draws": 0,
   "unknown": 0,
   "resolved": 0,
-  "last_signal_candle": {},
+  "last_signal_candle": {
+    "AUDUSD-OTC": 1792012200
+  },
   "active_order": null
 }
