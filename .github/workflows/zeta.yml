@@ -1,7 +1,11 @@
+
 name: Momentum 10 IQ Option Scanner
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 concurrency:
   group: momentum-10-iq-option-scanner
@@ -10,12 +14,13 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-
     timeout-minutes: 350
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -27,11 +32,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Check scanner and risk manager
+      - name: Check scanner syntax
         run: |
           python -m py_compile scanner.py risk_manager.py
 
-      - name: Run Momentum 10 scanner with risk management
+      - name: Run Momentum 10 scanner
         env:
           IQ_EMAIL: ${{ secrets.IQ_EMAIL }}
           IQ_PASSWORD: ${{ secrets.IQ_PASSWORD }}
@@ -39,4 +44,4 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
         run: |
-          python risk_manager.py
+          python scanner.py
