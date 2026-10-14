@@ -1,3 +1,4 @@
+
 import os
 import csv
 import json
@@ -81,10 +82,7 @@ def telegram(message):
     try:
         response = requests.post(
             url,
-            data={
-                "chat_id": chat_id,
-                "text": message
-            },
+            data={"chat_id": chat_id, "text": message},
             timeout=10
         )
 
@@ -141,8 +139,6 @@ def load_state():
         state["draws"] = 0
         state["unknown"] = 0
         state["resolved"] = 0
-
-        # Keep any unresolved order across the daily reset.
         save_state()
 
 
@@ -292,6 +288,8 @@ def connect_iq():
         asset_id = discover_asset()
 
         if asset_id is None:
+            api = None
+            asset_id = None
             return False
 
         print("Connected in", BALANCE_MODE, "mode.")
@@ -310,6 +308,8 @@ def connect_iq():
 
     except Exception as exc:
         print("Connection error:", exc)
+        api = None
+        asset_id = None
         return False
 
 
@@ -391,7 +391,6 @@ def get_candles(active_id, count):
 
         now = time.time()
 
-        # Use completed candles only, with a safety buffer.
         candles = [
             item for item in candles
             if float(item.get("from", 0))
@@ -458,7 +457,6 @@ def calculate_signal(candles):
     last_open = opens[-1]
     last_close = closes[-1]
 
-    # Require both momentum turning and candle confirmation.
     if current <= low_limit and current > previous:
         if last_close > last_open:
             direction = "call"
@@ -499,9 +497,6 @@ def trading_is_allowed():
         if state["resolved"] >= TARGET_TRADES:
             return False, "Resolved trade limit reached."
 
-        if state["active_order"] is not None:
-            return False, "An order is still unresolved."
-
     return True, ""
 
 
@@ -534,8 +529,6 @@ def monitor_trade(order):
 
             profit = float(result)
 
-            # Per the test's accounting rule, zero profit on
-            # a $1 binary trade is counted as a $1 loss.
             if profit > 0:
                 outcome = "WIN"
                 net_change = profit
@@ -602,8 +595,6 @@ def monitor_trade(order):
             return
 
         except Exception as exc:
-            # Keep the order saved and do not open another order
-            # until its result has been obtained.
             print("Result unresolved; will retry:", exc)
             stop_event.wait(RESULT_RETRY_SECONDS)
 
@@ -714,7 +705,6 @@ def run_scanner():
 
     load_state()
 
-    # Resume monitoring a previously saved order before scanning.
     with state_lock:
         saved_order = state["active_order"]
 
@@ -743,7 +733,6 @@ def run_scanner():
             telegram("SCANNER STOPPED\n" + reason)
             break
 
-        # Never place a second trade while one is unresolved.
         with state_lock:
             active = state["active_order"]
 
