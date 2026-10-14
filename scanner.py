@@ -9,7 +9,7 @@ import iqoptionapi.constants as OP_code
 from iqoptionapi.stable_api import IQ_Option
 
 # ============================================================
-MOMENTUM 10 EXTREME-REVERSAL
+# MOMENTUM 10 EXTREME-REVERSAL
 
 IQ OPTION OTC - PRACTICE MODE
 
