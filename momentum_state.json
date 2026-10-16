@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38940300798-1",
-  "net_profit": 3.02,
-  "wins": 6,
+  "net_profit": 3.89,
+  "wins": 7,
   "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 8,
+  "resolved": 9,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -23,17 +23,7 @@
     "USDIDR-OTC": 1792172400,
     "PENGUUSD-OTC": 1792172460
   },
-  "active_order": {
-    "order_id": 14361843677,
-    "asset": "PENGUUSD-OTC",
-    "direction": "call",
-    "momentum": -2.34803,
-    "momentum20": -2.41927,
-    "candle_time": 1792172460,
-    "opened_at": 1792172561.8009994,
-    "trade_date": "2026-10-16",
-    "session_id": "38940300798-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -139,6 +129,14 @@
       "net_profit": 0.82,
       "last_result": "WIN",
       "last_updated": "2026-10-16T18:42:32.246915+01:00"
+    },
+    "PENGUUSD-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.87,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T18:44:12.815681+01:00"
     }
   }
 }
