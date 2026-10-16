@@ -42,7 +42,17 @@
     "ALIBABA-OTC": 1792179600,
     "CITI-OTC": 1792180860
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362148405,
+    "asset": "CITI-OTC",
+    "direction": "call",
+    "momentum": -1.66826,
+    "momentum20": -0.71291,
+    "candle_time": 1792180860,
+    "opened_at": 1792180925.9700782,
+    "trade_date": "2026-10-16",
+    "session_id": "38959217437-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
