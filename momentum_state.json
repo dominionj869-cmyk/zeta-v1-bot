@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 3.08,
+  "net_profit": 2.08,
   "wins": 17,
-  "losses": 11,
+  "losses": 12,
   "draws": 0,
   "unknown": 0,
-  "resolved": 28,
+  "resolved": 29,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -37,17 +37,7 @@
     "TRON-OTC": 1792166400,
     "USDPHP-OTC": 1792166520
   },
-  "active_order": {
-    "order_id": 14361596199,
-    "asset": "USDPHP-OTC",
-    "direction": "call",
-    "momentum": -0.18293,
-    "momentum20": -0.15891,
-    "candle_time": 1792166520,
-    "opened_at": 1792166586.5666597,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -241,6 +231,14 @@
       "net_profit": 0.82,
       "last_result": "WIN",
       "last_updated": "2026-10-16T17:02:10.259359+01:00"
+    },
+    "USDPHP-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T17:04:11.566869+01:00"
     }
   }
 }
