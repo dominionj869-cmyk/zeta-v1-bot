@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 2.08,
+  "net_profit": 1.08,
   "wins": 17,
-  "losses": 12,
+  "losses": 13,
   "draws": 0,
   "unknown": 0,
-  "resolved": 29,
+  "resolved": 30,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -37,17 +37,7 @@
     "TRON-OTC": 1792166400,
     "USDPHP-OTC": 1792166520
   },
-  "active_order": {
-    "order_id": 14361599221,
-    "asset": "COTTON-OTC",
-    "direction": "call",
-    "momentum": -0.73741,
-    "momentum20": -0.9935,
-    "candle_time": 1792166580,
-    "opened_at": 1792166656.7572808,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -139,12 +129,12 @@
       "last_updated": "2026-10-16T16:37:05.576170+01:00"
     },
     "COTTON-OTC": {
-      "trades": 1,
+      "trades": 2,
       "wins": 0,
-      "losses": 1,
-      "net_profit": -1.0,
+      "losses": 2,
+      "net_profit": -2.0,
       "last_result": "LOSS",
-      "last_updated": "2026-10-16T16:39:24.276012+01:00"
+      "last_updated": "2026-10-16T17:05:21.757522+01:00"
     },
     "FETUSD-OTC": {
       "trades": 1,
