@@ -42,7 +42,17 @@
     "TAOUSD-OTC": 1792167000,
     "INTEL-OTC": 1792167060
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361623255,
+    "asset": "COTTON-OTC",
+    "direction": "put",
+    "momentum": 0.93574,
+    "momentum20": 0.19143,
+    "candle_time": 1792167180,
+    "opened_at": 1792167255.7836134,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
