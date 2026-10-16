@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 3.28,
-  "wins": 4,
+  "net_profit": 4.1,
+  "wins": 5,
   "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 4,
+  "resolved": 5,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -17,17 +17,7 @@
     "SUGAR-OTC": 1792164120,
     "USDMYR-OTC": 1792164360
   },
-  "active_order": {
-    "order_id": 14361501229,
-    "asset": "USDMYR-OTC",
-    "direction": "put",
-    "momentum": 0.43729,
-    "momentum20": 0.29513,
-    "candle_time": 1792164360,
-    "opened_at": 1792164430.6009536,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -61,6 +51,14 @@
       "net_profit": 0.82,
       "last_result": "WIN",
       "last_updated": "2026-10-16T16:24:14.219857+01:00"
+    },
+    "USDMYR-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T16:28:15.601204+01:00"
     }
   }
 }
