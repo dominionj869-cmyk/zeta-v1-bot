@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 4.39,
+  "net_profit": 3.39,
   "wins": 9,
-  "losses": 3,
+  "losses": 4,
   "draws": 0,
   "unknown": 0,
-  "resolved": 12,
+  "resolved": 13,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -24,17 +24,7 @@
     "SUIUSD-OTC": 1792164840,
     "COTTON-OTC": 1792165020
   },
-  "active_order": {
-    "order_id": 14361530855,
-    "asset": "COTTON-OTC",
-    "direction": "put",
-    "momentum": 0.9101,
-    "momentum20": 0.19714,
-    "candle_time": 1792165020,
-    "opened_at": 1792165099.2757065,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -124,6 +114,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-16T16:37:05.576170+01:00"
+    },
+    "COTTON-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T16:39:24.276012+01:00"
     }
   }
 }
