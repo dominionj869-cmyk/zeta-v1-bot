@@ -34,7 +34,17 @@
     "COKE-OTC": 1792178820,
     "ATOMUSD-OTC": 1792178880
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362080164,
+    "asset": "ATOMUSD-OTC",
+    "direction": "call",
+    "momentum": 0.01438,
+    "momentum20": 1.10847,
+    "candle_time": 1792178880,
+    "opened_at": 1792178954.88932,
+    "trade_date": "2026-10-16",
+    "session_id": "38954987452-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
