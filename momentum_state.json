@@ -25,7 +25,17 @@
     "COTTON-OTC": 1792165020,
     "FETUSD-OTC": 1792165140
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361537238,
+    "asset": "FETUSD-OTC",
+    "direction": "put",
+    "momentum": 2.33111,
+    "momentum20": 0.54245,
+    "candle_time": 1792165140,
+    "opened_at": 1792165242.3336263,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
