@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38940300798-1",
-  "net_profit": 0.56,
-  "wins": 3,
+  "net_profit": 1.38,
+  "wins": 4,
   "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 5,
+  "resolved": 6,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -20,17 +20,7 @@
     "PENUSD-OTC": 1792172160,
     "COFFEE-OTC": 1792172220
   },
-  "active_order": {
-    "order_id": 14361833619,
-    "asset": "COFFEE-OTC",
-    "direction": "call",
-    "momentum": -0.4493,
-    "momentum20": -0.45881,
-    "candle_time": 1792172220,
-    "opened_at": 1792172309.868182,
-    "trade_date": "2026-10-16",
-    "session_id": "38940300798-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -112,6 +102,14 @@
       "net_profit": 0.82,
       "last_result": "WIN",
       "last_updated": "2026-10-16T18:38:25.486243+01:00"
+    },
+    "COFFEE-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T18:39:34.868391+01:00"
     }
   }
 }
