@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38940300798-1",
-  "net_profit": 1.38,
-  "wins": 4,
+  "net_profit": 2.2,
+  "wins": 5,
   "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 6,
+  "resolved": 7,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -21,17 +21,7 @@
     "COFFEE-OTC": 1792172220,
     "JUPUSD-OTC": 1792172280
   },
-  "active_order": {
-    "order_id": 14361836209,
-    "asset": "JUPUSD-OTC",
-    "direction": "call",
-    "momentum": -2.66941,
-    "momentum20": 1.22074,
-    "candle_time": 1792172280,
-    "opened_at": 1792172382.8821843,
-    "trade_date": "2026-10-16",
-    "session_id": "38940300798-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -121,6 +111,14 @@
       "net_profit": 0.82,
       "last_result": "WIN",
       "last_updated": "2026-10-16T18:39:34.868391+01:00"
+    },
+    "JUPUSD-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T18:41:13.896720+01:00"
     }
   }
 }
