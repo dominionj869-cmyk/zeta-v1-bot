@@ -27,7 +27,17 @@
     "DASHUSD-OTC": 1792172820,
     "ARBUSD-OTC": 1792174740
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361931742,
+    "asset": "HBARUSD-OTC",
+    "direction": "put",
+    "momentum": 0.7308,
+    "momentum20": 1.00761,
+    "candle_time": 1792174800,
+    "opened_at": 1792174885.4639502,
+    "trade_date": "2026-10-16",
+    "session_id": "38946492574-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
