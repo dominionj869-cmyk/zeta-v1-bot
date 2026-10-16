@@ -38,7 +38,17 @@
     "USDPHP-OTC": 1792166520,
     "URANIUM-OTC": 1792166640
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361602555,
+    "asset": "URANIUM-OTC",
+    "direction": "put",
+    "momentum": 0.75391,
+    "momentum20": -0.04898,
+    "candle_time": 1792166640,
+    "opened_at": 1792166733.9568284,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
