@@ -28,7 +28,8 @@
     "CARDANO-OTC": 1792165320,
     "XPDUSD-OTC": 1792165500,
     "RAYDIUMUSD-OTC": 1792165560,
-    "DOTUSD-OTC": 1792165620
+    "DOTUSD-OTC": 1792165620,
+    "WLDUSD-OTC": 1792165740
   },
   "active_order": null,
   "stop_reason": "",
