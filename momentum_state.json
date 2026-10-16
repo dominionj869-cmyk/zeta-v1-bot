@@ -44,7 +44,8 @@
     "GOOGLE-OTC": 1792181280,
     "GRTUSD-OTC": 1792181400,
     "AMAZON-OTC": 1792181520,
-    "AIRLINES-OTC": 1792181640
+    "AIRLINES-OTC": 1792181640,
+    "EURUSD-OTC": 1792181700
   },
   "active_order": null,
   "stop_reason": "",
