@@ -23,7 +23,17 @@
     "USDIDR-OTC": 1792172400,
     "PENGUUSD-OTC": 1792172460
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361847526,
+    "asset": "RAYDIUMUSD-OTC",
+    "direction": "put",
+    "momentum": 1.97418,
+    "momentum20": 3.06732,
+    "candle_time": 1792172580,
+    "opened_at": 1792172661.6960502,
+    "trade_date": "2026-10-16",
+    "session_id": "38940300798-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
