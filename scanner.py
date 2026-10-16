@@ -43,6 +43,7 @@ HEARTBEAT_SECONDS = 300
 RECONNECT_SECONDS = 30
 CANDLE_REQUEST_TIMEOUT = 10
 RESULT_RETRY_SECONDS = 15
+RESULT_LOOKUP_TIMEOUT = 8
 DIAGNOSTIC_INTERVAL = 60
 
 MIN_CANDLES_FOR_SIGNAL = MOMENTUM_LOOKBACK + MOMENTUM_PERIOD + 2
@@ -78,6 +79,8 @@ state_lock = threading.RLock()
 trade_lock = threading.Lock()
 connection_lock = threading.Lock()
 git_lock = threading.Lock()
+result_lookup_lock = threading.Lock()
+result_lookup_workers = {}
 
 state = {
     "date": "",
@@ -845,6 +848,177 @@ def stop_for_risk(reason):
     telegram("RISK STOP\n" + reason + "\nNo further trades will be opened in this run.")
 
 
+def get_cached_closed_result(order_id):
+    """Read a closure event already received on the current WebSocket."""
+    current_api = api
+    if current_api is None:
+        return None
+
+    try:
+        closed_items = current_api.api.socket_option_closed
+    except Exception:
+        return None
+
+    keys = [order_id, str(order_id)]
+    try:
+        keys.append(int(order_id))
+    except (TypeError, ValueError, OverflowError):
+        pass
+
+    item = None
+    for key in keys:
+        try:
+            item = closed_items.get(key)
+        except Exception:
+            item = None
+        if isinstance(item, dict):
+            break
+
+    if not isinstance(item, dict):
+        return None
+
+    message = item.get("msg", item)
+    if not isinstance(message, dict):
+        return None
+
+    status = str(message.get("win", "")).strip().lower()
+    if status in ("equal", "draw", "tie"):
+        return status, 0.0
+
+    if status in ("loose", "lose", "loss"):
+        try:
+            amount = abs(float(message.get("sum", STAKE)))
+        except (TypeError, ValueError, OverflowError):
+            amount = STAKE
+        return status, -amount
+
+    if status in ("win", "won"):
+        try:
+            payout = float(message["win_amount"])
+            amount = float(message["sum"])
+            return status, round(payout - amount, 2)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return None
+
+    return None
+
+
+def find_order_record(data, order_id):
+    """Find a bet-info record matching the exact broker order ID."""
+    wanted = str(order_id)
+
+    if isinstance(data, dict):
+        candidate = data.get(wanted)
+        if isinstance(candidate, dict) and any(
+            key in candidate for key in ("win", "profit", "deposit", "win_amount")
+        ):
+            return candidate
+
+        for value in data.values():
+            found = find_order_record(value, order_id)
+            if found is not None:
+                return found
+
+    elif isinstance(data, list):
+        for value in data:
+            found = find_order_record(value, order_id)
+            if found is not None:
+                return found
+
+    return None
+
+
+def parse_betinfo_response(response, order_id):
+    """Return (broker status, net profit) only when the broker confirms closure."""
+    if not isinstance(response, (tuple, list)) or len(response) < 2:
+        return None
+    if not response[0] or not isinstance(response[1], dict):
+        return None
+
+    record = find_order_record(response[1], order_id)
+    if not isinstance(record, dict):
+        return None
+
+    status = str(record.get("win", "")).strip().lower()
+    if status in ("equal", "draw", "tie"):
+        return status, 0.0
+    if status in ("loose", "lose", "loss"):
+        return status, -STAKE
+    if status not in ("win", "won"):
+        return None
+
+    # In iqoptionapi bet-info responses, profit minus deposit is the net win.
+    try:
+        net = float(record["profit"]) - float(record["deposit"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        try:
+            net = float(record["win_amount"]) - float(
+                record.get("amount", record.get("sum", STAKE))
+            )
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return None
+
+    if net <= 0:
+        return None
+    return status, round(net, 2)
+
+
+def _betinfo_worker(api_instance, order_id, holder):
+    try:
+        holder["response"] = api_instance.get_betinfo(order_id)
+    except Exception as exc:
+        holder["error"] = str(exc)
+
+
+def get_trade_result_bounded(order_id):
+    """Avoid check_win_v4's unbounded wait; use cached close data or bet-info."""
+    cached = get_cached_closed_result(order_id)
+    if cached is not None:
+        return cached
+
+    current_api = api
+    if current_api is None:
+        raise RuntimeError("IQ Option connection is not ready for result lookup.")
+
+    # Keep only one bet-info worker per order. Some iqoptionapi versions wait
+    # indefinitely inside get_betinfo if the server does not answer. A timed-out
+    # worker is reused instead of spawning an unlimited number of blocked threads.
+    key = str(order_id)
+    with result_lookup_lock:
+        holder = result_lookup_workers.get(key)
+        if holder is None:
+            holder = {"response": None, "error": None, "thread": None}
+            worker = threading.Thread(
+                target=_betinfo_worker,
+                args=(current_api, order_id, holder),
+                daemon=True,
+            )
+            holder["thread"] = worker
+            result_lookup_workers[key] = holder
+            worker.start()
+        worker = holder["thread"]
+
+    worker.join(RESULT_LOOKUP_TIMEOUT)
+    if worker.is_alive():
+        raise RuntimeError(
+            "Broker bet-info lookup is still waiting; saved order remains unresolved."
+        )
+
+    with result_lookup_lock:
+        if result_lookup_workers.get(key) is holder:
+            result_lookup_workers.pop(key, None)
+
+    if holder.get("error"):
+        raise RuntimeError("Broker bet-info lookup failed: " + holder["error"])
+
+    result = parse_betinfo_response(holder.get("response"), order_id)
+    if result is None:
+        raise RuntimeError(
+            "Broker has not confirmed a final result for order " + str(order_id)
+        )
+    return result
+
+
 def monitor_trade(order):
     order_id = order["order_id"]
     asset = order.get("asset", "Unknown")
@@ -866,44 +1040,26 @@ def monitor_trade(order):
                     stop_event.wait(RECONNECT_SECONDS)
                     continue
 
-            result = api.check_win_v4(order_id)
-            if result is None:
-                raise RuntimeError("Trade result is not available yet.")
-
-            # iqoptionapi check_win_v4 normally returns (status, profit),
-            # for example ("win", 1.82), ("loose", -1.0), or ("equal", 0).
-            # Some forks may return a single numeric value instead.
-            broker_status = ""
-            profit_value = result
-            if isinstance(result, (tuple, list)):
-                if len(result) < 2:
-                    raise RuntimeError(
-                        "Trade result tuple has no profit value: " + repr(result)
-                    )
-                broker_status = str(result[0]).strip().lower()
-                profit_value = result[1]
-                if profit_value is None:
-                    raise RuntimeError(
-                        "Trade result is not ready: " + repr(result)
-                    )
-
-            try:
-                broker_profit = float(profit_value)
-            except (TypeError, ValueError, OverflowError) as exc:
-                raise RuntimeError(
-                    "Unrecognized broker result: " + repr(result)
-                ) from exc
+            # Do not call check_win_v4 here: in the installed iqoptionapi it
+            # loops forever until a close event is present in the current socket.
+            # After a workflow restart, that old event may not be in memory.
+            broker_result = get_trade_result_bounded(order_id)
+            broker_status = str(broker_result[0]).strip().lower()
+            broker_profit = float(broker_result[1])
 
             if broker_status in ("win", "won") and broker_profit > 0:
                 outcome = "WIN"
                 net_change = round(broker_profit, 2)
-            elif not broker_status and broker_profit > 0:
-                outcome = "WIN"
-                net_change = round(broker_profit, 2)
-            else:
+            elif broker_status in (
+                "loose", "lose", "loss", "equal", "draw", "tie"
+            ):
                 # Project rule: losses and zero/equal results count as a full stake loss.
                 outcome = "LOSS"
                 net_change = -STAKE
+            else:
+                raise RuntimeError(
+                    "Unrecognized final broker result: " + repr(broker_result)
+                )
 
             same_session = trade_session == SESSION_ID
             with state_lock:
