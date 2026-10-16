@@ -46,7 +46,17 @@
     "AMAZON-OTC": 1792181520,
     "AIRLINES-OTC": 1792181640
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362177328,
+    "asset": "AIRLINES-OTC",
+    "direction": "call",
+    "momentum": -0.43141,
+    "momentum20": 0.77436,
+    "candle_time": 1792181640,
+    "opened_at": 1792181730.2915835,
+    "trade_date": "2026-10-16",
+    "session_id": "38959217437-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
