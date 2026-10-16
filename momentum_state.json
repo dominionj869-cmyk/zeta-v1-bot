@@ -26,7 +26,8 @@
     "FETUSD-OTC": 1792165140,
     "AUDNZD-OTC": 1792165260,
     "CARDANO-OTC": 1792165320,
-    "XPDUSD-OTC": 1792165500
+    "XPDUSD-OTC": 1792165500,
+    "RAYDIUMUSD-OTC": 1792165560
   },
   "active_order": null,
   "stop_reason": "",
