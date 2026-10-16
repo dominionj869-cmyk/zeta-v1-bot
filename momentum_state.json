@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38967300302-1",
-  "net_profit": -0.17,
+  "net_profit": -1.17,
   "wins": 1,
-  "losses": 1,
+  "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 2,
+  "resolved": 3,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -58,17 +58,7 @@
     "MSFT-OTC": 1792184940,
     "EURAUD-OTC": 1792185060
   },
-  "active_order": {
-    "order_id": 14362297967,
-    "asset": "EURAUD-OTC",
-    "direction": "call",
-    "momentum": -0.2609,
-    "momentum20": -0.37302,
-    "candle_time": 1792185060,
-    "opened_at": 1792185147.058044,
-    "trade_date": "2026-10-16",
-    "session_id": "38967300302-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -446,6 +436,14 @@
       "net_profit": 0.83,
       "last_result": "WIN",
       "last_updated": "2026-10-16T22:12:18.250222+01:00"
+    },
+    "EURAUD-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T22:13:32.058260+01:00"
     }
   }
 }
