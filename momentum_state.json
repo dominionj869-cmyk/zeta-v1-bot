@@ -61,7 +61,17 @@
     "CASINOS-OTC": 1792194360,
     "AUS200-OTC": 1792194780
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362670216,
+    "asset": "AUS200-OTC",
+    "direction": "put",
+    "momentum": -0.00508,
+    "momentum20": -0.12328,
+    "candle_time": 1792194780,
+    "opened_at": 1792194847.7284024,
+    "trade_date": "2026-10-17",
+    "session_id": "38971559805-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
