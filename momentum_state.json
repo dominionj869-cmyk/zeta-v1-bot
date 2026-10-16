@@ -27,7 +27,8 @@
     "AUDNZD-OTC": 1792165260,
     "CARDANO-OTC": 1792165320,
     "XPDUSD-OTC": 1792165500,
-    "RAYDIUMUSD-OTC": 1792165560
+    "RAYDIUMUSD-OTC": 1792165560,
+    "DOTUSD-OTC": 1792165620
   },
   "active_order": null,
   "stop_reason": "",
