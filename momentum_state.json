@@ -41,7 +41,17 @@
     "GBPCAD-OTC": 1792179480,
     "ALIBABA-OTC": 1792179600
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362107718,
+    "asset": "AIG-OTC",
+    "direction": "put",
+    "momentum": 0.47791,
+    "momentum20": 0.39281,
+    "candle_time": 1792179660,
+    "opened_at": 1792179754.0047495,
+    "trade_date": "2026-10-16",
+    "session_id": "38954987452-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
