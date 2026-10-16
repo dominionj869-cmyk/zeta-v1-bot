@@ -1,28 +1,19 @@
+
 {
   "date": "2026-10-16",
   "session_id": "38920514533-1",
-  "net_profit": 0.0,
-  "wins": 0,
+  "net_profit": 0.82,
+  "wins": 1,
   "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 0,
+  "resolved": 1,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
     "ARBUSD-OTC": 1792157880
   },
-  "active_order": {
-    "order_id": 14361222265,
-    "asset": "ARBUSD-OTC",
-    "direction": "put",
-    "momentum": 3.05802,
-    "momentum20": 3.9611,
-    "candle_time": 1792157880,
-    "opened_at": 1792157962.5808325,
-    "trade_date": "2026-10-16",
-    "session_id": "38909478425-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {}
 }
