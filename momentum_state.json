@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38967300302-1",
-  "net_profit": -1.17,
+  "net_profit": -2.17,
   "wins": 1,
-  "losses": 2,
+  "losses": 3,
   "draws": 0,
   "unknown": 0,
-  "resolved": 3,
+  "resolved": 4,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -59,17 +59,7 @@
     "EURAUD-OTC": 1792185060,
     "APPLE-OTC": 1792185120
   },
-  "active_order": {
-    "order_id": 14362300758,
-    "asset": "APPLE-OTC",
-    "direction": "put",
-    "momentum": 0.16267,
-    "momentum20": -0.47941,
-    "candle_time": 1792185120,
-    "opened_at": 1792185218.2991602,
-    "trade_date": "2026-10-16",
-    "session_id": "38967300302-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -455,6 +445,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-16T22:13:32.058260+01:00"
+    },
+    "APPLE-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T22:15:09.314113+01:00"
     }
   }
 }
