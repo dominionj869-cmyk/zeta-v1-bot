@@ -19,7 +19,8 @@
     "TAOUSD-OTC": 1792172040,
     "PENUSD-OTC": 1792172160,
     "COFFEE-OTC": 1792172220,
-    "JUPUSD-OTC": 1792172280
+    "JUPUSD-OTC": 1792172280,
+    "USDIDR-OTC": 1792172400
   },
   "active_order": null,
   "stop_reason": "",
