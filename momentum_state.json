@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 6.26,
+  "net_profit": 5.26,
   "wins": 16,
-  "losses": 7,
+  "losses": 8,
   "draws": 0,
   "unknown": 0,
-  "resolved": 23,
+  "resolved": 24,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -34,17 +34,7 @@
     "WIFUSD-OTC": 1792165920,
     "COCOA-OTC": 1792166040
   },
-  "active_order": {
-    "order_id": 14361576417,
-    "asset": "COCOA-OTC",
-    "direction": "put",
-    "momentum": 2.27143,
-    "momentum20": 0.94497,
-    "candle_time": 1792166040,
-    "opened_at": 1792166108.9696865,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -214,6 +204,14 @@
       "net_profit": 0.84,
       "last_result": "WIN",
       "last_updated": "2026-10-16T16:54:25.868210+01:00"
+    },
+    "COCOA-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T16:56:13.969905+01:00"
     }
   }
 }
