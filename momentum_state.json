@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 4.59,
-  "wins": 14,
+  "net_profit": 5.42,
+  "wins": 15,
   "losses": 7,
   "draws": 0,
   "unknown": 0,
-  "resolved": 21,
+  "resolved": 22,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -32,17 +32,7 @@
     "WLDUSD-OTC": 1792165740,
     "ORDIUSD-OTC": 1792165800
   },
-  "active_order": {
-    "order_id": 14361566917,
-    "asset": "ORDIUSD-OTC",
-    "direction": "call",
-    "momentum": -1.4964,
-    "momentum20": 0.78032,
-    "candle_time": 1792165800,
-    "opened_at": 1792165894.072329,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -196,6 +186,14 @@
       "net_profit": 0.82,
       "last_result": "WIN",
       "last_updated": "2026-10-16T16:51:24.883022+01:00"
+    },
+    "ORDIUSD-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.83,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T16:53:05.089295+01:00"
     }
   }
 }
