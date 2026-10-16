@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38940300798-1",
-  "net_profit": 4.76,
+  "net_profit": 3.76,
   "wins": 8,
-  "losses": 2,
+  "losses": 3,
   "draws": 0,
   "unknown": 0,
-  "resolved": 10,
+  "resolved": 11,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -24,17 +24,7 @@
     "PENGUUSD-OTC": 1792172460,
     "TRON-OTC": 1792172640
   },
-  "active_order": {
-    "order_id": 14361850317,
-    "asset": "TRON-OTC",
-    "direction": "put",
-    "momentum": 6.73126,
-    "momentum20": 3.89004,
-    "candle_time": 1792172640,
-    "opened_at": 1792172738.6421688,
-    "trade_date": "2026-10-16",
-    "session_id": "38940300798-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -148,6 +138,14 @@
       "net_profit": 0.87,
       "last_result": "WIN",
       "last_updated": "2026-10-16T18:44:12.815681+01:00"
+    },
+    "TRON-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T18:47:09.657893+01:00"
     }
   }
 }
