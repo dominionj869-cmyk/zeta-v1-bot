@@ -10,7 +10,8 @@
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
-    "ARBUSD-OTC": 1792157880
+    "ARBUSD-OTC": 1792157880,
+    "COFFEE-OTC": 1792163760
   },
   "active_order": null,
   "stop_reason": "",
