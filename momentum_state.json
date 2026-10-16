@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38954987452-1",
-  "net_profit": 0.83,
-  "wins": 1,
+  "net_profit": 1.65,
+  "wins": 2,
   "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 1,
+  "resolved": 2,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -34,17 +34,7 @@
     "COKE-OTC": 1792178820,
     "ATOMUSD-OTC": 1792178880
   },
-  "active_order": {
-    "order_id": 14362080164,
-    "asset": "ATOMUSD-OTC",
-    "direction": "call",
-    "momentum": 0.01438,
-    "momentum20": 1.10847,
-    "candle_time": 1792178880,
-    "opened_at": 1792178954.88932,
-    "trade_date": "2026-10-16",
-    "session_id": "38954987452-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -238,6 +228,14 @@
       "net_profit": 0.83,
       "last_result": "WIN",
       "last_updated": "2026-10-16T20:29:09.344126+01:00"
+    },
+    "ATOMUSD-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T20:30:19.889549+01:00"
     }
   }
 }
