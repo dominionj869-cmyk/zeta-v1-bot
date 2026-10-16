@@ -46,7 +46,8 @@
     "AMAZON-OTC": 1792181520,
     "AIRLINES-OTC": 1792181640,
     "EURUSD-OTC": 1792181700,
-    "CANNABIS-OTC": 1792183020
+    "CANNABIS-OTC": 1792183020,
+    "CHFJPY-OTC": 1792183080
   },
   "active_order": null,
   "stop_reason": "",
