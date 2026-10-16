@@ -47,7 +47,17 @@
     "AIRLINES-OTC": 1792181640,
     "EURUSD-OTC": 1792181700
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362185557,
+    "asset": "GOOGLE-OTC",
+    "direction": "put",
+    "momentum": 0.62224,
+    "momentum20": 0.72652,
+    "candle_time": 1792181880,
+    "opened_at": 1792181956.890242,
+    "trade_date": "2026-10-16",
+    "session_id": "38959217437-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
