@@ -55,7 +55,8 @@
     "AMZNEBAY-OTC": 1792183620,
     "COTTON-OTC": 1792183680,
     "METAGOOGLE-OTC": 1792184880,
-    "MSFT-OTC": 1792184940
+    "MSFT-OTC": 1792184940,
+    "EURAUD-OTC": 1792185060
   },
   "active_order": null,
   "stop_reason": "",
