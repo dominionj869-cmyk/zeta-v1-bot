@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38963595146-1",
-  "net_profit": -1.18,
-  "wins": 1,
+  "net_profit": -0.36,
+  "wins": 2,
   "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 3,
+  "resolved": 4,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -51,17 +51,7 @@
     "EURTHB-OTC": 1792183140,
     "BCHUSD-OTC": 1792183260
   },
-  "active_order": {
-    "order_id": 14362234380,
-    "asset": "BCHUSD-OTC",
-    "direction": "call",
-    "momentum": -1.09945,
-    "momentum20": -0.7112,
-    "candle_time": 1792183260,
-    "opened_at": 1792183338.8204403,
-    "trade_date": "2026-10-16",
-    "session_id": "38963595146-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -391,6 +381,14 @@
       "net_profit": 0.82,
       "last_result": "WIN",
       "last_updated": "2026-10-16T21:42:11.576908+01:00"
+    },
+    "BCHUSD-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T21:43:23.820569+01:00"
     }
   }
 }
