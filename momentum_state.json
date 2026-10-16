@@ -30,7 +30,17 @@
     "SOLUSD-OTC": 1792175220,
     "DYDXUSD-OTC": 1792175340
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361950189,
+    "asset": "DYDXUSD-OTC",
+    "direction": "put",
+    "momentum": 4.45337,
+    "momentum20": 3.12223,
+    "candle_time": 1792175340,
+    "opened_at": 1792175411.673614,
+    "trade_date": "2026-10-16",
+    "session_id": "38946492574-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
