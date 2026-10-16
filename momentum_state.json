@@ -17,7 +17,17 @@
     "FETUSD-OTC": 1792171800,
     "RAYDIUMUSD-OTC": 1792171920
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361824571,
+    "asset": "EOSUSD-OTC",
+    "direction": "put",
+    "momentum": 4.834,
+    "momentum20": -1.80112,
+    "candle_time": 1792171980,
+    "opened_at": 1792172063.476287,
+    "trade_date": "2026-10-16",
+    "session_id": "38940300798-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
