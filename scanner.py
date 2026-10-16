@@ -963,15 +963,110 @@ def parse_betinfo_response(response, order_id):
     return status, round(net, 2)
 
 
-def _betinfo_worker(api_instance, order_id, holder):
-    try:
-        holder["response"] = api_instance.get_betinfo(order_id)
-    except Exception as exc:
-        holder["error"] = str(exc)
+def id_value_matches(value, order_id):
+    wanted = str(order_id)
+    if isinstance(value, dict):
+        return any(id_value_matches(item, order_id) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(id_value_matches(item, order_id) for item in value)
+    if value is None:
+        return False
+    return str(value) == wanted
+
+
+def find_closed_option_record(data, order_id):
+    """Find an exact order ID in the broker's closed-options history."""
+    if isinstance(data, dict):
+        id_keys = ("id", "option_id", "order_id", "orderId")
+        has_id = any(
+            key in data and id_value_matches(data.get(key), order_id)
+            for key in id_keys
+        )
+        has_result = any(
+            key in data for key in ("win", "status", "win_amount", "profit")
+        )
+        if has_id and has_result:
+            return data
+        for value in data.values():
+            found = find_closed_option_record(value, order_id)
+            if found is not None:
+                return found
+    elif isinstance(data, (list, tuple)):
+        for value in data:
+            found = find_closed_option_record(value, order_id)
+            if found is not None:
+                return found
+    return None
+
+
+def parse_closed_options_response(response, order_id):
+    """Parse a matching closed turbo/binary option without guessing."""
+    record = find_closed_option_record(response, order_id)
+    if not isinstance(record, dict):
+        return None
+
+    status = str(record.get("win", record.get("status", ""))).strip().lower()
+    if status in ("equal", "draw", "tie"):
+        return status, 0.0
+    if status in ("loose", "lose", "loss", "lost"):
+        return status, -STAKE
+    if status not in ("win", "won"):
+        return None
+
+    amount_pairs = [
+        ("win_amount", "amount"),
+        ("win_amount", "sum"),
+        ("profit", "deposit"),
+    ]
+    for gross_key, stake_key in amount_pairs:
+        try:
+            net = float(record[gross_key]) - float(record[stake_key])
+            if net > 0:
+                return status, round(net, 2)
+            return "equal", 0.0
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+    return None
+
+
+def direct_betinfo_result(api_instance, order_id, timeout_seconds):
+    """Use the low-level request with a timeout, not stable_api's endless loop."""
+    raw_api = api_instance.api
+    raw_api.game_betinfo.isSuccessful = None
+    raw_api.game_betinfo.dict = {}
+    raw_api.get_betinfo(order_id)
+
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        status = raw_api.game_betinfo.isSuccessful
+        if status is not None:
+            response = (status, raw_api.game_betinfo.dict)
+            return parse_betinfo_response(response, order_id)
+        if not api_instance.check_connect():
+            break
+        time.sleep(0.1)
+    return None
+
+
+def direct_closed_history_result(api_instance, order_id, timeout_seconds):
+    """Request recent closed binary/turbo options and wait for a bounded time."""
+    raw_api = api_instance.api
+    raw_api.get_options_v2_data = None
+    raw_api.get_options_v2(100, "binary,turbo")
+
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        response = raw_api.get_options_v2_data
+        if response is not None:
+            return parse_closed_options_response(response, order_id)
+        if not api_instance.check_connect():
+            break
+        time.sleep(0.1)
+    return None
 
 
 def get_trade_result_bounded(order_id):
-    """Avoid check_win_v4's unbounded wait; use cached close data or bet-info."""
+    """Try cached event, bounded bet-info, then recent closed-options history."""
     cached = get_cached_closed_result(order_id)
     if cached is not None:
         return cached
@@ -980,44 +1075,29 @@ def get_trade_result_bounded(order_id):
     if current_api is None:
         raise RuntimeError("IQ Option connection is not ready for result lookup.")
 
-    # Keep only one bet-info worker per order. Some iqoptionapi versions wait
-    # indefinitely inside get_betinfo if the server does not answer. A timed-out
-    # worker is reused instead of spawning an unlimited number of blocked threads.
-    key = str(order_id)
-    with result_lookup_lock:
-        holder = result_lookup_workers.get(key)
-        if holder is None:
-            holder = {"response": None, "error": None, "thread": None}
-            worker = threading.Thread(
-                target=_betinfo_worker,
-                args=(current_api, order_id, holder),
-                daemon=True,
-            )
-            holder["thread"] = worker
-            result_lookup_workers[key] = holder
-            worker.start()
-        worker = holder["thread"]
+    errors = []
+    try:
+        result = direct_betinfo_result(current_api, order_id, 5)
+        if result is not None:
+            return result
+        errors.append("direct bet-info did not confirm the result")
+    except Exception as exc:
+        errors.append("direct bet-info error: " + str(exc))
 
-    worker.join(RESULT_LOOKUP_TIMEOUT)
-    if worker.is_alive():
-        raise RuntimeError(
-            "Broker bet-info lookup is still waiting; saved order remains unresolved."
-        )
+    # Some broker sessions fail to answer get-bet-info for a saved order.
+    # Recent closed-options history is a separate retrieval route.
+    try:
+        result = direct_closed_history_result(current_api, order_id, 6)
+        if result is not None:
+            return result
+        errors.append("closed-options history did not contain a final result")
+    except Exception as exc:
+        errors.append("closed-options history error: " + str(exc))
 
-    with result_lookup_lock:
-        if result_lookup_workers.get(key) is holder:
-            result_lookup_workers.pop(key, None)
-
-    if holder.get("error"):
-        raise RuntimeError("Broker bet-info lookup failed: " + holder["error"])
-
-    result = parse_betinfo_response(holder.get("response"), order_id)
-    if result is None:
-        raise RuntimeError(
-            "Broker has not confirmed a final result for order " + str(order_id)
-        )
-    return result
-
+    raise RuntimeError(
+        "Broker has not confirmed order " + str(order_id)
+        + "; saved order remains unresolved. " + "; ".join(errors)
+    )
 
 def monitor_trade(order):
     order_id = order["order_id"]
