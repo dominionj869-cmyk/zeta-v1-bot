@@ -21,7 +21,17 @@
     "COFFEE-OTC": 1792172220,
     "JUPUSD-OTC": 1792172280
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361836209,
+    "asset": "JUPUSD-OTC",
+    "direction": "call",
+    "momentum": -2.66941,
+    "momentum20": 1.22074,
+    "candle_time": 1792172280,
+    "opened_at": 1792172382.8821843,
+    "trade_date": "2026-10-16",
+    "session_id": "38940300798-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
