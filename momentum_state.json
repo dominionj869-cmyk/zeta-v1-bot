@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38959217437-1",
-  "net_profit": 1.95,
-  "wins": 6,
+  "net_profit": 2.78,
+  "wins": 7,
   "losses": 3,
   "draws": 0,
   "unknown": 0,
-  "resolved": 9,
+  "resolved": 10,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -46,17 +46,7 @@
     "AMAZON-OTC": 1792181520,
     "AIRLINES-OTC": 1792181640
   },
-  "active_order": {
-    "order_id": 14362177328,
-    "asset": "AIRLINES-OTC",
-    "direction": "call",
-    "momentum": -0.43141,
-    "momentum20": 0.77436,
-    "candle_time": 1792181640,
-    "opened_at": 1792181730.2915835,
-    "trade_date": "2026-10-16",
-    "session_id": "38959217437-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -346,6 +336,14 @@
       "net_profit": 0.83,
       "last_result": "WIN",
       "last_updated": "2026-10-16T21:14:15.405648+01:00"
+    },
+    "AIRLINES-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.83,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T21:16:35.291801+01:00"
     }
   }
 }
