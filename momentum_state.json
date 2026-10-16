@@ -40,7 +40,17 @@
     "TRUMPUSD-OTC": 1792166760,
     "USDHKD-OTC": 1792166820
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361609467,
+    "asset": "USDHKD-OTC",
+    "direction": "call",
+    "momentum": -0.05741,
+    "momentum20": 0.0083,
+    "candle_time": 1792166820,
+    "opened_at": 1792166915.2921202,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
