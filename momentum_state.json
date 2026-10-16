@@ -40,7 +40,8 @@
     "EU50-OTC": 1792179420,
     "GBPCAD-OTC": 1792181160,
     "ALIBABA-OTC": 1792179600,
-    "CITI-OTC": 1792180860
+    "CITI-OTC": 1792180860,
+    "GOOGLE-OTC": 1792181280
   },
   "active_order": null,
   "stop_reason": "",
