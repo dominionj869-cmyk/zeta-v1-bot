@@ -31,7 +31,17 @@
     "DYDXUSD-OTC": 1792175340,
     "USDPLN-OTC": 1792175400
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361955815,
+    "asset": "EOSUSD-OTC",
+    "direction": "call",
+    "momentum": -4.58566,
+    "momentum20": -5.61899,
+    "candle_time": 1792175520,
+    "opened_at": 1792175588.6331756,
+    "trade_date": "2026-10-16",
+    "session_id": "38946492574-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
