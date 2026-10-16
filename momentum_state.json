@@ -51,7 +51,17 @@
     "EURTHB-OTC": 1792183140,
     "BCHUSD-OTC": 1792183260
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362234380,
+    "asset": "BCHUSD-OTC",
+    "direction": "call",
+    "momentum": -1.09945,
+    "momentum20": -0.7112,
+    "candle_time": 1792183260,
+    "opened_at": 1792183338.8204403,
+    "trade_date": "2026-10-16",
+    "session_id": "38963595146-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
