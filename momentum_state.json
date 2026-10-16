@@ -15,7 +15,8 @@
     "USDSGD-OTC": 1792163820,
     "LTCUSD-OTC": 1792164000,
     "SUGAR-OTC": 1792164120,
-    "USDMYR-OTC": 1792164360
+    "USDMYR-OTC": 1792164360,
+    "DYDXUSD-OTC": 1792164420
   },
   "active_order": null,
   "stop_reason": "",
