@@ -51,7 +51,8 @@
     "EURTHB-OTC": 1792183140,
     "BCHUSD-OTC": 1792183260,
     "BIDU-OTC": 1792183320,
-    "FLOKIUSD-OTC": 1792183440
+    "FLOKIUSD-OTC": 1792183440,
+    "AMZNEBAY-OTC": 1792183620
   },
   "active_order": null,
   "stop_reason": "",
