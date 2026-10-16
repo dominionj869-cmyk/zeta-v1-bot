@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38946492574-1",
-  "net_profit": 2.56,
+  "net_profit": 1.56,
   "wins": 3,
-  "losses": 0,
+  "losses": 1,
   "draws": 0,
   "unknown": 0,
-  "resolved": 3,
+  "resolved": 4,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -28,17 +28,7 @@
     "ARBUSD-OTC": 1792174740,
     "CARDANO-OTC": 1792174980
   },
-  "active_order": {
-    "order_id": 14361937936,
-    "asset": "CARDANO-OTC",
-    "direction": "call",
-    "momentum": -7.02381,
-    "momentum20": -4.3338,
-    "candle_time": 1792174980,
-    "opened_at": 1792175053.6234467,
-    "trade_date": "2026-10-16",
-    "session_id": "38946492574-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -184,6 +174,14 @@
       "net_profit": 0.82,
       "last_result": "WIN",
       "last_updated": "2026-10-16T19:21:17.960065+01:00"
+    },
+    "CARDANO-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T19:25:18.623649+01:00"
     }
   }
 }
