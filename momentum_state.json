@@ -36,7 +36,8 @@
     "COCOA-OTC": 1792178940,
     "DOTUSD-OTC": 1792179000,
     "FB-OTC": 1792179300,
-    "AIG-OTC": 1792179360
+    "AIG-OTC": 1792179360,
+    "EU50-OTC": 1792179420
   },
   "active_order": null,
   "stop_reason": "",
