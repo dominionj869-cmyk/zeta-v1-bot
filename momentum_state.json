@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38959217437-1",
-  "net_profit": 0.0,
-  "wins": 0,
+  "net_profit": 0.83,
+  "wins": 1,
   "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 0,
+  "resolved": 1,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -42,17 +42,7 @@
     "ALIBABA-OTC": 1792179600,
     "CITI-OTC": 1792180860
   },
-  "active_order": {
-    "order_id": 14362148405,
-    "asset": "CITI-OTC",
-    "direction": "call",
-    "momentum": -1.66826,
-    "momentum20": -0.71291,
-    "candle_time": 1792180860,
-    "opened_at": 1792180925.9700782,
-    "trade_date": "2026-10-16",
-    "session_id": "38959217437-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -310,6 +300,14 @@
       "net_profit": 0.83,
       "last_result": "WIN",
       "last_updated": "2026-10-16T20:42:28.724288+01:00"
+    },
+    "CITI-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.83,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T21:03:10.970356+01:00"
     }
   }
 }
