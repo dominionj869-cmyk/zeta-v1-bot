@@ -45,7 +45,8 @@
     "GRTUSD-OTC": 1792181400,
     "AMAZON-OTC": 1792181520,
     "AIRLINES-OTC": 1792181640,
-    "EURUSD-OTC": 1792181700
+    "EURUSD-OTC": 1792181700,
+    "CANNABIS-OTC": 1792183020
   },
   "active_order": null,
   "stop_reason": "",
