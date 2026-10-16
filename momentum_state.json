@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38959217437-1",
-  "net_profit": 1.78,
+  "net_profit": 0.78,
   "wins": 7,
-  "losses": 4,
+  "losses": 5,
   "draws": 0,
   "unknown": 0,
-  "resolved": 11,
+  "resolved": 12,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -47,17 +47,7 @@
     "AIRLINES-OTC": 1792181640,
     "EURUSD-OTC": 1792181700
   },
-  "active_order": {
-    "order_id": 14362185557,
-    "asset": "GOOGLE-OTC",
-    "direction": "put",
-    "momentum": 0.62224,
-    "momentum20": 0.72652,
-    "candle_time": 1792181880,
-    "opened_at": 1792181956.890242,
-    "trade_date": "2026-10-16",
-    "session_id": "38959217437-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -325,12 +315,12 @@
       "last_updated": "2026-10-16T21:03:10.970356+01:00"
     },
     "GOOGLE-OTC": {
-      "trades": 1,
+      "trades": 2,
       "wins": 0,
-      "losses": 1,
-      "net_profit": -1.0,
+      "losses": 2,
+      "net_profit": -2.0,
       "last_result": "LOSS",
-      "last_updated": "2026-10-16T21:11:21.383509+01:00"
+      "last_updated": "2026-10-16T21:20:21.890459+01:00"
     },
     "GRTUSD-OTC": {
       "trades": 1,
