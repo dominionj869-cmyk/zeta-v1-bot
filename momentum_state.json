@@ -41,7 +41,8 @@
     "GBPCAD-OTC": 1792181160,
     "ALIBABA-OTC": 1792179600,
     "CITI-OTC": 1792180860,
-    "GOOGLE-OTC": 1792181280
+    "GOOGLE-OTC": 1792181280,
+    "GRTUSD-OTC": 1792181400
   },
   "active_order": null,
   "stop_reason": "",
