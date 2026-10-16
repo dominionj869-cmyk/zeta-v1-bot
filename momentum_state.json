@@ -15,7 +15,17 @@
     "EOSUSD-OTC": 1792171320,
     "HBARUSD-OTC": 1792171380
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361800796,
+    "asset": "HBARUSD-OTC",
+    "direction": "call",
+    "momentum": -0.44717,
+    "momentum20": -0.69766,
+    "candle_time": 1792171380,
+    "opened_at": 1792171479.6049492,
+    "trade_date": "2026-10-16",
+    "session_id": "38938720610-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
