@@ -48,7 +48,17 @@
     "EURUSD-OTC": 1792181700,
     "CANNABIS-OTC": 1792183020
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362225489,
+    "asset": "CANNABIS-OTC",
+    "direction": "put",
+    "momentum": 0.62641,
+    "momentum20": 0.86694,
+    "candle_time": 1792183020,
+    "opened_at": 1792183086.9701293,
+    "trade_date": "2026-10-16",
+    "session_id": "38963595146-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
