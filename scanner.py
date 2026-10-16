@@ -42,18 +42,23 @@ HEARTBEAT_SECONDS = 300
 RECONNECT_SECONDS = 30
 CANDLE_REQUEST_TIMEOUT = 10
 RESULT_RETRY_SECONDS = 15
+DIAGNOSTIC_INTERVAL = 60
+
+MIN_CANDLES_FOR_SIGNAL = MOMENTUM_LOOKBACK + MOMENTUM_PERIOD + 2
+CANDLE_REQUEST_COUNT = MIN_CANDLES_FOR_SIGNAL + 8
 
 LOG_FILE = "momentum_signal_log.csv"
 STATE_FILE = "momentum_state.json"
 LAGOS = ZoneInfo("Africa/Lagos")
 
-SESSION_ID = (
-    str(os.getenv("GITHUB_RUN_ID"))
-    + "-"
-    + str(os.getenv("GITHUB_RUN_ATTEMPT", "1"))
-    if os.getenv("GITHUB_RUN_ID")
-    else str(int(time.time() * 1000))
-)
+if os.getenv("GITHUB_RUN_ID"):
+    SESSION_ID = (
+        str(os.getenv("GITHUB_RUN_ID"))
+        + "-"
+        + str(os.getenv("GITHUB_RUN_ATTEMPT", "1"))
+    )
+else:
+    SESSION_ID = str(int(time.time() * 1000))
 
 IQ_EMAIL = os.getenv("IQ_EMAIL", "")
 IQ_PASSWORD = os.getenv("IQ_PASSWORD", "")
@@ -65,6 +70,7 @@ asset_ids = {}
 last_asset_refresh = 0.0
 last_heartbeat = 0.0
 candle_worker = None
+last_pair_diagnostic = {}
 
 stop_event = threading.Event()
 state_lock = threading.RLock()
@@ -215,8 +221,7 @@ def load_state():
     if not isinstance(state.get("active_order"), (dict, type(None))):
         state["active_order"] = None
 
-    # Option B: reset risk totals for every manual workflow run.
-    # Keep an unresolved broker order so it can be checked before trading.
+    # Risk totals reset for each manual workflow run; saved orders are retained.
     if (
         state.get("session_id") != SESSION_ID
         or state.get("date") != today_string()
@@ -241,6 +246,14 @@ def log_trade(values):
             writer.writerow(values)
     except Exception as exc:
         print("CSV error:", exc, flush=True)
+
+
+def diagnostic(asset, message, force=False):
+    now = time.time()
+    previous = last_pair_diagnostic.get(asset, 0.0)
+    if force or now - previous >= DIAGNOSTIC_INTERVAL:
+        print("SCAN DIAGNOSTIC |", asset, "|", message, flush=True)
+        last_pair_diagnostic[asset] = now
 
 
 def normalize_name(value):
@@ -292,12 +305,12 @@ def find_asset_id(data, target):
             for active_key, info in value.items():
                 if not isinstance(info, dict):
                     continue
-                names = []
+                found_names = []
                 for name_key in name_keys:
                     name_value = info.get(name_key)
                     if isinstance(name_value, str):
-                        names.append(name_value)
-                if any(normalize_name(name) == wanted for name in names):
+                        found_names.append(name_value)
+                if any(normalize_name(name) == wanted for name in found_names):
                     for id_key in id_keys:
                         found = as_active_id(info.get(id_key))
                         if found is not None:
@@ -402,22 +415,21 @@ def connect_iq(notify=True):
                 api = None
                 return False
 
-            new_api.change_balance(BALANCE_MODE)
-
+            # Safety: this scanner is fixed to Practice mode only.
+            new_api.change_balance("PRACTICE")
             if not new_api.check_connect():
                 print("Connection check failed.", flush=True)
                 api = None
                 return False
 
             api = new_api
-
             if not refresh_assets(True):
                 print("Connected, but no watchlist IDs found. Will retry.", flush=True)
                 api = None
                 return False
 
             pairs = ", ".join(pair for pair in WATCHLIST if pair in asset_ids)
-            print("Connected in", BALANCE_MODE, "mode. Pairs:", pairs, flush=True)
+            print("Connected in PRACTICE mode. Pairs:", pairs, flush=True)
 
             if notify:
                 telegram(
@@ -452,7 +464,7 @@ def candle_request_worker(api_instance, active_id, count, result):
         started = time.time()
         while time.time() - started < CANDLE_REQUEST_TIMEOUT:
             candles = candle_api.candles_data
-            if candles and len(candles) >= count:
+            if candles and len(candles) >= MIN_CANDLES_FOR_SIGNAL:
                 result["candles"] = list(candles)
                 return
             time.sleep(0.2)
@@ -464,22 +476,26 @@ def candle_request_worker(api_instance, active_id, count, result):
 
 
 def get_candles(asset, count):
-    global candle_worker
+    global api, asset_ids, candle_worker, last_asset_refresh
 
     if api is None:
+        diagnostic(asset, "NO DATA: IQ Option connection is not ready")
         return []
 
     active_id = asset_ids.get(asset)
     if active_id is None:
+        diagnostic(asset, "NO DATA: asset ID is missing")
         return []
 
     if candle_worker is not None and candle_worker.is_alive():
+        diagnostic(asset, "CANDLE REQUEST BUSY: previous request has not finished")
         return []
 
     result = {"candles": [], "error": ""}
+    api_instance = api
     worker = threading.Thread(
         target=candle_request_worker,
-        args=(api, active_id, count, result),
+        args=(api_instance, active_id, count, result),
         daemon=True,
     )
     candle_worker = worker
@@ -487,11 +503,21 @@ def get_candles(asset, count):
     worker.join(CANDLE_REQUEST_TIMEOUT + 2)
 
     if worker.is_alive():
-        print("Candle request timed out for", asset, flush=True)
+        print(
+            "CANDLE REQUEST STUCK for", asset,
+            "; reconnecting instead of silently skipping all pairs.",
+            flush=True,
+        )
+        # The stuck worker holds the previous API object. Drop that connection
+        # and let the main loop create a fresh one for the next scan cycle.
+        api = None
+        asset_ids = {}
+        last_asset_refresh = 0.0
+        candle_worker = None
         return []
 
     if result["error"]:
-        print("Candle error for", asset, ":", result["error"], flush=True)
+        diagnostic(asset, "CANDLE ERROR: " + result["error"], force=True)
         return []
 
     try:
@@ -500,27 +526,37 @@ def get_candles(asset, count):
             key=lambda item: float(item.get("from", 0)),
         )
         now = time.time()
-        return [
+        closed = [
             candle for candle in candles
             if float(candle.get("from", 0)) + CANDLE_SECONDS <= now - 2
         ]
+        if not closed:
+            diagnostic(
+                asset,
+                "NO CLOSED CANDLES: broker returned " + str(len(candles)) + " candles",
+            )
+        return closed
     except Exception as exc:
-        print("Candle validation error:", exc, flush=True)
+        diagnostic(asset, "CANDLE VALIDATION ERROR: " + str(exc), force=True)
         return []
 
 
-def calculate_signal(candles):
-    required = MOMENTUM_LOOKBACK + MOMENTUM_PERIOD + 2
-    if len(candles) < required:
-        return None
+def evaluate_signal(candles):
+    details = {"count": len(candles)}
+    if len(candles) < MIN_CANDLES_FOR_SIGNAL:
+        details["status"] = (
+            "TOO FEW CLOSED CANDLES: have " + str(len(candles))
+            + ", need at least " + str(MIN_CANDLES_FOR_SIGNAL)
+        )
+        return None, details
 
     try:
         closes = [float(item["close"]) for item in candles]
         opens = [float(item["open"]) for item in candles]
         candle_times = [int(item["from"]) for item in candles]
-    except Exception:
-        print("Invalid candle data.", flush=True)
-        return None
+    except Exception as exc:
+        details["status"] = "INVALID CANDLE VALUES: " + str(exc)
+        return None, details
 
     momentums = []
     for index in range(MOMENTUM_PERIOD, len(closes)):
@@ -531,7 +567,8 @@ def calculate_signal(candles):
         momentums.append(value)
 
     if len(momentums) < MOMENTUM_LOOKBACK + 1:
-        return None
+        details["status"] = "TOO FEW MOMENTUM VALUES: " + str(len(momentums))
+        return None, details
 
     recent = momentums[-(MOMENTUM_LOOKBACK + 1):-1]
     current = momentums[-1]
@@ -543,14 +580,13 @@ def calculate_signal(candles):
     low_limit = ordered[low_index]
     high_limit = ordered[high_index]
 
-    if abs(current - previous) < MIN_TURN_DISTANCE:
-        return None
-
+    turn_distance = abs(current - previous)
     old20_now = closes[-1 - MOMENTUM_CONFIRM_PERIOD]
     old20_previous = closes[-2 - MOMENTUM_CONFIRM_PERIOD]
 
     if old20_now <= 0 or old20_previous <= 0:
-        return None
+        details["status"] = "INVALID PRICE FOR MOMENTUM 20"
+        return None, details
 
     momentum20_current = (
         (closes[-1] - old20_now) / old20_now * 100.0
@@ -559,40 +595,77 @@ def calculate_signal(candles):
         (closes[-2] - old20_previous) / old20_previous * 100.0
     )
 
-    momentum20_rising = momentum20_current > momentum20_previous
-    momentum20_falling = momentum20_current < momentum20_previous
+    m20_rising = momentum20_current > momentum20_previous
+    m20_falling = momentum20_current < momentum20_previous
+    bullish = closes[-1] > opens[-1]
+    bearish = closes[-1] < opens[-1]
 
-    last_open = opens[-1]
-    last_close = closes[-1]
-    direction = None
-
-    if (
-        current <= low_limit
-        and current > previous
-        and momentum20_rising
-        and last_close > last_open
-    ):
-        direction = "call"
-
-    elif (
-        current >= high_limit
-        and current < previous
-        and momentum20_falling
-        and last_close < last_open
-    ):
-        direction = "put"
-
-    if direction is None:
-        return None
-
-    return {
-        "direction": direction,
-        "momentum": round(current, 5),
-        "previous": round(previous, 5),
-        "momentum20": round(momentum20_current, 5),
-        "momentum20_previous": round(momentum20_previous, 5),
+    details.update({
+        "m10": round(current, 5),
+        "m10_prev": round(previous, 5),
+        "low_limit": round(low_limit, 5),
+        "high_limit": round(high_limit, 5),
+        "turn_distance": round(turn_distance, 5),
+        "m20": round(momentum20_current, 5),
+        "m20_prev": round(momentum20_previous, 5),
+        "m20_rising": m20_rising,
+        "m20_falling": m20_falling,
+        "last_candle": "BULLISH" if bullish else "BEARISH" if bearish else "DOJI",
         "candle_time": candle_times[-1],
-    }
+    })
+
+    if turn_distance < MIN_TURN_DISTANCE:
+        details["status"] = "NO SETUP: Momentum 10 turn is below minimum distance"
+        return None, details
+
+    call_extreme = current <= low_limit
+    put_extreme = current >= high_limit
+
+    if call_extreme and current > previous and m20_rising and bullish:
+        details["status"] = "CALL SETUP"
+        return {
+            "direction": "call",
+            "momentum": round(current, 5),
+            "previous": round(previous, 5),
+            "momentum20": round(momentum20_current, 5),
+            "momentum20_previous": round(momentum20_previous, 5),
+            "candle_time": candle_times[-1],
+        }, details
+
+    if put_extreme and current < previous and m20_falling and bearish:
+        details["status"] = "PUT SETUP"
+        return {
+            "direction": "put",
+            "momentum": round(current, 5),
+            "previous": round(previous, 5),
+            "momentum20": round(momentum20_current, 5),
+            "momentum20_previous": round(momentum20_previous, 5),
+            "candle_time": candle_times[-1],
+        }, details
+
+    reasons = []
+    if not call_extreme and not put_extreme:
+        reasons.append("Momentum 10 is not at an extreme")
+    if call_extreme and current <= previous:
+        reasons.append("low extreme has not turned upward")
+    if put_extreme and current >= previous:
+        reasons.append("high extreme has not turned downward")
+    if call_extreme and current > previous and not m20_rising:
+        reasons.append("Momentum 20 does not confirm CALL turn")
+    if put_extreme and current < previous and not m20_falling:
+        reasons.append("Momentum 20 does not confirm PUT turn")
+    if call_extreme and current > previous and m20_rising and not bullish:
+        reasons.append("last candle is not bullish")
+    if put_extreme and current < previous and m20_falling and not bearish:
+        reasons.append("last candle is not bearish")
+
+    details["status"] = "NO SETUP: " + "; ".join(reasons or ["conditions not aligned"])
+    return None, details
+
+
+def calculate_signal(candles):
+    signal, details = evaluate_signal(candles)
+    return signal
 
 
 def risk_status():
@@ -602,32 +675,22 @@ def risk_status():
 
     if net >= SESSION_PROFIT_TARGET:
         return False, "Run profit target reached (+$15)."
-
     if net <= -SESSION_LOSS_LIMIT:
         return False, "Run loss limit reached (-$5)."
-
     if resolved >= MAX_RESOLVED_TRADES:
         return False, "Maximum 50 resolved trades reached."
-
     return True, ""
 
 
 def stop_for_risk(reason):
-    # Set this first so the scan loop stops immediately.
     if stop_event.is_set():
         return
-
     stop_event.set()
-
     with state_lock:
         state["stop_reason"] = reason
-
     save_state()
     print("RISK STOP:", reason, flush=True)
-    telegram(
-        "RISK STOP\n" + reason
-        + "\nNo further trades will be opened in this run."
-    )
+    telegram("RISK STOP\n" + reason + "\nNo further trades will be opened in this run.")
 
 
 def monitor_trade(order):
@@ -637,7 +700,6 @@ def monitor_trade(order):
     opened_at = float(order.get("opened_at", time.time()))
     trade_session = str(order.get("session_id", ""))
     trade_date = order.get("trade_date", today_string())
-
     wait_until = opened_at + EXPIRY_MINUTES * 60 + 5
 
     while not stop_event.is_set():
@@ -653,13 +715,10 @@ def monitor_trade(order):
                     continue
 
             result = api.check_win_v4(order_id)
-
             if result is None:
                 raise RuntimeError("Trade result is not available yet.")
 
             broker_profit = float(result)
-
-            # A zero or negative broker result counts as a full $1 loss.
             if broker_profit > 0:
                 outcome = "WIN"
                 net_change = round(broker_profit, 2)
@@ -668,18 +727,15 @@ def monitor_trade(order):
                 net_change = -STAKE
 
             same_session = trade_session == SESSION_ID
-
             with state_lock:
                 if same_session:
                     state["net_profit"] = round(
                         float(state["net_profit"]) + net_change, 2
                     )
-
                     if outcome == "WIN":
                         state["wins"] = int(state["wins"]) + 1
                     else:
                         state["losses"] = int(state["losses"]) + 1
-
                     state["resolved"] = int(state["resolved"]) + 1
 
                 state["active_order"] = None
@@ -689,7 +745,6 @@ def monitor_trade(order):
                 losses_now = int(state["losses"])
 
             save_state()
-
             log_trade({
                 "time": datetime.now(LAGOS).isoformat(),
                 "date": trade_date,
@@ -712,18 +767,13 @@ def monitor_trade(order):
                 "Result: " + outcome + "\n"
                 "Net trade result: $" + str(round(net_change, 2)) + "\n"
                 "Run net: $" + str(session_net) + "\n"
-                "Resolved: " + str(resolved) + "/"
-                + str(MAX_RESOLVED_TRADES) + "\n"
-                "Wins: " + str(wins_now)
-                + " | Losses: " + str(losses_now)
+                "Resolved: " + str(resolved) + "/" + str(MAX_RESOLVED_TRADES) + "\n"
+                "Wins: " + str(wins_now) + " | Losses: " + str(losses_now)
             )
-
             if not same_session:
                 message += (
-                    "\nPrior-run order: result logged but excluded "
-                    "from this run's risk totals."
+                    "\nPrior-run order: result logged but excluded from this run's risk totals."
                 )
-
             print(message, flush=True)
             telegram(message)
 
@@ -731,7 +781,6 @@ def monitor_trade(order):
                 allowed, reason = risk_status()
                 if not allowed:
                     stop_for_risk(reason)
-
             return
 
         except Exception as exc:
@@ -740,13 +789,8 @@ def monitor_trade(order):
 
 
 def place_trade(asset, direction, signal):
-    if not AUTO_TRADE:
-        print("Auto trading disabled.", flush=True)
+    if not AUTO_TRADE or stop_event.is_set():
         return False
-
-    if stop_event.is_set():
-        return False
-
     if not trade_lock.acquire(blocking=False):
         print("Trade placement already in progress.", flush=True)
         return False
@@ -757,9 +801,6 @@ def place_trade(asset, direction, signal):
             stop_for_risk(reason)
             return False
 
-        if stop_event.is_set():
-            return False
-
         with state_lock:
             if state.get("active_order") is not None:
                 print("Trade blocked: an order is unresolved.", flush=True)
@@ -768,12 +809,10 @@ def place_trade(asset, direction, signal):
         if api is None or not api.check_connect():
             print("Disconnected; trade skipped.", flush=True)
             return False
-
         if asset not in asset_ids:
             print("No active ID for", asset, "- trade skipped.", flush=True)
             return False
 
-        # Recheck immediately before sending the broker order.
         allowed, reason = risk_status()
         if not allowed or stop_event.is_set():
             if not allowed:
@@ -781,11 +820,7 @@ def place_trade(asset, direction, signal):
             return False
 
         print("PRACTICE balance:", api.get_balance(), flush=True)
-
-        success, order_id = api.buy(
-            STAKE, asset, direction, EXPIRY_MINUTES
-        )
-
+        success, order_id = api.buy(STAKE, asset, direction, EXPIRY_MINUTES)
         if not success:
             print("Order rejected for", asset, ":", order_id, flush=True)
             telegram("Order rejected for " + asset + ". No trade recorded.")
@@ -802,17 +837,14 @@ def place_trade(asset, direction, signal):
             "trade_date": today_string(),
             "session_id": SESSION_ID,
         }
-
         with state_lock:
             state["active_order"] = order
-
         save_state()
 
         print(
             "PRACTICE order accepted:", asset,
             direction.upper(), order_id, flush=True,
         )
-
         telegram(
             "PRACTICE TRADE OPENED\n"
             "Asset: " + asset + "\n"
@@ -821,12 +853,7 @@ def place_trade(asset, direction, signal):
             "Run target: +$15 | Run loss stop: -$5\n"
             "Order ID: " + str(order_id)
         )
-
-        thread = threading.Thread(
-            target=monitor_trade,
-            args=(order,),
-            daemon=True,
-        )
+        thread = threading.Thread(target=monitor_trade, args=(order,), daemon=True)
         thread.start()
         return True
 
@@ -834,28 +861,20 @@ def place_trade(asset, direction, signal):
         print("Trade placement error:", exc, flush=True)
         telegram("Trade placement error: " + str(exc))
         return False
-
     finally:
         trade_lock.release()
 
 
 def heartbeat():
     global last_heartbeat
-
     now = time.time()
     if now - last_heartbeat < HEARTBEAT_SECONDS:
         return
-
     last_heartbeat = now
 
     with state_lock:
         active = state.get("active_order")
-        active_asset = (
-            active.get("asset")
-            if isinstance(active, dict)
-            else "None"
-        )
-
+        active_asset = active.get("asset") if isinstance(active, dict) else "None"
         print(
             "HEARTBEAT | Run:", state.get("session_id"),
             "| Pairs:", len(asset_ids), "/", len(WATCHLIST),
@@ -870,7 +889,6 @@ def heartbeat():
 
 def run_scanner():
     global last_asset_refresh
-
     load_state()
 
     print("Momentum 10/20 scanner starting in PRACTICE mode.", flush=True)
@@ -878,24 +896,22 @@ def run_scanner():
     print("Watchlist:", ", ".join(WATCHLIST), flush=True)
     print("Run profit target: +$15 | Run loss stop: -$5", flush=True)
     print("Maximum resolved trades:", MAX_RESOLVED_TRADES, flush=True)
+    print(
+        "Diagnostics enabled: each pair reports candle/data status at least once per minute.",
+        flush=True,
+    )
 
     if not connect_iq(True):
         print("Initial connection not ready. Scanner will retry.", flush=True)
 
-    # Do not place new trades until any saved order has been resolved.
     with state_lock:
         saved_order = state.get("active_order")
-
     if isinstance(saved_order, dict):
         print(
             "Saved unresolved order found; checking it before new entries.",
             flush=True,
         )
-        thread = threading.Thread(
-            target=monitor_trade,
-            args=(saved_order,),
-            daemon=True,
-        )
+        thread = threading.Thread(target=monitor_trade, args=(saved_order,), daemon=True)
         thread.start()
 
     while not stop_event.is_set():
@@ -919,7 +935,6 @@ def run_scanner():
 
         with state_lock:
             active = state.get("active_order")
-
         if active is not None:
             heartbeat()
             stop_event.wait(SCAN_INTERVAL)
@@ -928,7 +943,6 @@ def run_scanner():
         for asset in WATCHLIST:
             if stop_event.is_set():
                 break
-
             with state_lock:
                 if state.get("active_order") is not None:
                     break
@@ -939,34 +953,41 @@ def run_scanner():
                 break
 
             if asset not in asset_ids:
+                diagnostic(asset, "SKIPPED: asset ID is not available")
                 continue
 
-            candles = get_candles(
-                asset,
-                MOMENTUM_LOOKBACK + MOMENTUM_PERIOD + 5,
-            )
-
+            candles = get_candles(asset, CANDLE_REQUEST_COUNT)
             if not candles:
+                diagnostic(asset, "NO CLOSED CANDLE DATA returned by candle request")
                 continue
 
-            signal = calculate_signal(candles)
+            signal, details = evaluate_signal(candles)
             if signal is None:
+                diagnostic(
+                    asset,
+                    "candles=" + str(len(candles))
+                    + " | " + str(details.get("status", "No qualifying setup"))
+                    + " | M10=" + str(details.get("m10", "n/a"))
+                    + " prev=" + str(details.get("m10_prev", "n/a"))
+                    + " extremes=" + str(details.get("low_limit", "n/a"))
+                    + "/" + str(details.get("high_limit", "n/a"))
+                    + " | M20=" + str(details.get("m20", "n/a"))
+                    + " prev=" + str(details.get("m20_prev", "n/a"))
+                    + " | candle=" + str(details.get("last_candle", "n/a")),
+                )
                 continue
 
             signal_time = int(signal["candle_time"])
-
             with state_lock:
                 previous_signal = state["last_signal_candle"].get(asset)
                 duplicate = previous_signal == signal_time
-
                 if not duplicate:
                     state["last_signal_candle"][asset] = signal_time
-
             if duplicate:
+                diagnostic(asset, "SETUP found but already handled for this candle")
                 continue
 
             save_state()
-
             message = (
                 "MOMENTUM 10 SIGNAL (MOMENTUM 20 CONFIRMED)\n"
                 "Asset: " + asset + "\n"
@@ -976,16 +997,13 @@ def run_scanner():
                 "Momentum 20: " + str(signal["momentum20"]) + "\n"
                 "Mode: PRACTICE"
             )
-
             print(message, flush=True)
             telegram(message)
-
             place_trade(asset, signal["direction"], signal)
 
             with state_lock:
                 if state.get("active_order") is not None:
                     break
-
             if stop_event.is_set():
                 break
 
@@ -1003,11 +1021,9 @@ def run_scanner():
             + " | Losses: " + str(state.get("losses")) + "\n"
             "Run net: $" + str(state.get("net_profit")) + "\n"
             "Target: +$15 | Loss stop: -$5\n"
-            "Stop reason: "
-            + str(state.get("stop_reason") or "Manual/workflow stop")
+            "Stop reason: " + str(state.get("stop_reason") or "Manual/workflow stop")
             + "\nUnresolved order: " + str(active is not None)
         )
-
     save_state()
     print(summary, flush=True)
     telegram(summary)
