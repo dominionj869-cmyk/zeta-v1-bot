@@ -33,7 +33,17 @@
     "ORDIUSD-OTC": 1792165800,
     "WIFUSD-OTC": 1792165920
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361571724,
+    "asset": "WIFUSD-OTC",
+    "direction": "call",
+    "momentum": -2.82786,
+    "momentum20": -0.74915,
+    "candle_time": 1792165920,
+    "opened_at": 1792166000.8679774,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
