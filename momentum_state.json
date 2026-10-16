@@ -18,7 +18,8 @@
     "USDMYR-OTC": 1792164360,
     "DYDXUSD-OTC": 1792164420,
     "XRPUSD-OTC": 1792164540,
-    "HBARUSD-OTC": 1792164600
+    "HBARUSD-OTC": 1792164600,
+    "FWONA-OTC": 1792164660
   },
   "active_order": null,
   "stop_reason": "",
