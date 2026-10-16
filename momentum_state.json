@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38940300798-1",
-  "net_profit": 3.76,
+  "net_profit": 2.76,
   "wins": 8,
-  "losses": 3,
+  "losses": 4,
   "draws": 0,
   "unknown": 0,
-  "resolved": 11,
+  "resolved": 12,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -25,17 +25,7 @@
     "TRON-OTC": 1792172640,
     "LUNA-OTC": 1792172760
   },
-  "active_order": {
-    "order_id": 14361854035,
-    "asset": "LUNA-OTC",
-    "direction": "call",
-    "momentum": -1.15343,
-    "momentum20": -0.06032,
-    "candle_time": 1792172760,
-    "opened_at": 1792172838.3814297,
-    "trade_date": "2026-10-16",
-    "session_id": "38940300798-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -157,6 +147,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-16T18:47:09.657893+01:00"
+    },
+    "LUNA-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T18:48:23.381704+01:00"
     }
   }
 }
