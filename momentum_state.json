@@ -27,7 +27,8 @@
     "DASHUSD-OTC": 1792175160,
     "ARBUSD-OTC": 1792174740,
     "CARDANO-OTC": 1792174980,
-    "SOLUSD-OTC": 1792175220
+    "SOLUSD-OTC": 1792175220,
+    "DYDXUSD-OTC": 1792175340
   },
   "active_order": null,
   "stop_reason": "",
