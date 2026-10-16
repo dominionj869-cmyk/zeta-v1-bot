@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38940300798-1",
-  "net_profit": 3.89,
-  "wins": 7,
+  "net_profit": 4.76,
+  "wins": 8,
   "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 9,
+  "resolved": 10,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -23,17 +23,7 @@
     "USDIDR-OTC": 1792172400,
     "PENGUUSD-OTC": 1792172460
   },
-  "active_order": {
-    "order_id": 14361847526,
-    "asset": "RAYDIUMUSD-OTC",
-    "direction": "put",
-    "momentum": 1.97418,
-    "momentum20": 3.06732,
-    "candle_time": 1792172580,
-    "opened_at": 1792172661.6960502,
-    "trade_date": "2026-10-16",
-    "session_id": "38940300798-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -93,12 +83,12 @@
       "last_updated": "2026-10-16T18:33:02.958257+01:00"
     },
     "RAYDIUMUSD-OTC": {
-      "trades": 1,
-      "wins": 1,
+      "trades": 2,
+      "wins": 2,
       "losses": 0,
-      "net_profit": 0.87,
+      "net_profit": 1.74,
       "last_result": "WIN",
-      "last_updated": "2026-10-16T18:34:17.817579+01:00"
+      "last_updated": "2026-10-16T18:45:26.696242+01:00"
     },
     "TAOUSD-OTC": {
       "trades": 1,
