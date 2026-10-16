@@ -35,6 +35,7 @@ STAKE = 1.0
 
 SESSION_PROFIT_TARGET = 15.0
 SESSION_LOSS_LIMIT = 5.0
+MAX_LOSING_TRADES = 5
 MAX_RESOLVED_TRADES = 50
 
 SCAN_INTERVAL = 5
@@ -238,6 +239,102 @@ def load_state():
         reset_session_counters()
 
     save_state()
+
+
+def apply_verified_order_recovery():
+    """Apply the user-verified result for one exact saved broker order once."""
+    verified = {
+        14361222265: {
+            "asset": "ARBUSD-OTC",
+            "direction": "put",
+            "result": "WIN",
+            "net_profit": 0.82,
+            "opening_price": 0.145885,
+            "closing_price": 0.145755,
+            "trade_date": "2026-10-16",
+            "trade_session_id": "38909478425-1",
+        }
+    }
+
+    with state_lock:
+        order = state.get("active_order")
+        if not isinstance(order, dict):
+            return False
+
+        try:
+            order_id = int(order.get("order_id"))
+        except (TypeError, ValueError, OverflowError):
+            return False
+
+        result = verified.get(order_id)
+        if result is None:
+            return False
+
+        if str(order.get("asset", "")) != result["asset"]:
+            print("Verified recovery refused: asset does not match order ID.", flush=True)
+            return False
+        if str(order.get("direction", "")).lower() != result["direction"]:
+            print("Verified recovery refused: direction does not match order ID.", flush=True)
+            return False
+
+        # The order belongs to an earlier run. Update persistent asset history,
+        # but do not add it to this run's profit target or trade counters.
+        stats_all = state.get("asset_stats", {})
+        if not isinstance(stats_all, dict):
+            stats_all = {}
+            state["asset_stats"] = stats_all
+        asset_stats = stats_all.get(result["asset"])
+        if not isinstance(asset_stats, dict):
+            asset_stats = {
+                "trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "net_profit": 0.0,
+                "last_result": "",
+                "last_updated": "",
+            }
+            stats_all[result["asset"]] = asset_stats
+
+        asset_stats["trades"] = int(asset_stats.get("trades", 0)) + 1
+        asset_stats["wins"] = int(asset_stats.get("wins", 0)) + 1
+        asset_stats["net_profit"] = round(
+            float(asset_stats.get("net_profit", 0.0)) + result["net_profit"], 2
+        )
+        asset_stats["last_result"] = "WIN"
+        asset_stats["last_updated"] = datetime.now(LAGOS).isoformat()
+        state["active_order"] = None
+        session_net = round(float(state.get("net_profit", 0.0)), 2)
+
+    # Save the cleared order first. If the workflow restarts, this exact result
+    # cannot be applied twice because active_order will already be null.
+    save_state()
+    log_trade({
+        "time": datetime.now(LAGOS).isoformat(),
+        "date": result["trade_date"],
+        "session_id": result["trade_session_id"],
+        "asset": result["asset"],
+        "direction": "PUT",
+        "momentum": order.get("momentum", ""),
+        "momentum20": order.get("momentum20", ""),
+        "candle_time": order.get("candle_time", ""),
+        "order_id": order_id,
+        "result": "WIN",
+        "profit": result["net_profit"],
+        "session_net": session_net,
+    })
+    print(
+        "VERIFIED RECOVERY: order " + str(order_id)
+        + " recorded as WIN, net +$0.82. Active order cleared."
+        + " Prior-run result excluded from this run's risk totals.",
+        flush=True,
+    )
+    telegram(
+        "VERIFIED PRIOR-RUN RESULT RECOVERED\n"
+        "Asset: ARBUSD-OTC\nDirection: PUT\nResult: WIN\n"
+        "Net profit: +$0.82\nOrder ID: " + str(order_id)
+        + "\nPrior-run result excluded from this run's risk totals."
+    )
+    return True
 
 
 def log_trade(values):
@@ -591,7 +688,7 @@ def connect_iq(notify=True):
                     "Momentum scanner connected in PRACTICE mode\n"
                     "Pairs: " + pairs + "\n"
                     "Stake: $1 | Expiry: 1 minute\n"
-                    "Run target: +$15 | Run loss stop: -$5\n"
+                    "Run target: +$15 | Net loss stop: -$5 | Stop after 5 losses\n"
                     "Max resolved trades: 50"
                 )
             return True
@@ -826,12 +923,15 @@ def calculate_signal(candles):
 def risk_status():
     with state_lock:
         net = float(state.get("net_profit", 0.0))
+        losses = int(state.get("losses", 0))
         resolved = int(state.get("resolved", 0))
 
     if net >= SESSION_PROFIT_TARGET:
         return False, "Run profit target reached (+$15)."
+    if losses >= MAX_LOSING_TRADES:
+        return False, "Five losing trades reached; stopping this run."
     if net <= -SESSION_LOSS_LIMIT:
-        return False, "Run loss limit reached (-$5)."
+        return False, "Run net loss limit reached (-$5)."
     if resolved >= MAX_RESOLVED_TRADES:
         return False, "Maximum 50 resolved trades reached."
     return True, ""
@@ -1295,7 +1395,7 @@ def place_trade(asset, direction, signal):
             "Asset: " + asset + "\n"
             "Direction: " + direction.upper() + "\n"
             "Stake: $1 | Expiry: 1 minute\n"
-            "Run target: +$15 | Run loss stop: -$5\n"
+            "Run target: +$15 | Net loss stop: -$5 | Stop after 5 losses\n"
             "Order ID: " + str(order_id)
         )
         thread = threading.Thread(target=monitor_trade, args=(order,), daemon=True)
@@ -1335,13 +1435,14 @@ def heartbeat():
 def run_scanner():
     global last_asset_refresh
     load_state()
+    apply_verified_order_recovery()
 
     print("Momentum 10/20 scanner starting in PRACTICE mode.", flush=True)
     print("Run ID:", SESSION_ID, flush=True)
     print("OTC discovery limit:", MAX_OTC_ASSETS, "assets", flush=True)
     print("Only broker-listed, enabled, non-suspended OTC binary/turbo assets are scanned.", flush=True)
     print("Per-asset results are saved across manual runs for later ranking.", flush=True)
-    print("Run profit target: +$15 | Run loss stop: -$5", flush=True)
+    print("Run profit target: +$15 | Net loss stop: -$5 | Stop after 5 losing trades", flush=True)
     print("Maximum resolved trades:", MAX_RESOLVED_TRADES, flush=True)
     print(
         "Diagnostics enabled: each pair reports candle/data status at least once per minute.",
@@ -1467,7 +1568,7 @@ def run_scanner():
             "Wins: " + str(state.get("wins"))
             + " | Losses: " + str(state.get("losses")) + "\n"
             "Run net: $" + str(state.get("net_profit")) + "\n"
-            "Target: +$15 | Loss stop: -$5\n"
+            "Target: +$15 | Net loss stop: -$5 | Max losing trades: 5\n"
             "Stop reason: " + str(state.get("stop_reason") or "Manual/workflow stop")
             + "\nUnresolved order: " + str(active is not None)
         )
