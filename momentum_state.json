@@ -31,7 +31,17 @@
     "DOTUSD-OTC": 1792165620,
     "WLDUSD-OTC": 1792165740
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361562823,
+    "asset": "WLDUSD-OTC",
+    "direction": "put",
+    "momentum": 3.94264,
+    "momentum20": 3.71319,
+    "candle_time": 1792165740,
+    "opened_at": 1792165819.8827333,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
