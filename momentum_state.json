@@ -60,7 +60,17 @@
     "APPLE-OTC": 1792185120,
     "CASINOS-OTC": 1792194360
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362653773,
+    "asset": "CASINOS-OTC",
+    "direction": "put",
+    "momentum": -0.13514,
+    "momentum20": -1.36467,
+    "candle_time": 1792194360,
+    "opened_at": 1792194429.4506621,
+    "trade_date": "2026-10-17",
+    "session_id": "38971559805-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
