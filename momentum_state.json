@@ -47,7 +47,8 @@
     "AIRLINES-OTC": 1792181640,
     "EURUSD-OTC": 1792181700,
     "CANNABIS-OTC": 1792183020,
-    "CHFJPY-OTC": 1792183080
+    "CHFJPY-OTC": 1792183080,
+    "EURTHB-OTC": 1792183140
   },
   "active_order": null,
   "stop_reason": "",
