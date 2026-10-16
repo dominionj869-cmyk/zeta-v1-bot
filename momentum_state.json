@@ -13,7 +13,17 @@
     "ARBUSD-OTC": 1792157880,
     "COFFEE-OTC": 1792163760
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361477694,
+    "asset": "COFFEE-OTC",
+    "direction": "call",
+    "momentum": -0.43248,
+    "momentum20": 0.19612,
+    "candle_time": 1792163760,
+    "opened_at": 1792163841.5448909,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {}
 }
