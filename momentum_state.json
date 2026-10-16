@@ -20,7 +20,17 @@
     "PENUSD-OTC": 1792172160,
     "COFFEE-OTC": 1792172220
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361833619,
+    "asset": "COFFEE-OTC",
+    "direction": "call",
+    "momentum": -0.4493,
+    "momentum20": -0.45881,
+    "candle_time": 1792172220,
+    "opened_at": 1792172309.868182,
+    "trade_date": "2026-10-16",
+    "session_id": "38940300798-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
