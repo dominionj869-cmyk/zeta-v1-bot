@@ -18,7 +18,17 @@
     "USDMYR-OTC": 1792164360,
     "DYDXUSD-OTC": 1792164420
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361504061,
+    "asset": "DYDXUSD-OTC",
+    "direction": "put",
+    "momentum": 5.8061,
+    "momentum20": 3.13957,
+    "candle_time": 1792164420,
+    "opened_at": 1792164500.7177682,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
