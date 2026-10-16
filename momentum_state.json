@@ -30,7 +30,8 @@
     "SOLUSD-OTC": 1792175220,
     "DYDXUSD-OTC": 1792175340,
     "USDPLN-OTC": 1792175400,
-    "INTEL-OTC": 1792175580
+    "INTEL-OTC": 1792175580,
+    "COKE-OTC": 1792178820
   },
   "active_order": null,
   "stop_reason": "",
