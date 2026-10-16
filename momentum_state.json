@@ -28,7 +28,17 @@
     "ARBUSD-OTC": 1792174740,
     "CARDANO-OTC": 1792174980
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361937936,
+    "asset": "CARDANO-OTC",
+    "direction": "call",
+    "momentum": -7.02381,
+    "momentum20": -4.3338,
+    "candle_time": 1792174980,
+    "opened_at": 1792175053.6234467,
+    "trade_date": "2026-10-16",
+    "session_id": "38946492574-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
