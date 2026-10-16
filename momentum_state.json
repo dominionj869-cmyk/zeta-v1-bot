@@ -28,7 +28,8 @@
     "ARBUSD-OTC": 1792174740,
     "CARDANO-OTC": 1792174980,
     "SOLUSD-OTC": 1792175220,
-    "DYDXUSD-OTC": 1792175340
+    "DYDXUSD-OTC": 1792175340,
+    "USDPLN-OTC": 1792175400
   },
   "active_order": null,
   "stop_reason": "",
