@@ -25,7 +25,8 @@
     "TRON-OTC": 1792172640,
     "LUNA-OTC": 1792172760,
     "DASHUSD-OTC": 1792172820,
-    "ARBUSD-OTC": 1792174740
+    "ARBUSD-OTC": 1792174740,
+    "CARDANO-OTC": 1792174980
   },
   "active_order": null,
   "stop_reason": "",
