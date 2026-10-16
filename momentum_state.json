@@ -13,7 +13,8 @@
     "USDCLP-OTC": 1792171140,
     "AUDNZD-OTC": 1792171560,
     "EOSUSD-OTC": 1792171320,
-    "HBARUSD-OTC": 1792171380
+    "HBARUSD-OTC": 1792171380,
+    "FETUSD-OTC": 1792171800
   },
   "active_order": null,
   "stop_reason": "",
