@@ -57,7 +57,17 @@
     "METAGOOGLE-OTC": 1792184880,
     "MSFT-OTC": 1792184940
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362293904,
+    "asset": "MSFT-OTC",
+    "direction": "put",
+    "momentum": 0.71592,
+    "momentum20": -0.04006,
+    "candle_time": 1792184940,
+    "opened_at": 1792185047.235631,
+    "trade_date": "2026-10-16",
+    "session_id": "38967300302-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
