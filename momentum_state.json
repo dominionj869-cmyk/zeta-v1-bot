@@ -8,7 +8,8 @@
   "unknown": 0,
   "resolved": 0,
   "last_signal_candle": {
-    "AUDUSD-OTC": 1792149120
+    "AUDUSD-OTC": 1792149120,
+    "EURUSD-OTC": 1792154460
   },
   "active_order": null,
   "stop_reason": ""
