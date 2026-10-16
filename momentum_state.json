@@ -25,7 +25,17 @@
     "TRON-OTC": 1792172640,
     "LUNA-OTC": 1792172760
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361854035,
+    "asset": "LUNA-OTC",
+    "direction": "call",
+    "momentum": -1.15343,
+    "momentum20": -0.06032,
+    "candle_time": 1792172760,
+    "opened_at": 1792172838.3814297,
+    "trade_date": "2026-10-16",
+    "session_id": "38940300798-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
