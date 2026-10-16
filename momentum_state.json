@@ -1,28 +1,18 @@
 {
   "date": "2026-10-16",
   "session_id": "38938720610-1",
-  "net_profit": -1.0,
+  "net_profit": -2.0,
   "wins": 0,
-  "losses": 1,
+  "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 1,
+  "resolved": 2,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
     "USDCLP-OTC": 1792171140
   },
-  "active_order": {
-    "order_id": 14361790619,
-    "asset": "USDCLP-OTC",
-    "direction": "call",
-    "momentum": -0.13862,
-    "momentum20": 0.66198,
-    "candle_time": 1792171140,
-    "opened_at": 1792171241.2801933,
-    "trade_date": "2026-10-16",
-    "session_id": "38938720610-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -40,6 +30,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-16T18:20:27.226952+01:00"
+    },
+    "USDCLP-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T18:22:12.293677+01:00"
     }
   }
 }
