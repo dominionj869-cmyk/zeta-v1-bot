@@ -30,7 +30,17 @@
     "RAYDIUMUSD-OTC": 1792165560,
     "DOTUSD-OTC": 1792165620
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361557423,
+    "asset": "DOTUSD-OTC",
+    "direction": "put",
+    "momentum": 0.89002,
+    "momentum20": 0.66581,
+    "candle_time": 1792165620,
+    "opened_at": 1792165712.6614058,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
