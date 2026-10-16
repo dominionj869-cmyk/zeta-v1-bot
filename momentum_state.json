@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38963595146-1",
-  "net_profit": -1.0,
+  "net_profit": -2.0,
   "wins": 0,
-  "losses": 1,
+  "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 1,
+  "resolved": 2,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -49,17 +49,7 @@
     "CANNABIS-OTC": 1792183020,
     "CHFJPY-OTC": 1792183080
   },
-  "active_order": {
-    "order_id": 14362228189,
-    "asset": "CHFJPY-OTC",
-    "direction": "put",
-    "momentum": 0.12974,
-    "momentum20": 0.16546,
-    "candle_time": 1792183080,
-    "opened_at": 1792183161.121459,
-    "trade_date": "2026-10-16",
-    "session_id": "38963595146-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -373,6 +363,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-16T21:39:11.970334+01:00"
+    },
+    "CHFJPY-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T21:40:26.121718+01:00"
     }
   }
 }
