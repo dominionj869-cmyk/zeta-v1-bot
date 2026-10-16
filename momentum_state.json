@@ -37,7 +37,17 @@
     "DOTUSD-OTC": 1792179000,
     "FB-OTC": 1792179180
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362090806,
+    "asset": "FB-OTC",
+    "direction": "put",
+    "momentum": 0.19975,
+    "momentum20": -0.07831,
+    "candle_time": 1792179180,
+    "opened_at": 1792179246.8262782,
+    "trade_date": "2026-10-16",
+    "session_id": "38954987452-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
