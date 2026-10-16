@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 2.92,
-  "wins": 6,
+  "net_profit": 3.74,
+  "wins": 7,
   "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 8,
+  "resolved": 9,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -21,17 +21,7 @@
     "HBARUSD-OTC": 1792164600,
     "FWONA-OTC": 1792164660
   },
-  "active_order": {
-    "order_id": 14361515760,
-    "asset": "FWONA-OTC",
-    "direction": "call",
-    "momentum": -3.3789,
-    "momentum20": -4.12576,
-    "candle_time": 1792164660,
-    "opened_at": 1792164759.0603662,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -97,6 +87,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-16T16:32:28.954710+01:00"
+    },
+    "FWONA-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T16:34:10.076976+01:00"
     }
   }
 }
