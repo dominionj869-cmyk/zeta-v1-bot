@@ -39,7 +39,17 @@
     "AIG-OTC": 1792179360,
     "EU50-OTC": 1792179420
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362099592,
+    "asset": "EU50-OTC",
+    "direction": "put",
+    "momentum": 1.3961,
+    "momentum20": 0.95895,
+    "candle_time": 1792179420,
+    "opened_at": 1792179509.23564,
+    "trade_date": "2026-10-16",
+    "session_id": "38954987452-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
