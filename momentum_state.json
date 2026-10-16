@@ -26,7 +26,17 @@
     "FETUSD-OTC": 1792165140,
     "AUDNZD-OTC": 1792165260
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361541325,
+    "asset": "AUDNZD-OTC",
+    "direction": "call",
+    "momentum": -0.75731,
+    "momentum20": -0.46495,
+    "candle_time": 1792165260,
+    "opened_at": 1792165336.205375,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
