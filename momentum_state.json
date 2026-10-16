@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38959217437-1",
-  "net_profit": 2.29,
+  "net_profit": 1.29,
   "wins": 4,
-  "losses": 1,
+  "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 5,
+  "resolved": 6,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -43,17 +43,7 @@
     "CITI-OTC": 1792180860,
     "GOOGLE-OTC": 1792181280
   },
-  "active_order": {
-    "order_id": 14362164938,
-    "asset": "GOOGLE-OTC",
-    "direction": "put",
-    "momentum": 0.10364,
-    "momentum20": -0.10756,
-    "candle_time": 1792181280,
-    "opened_at": 1792181390.3694885,
-    "trade_date": "2026-10-16",
-    "session_id": "38959217437-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -319,6 +309,14 @@
       "net_profit": 0.83,
       "last_result": "WIN",
       "last_updated": "2026-10-16T21:03:10.970356+01:00"
+    },
+    "GOOGLE-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T21:11:21.383509+01:00"
     }
   }
 }
