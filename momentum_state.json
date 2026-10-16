@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38954987452-1",
-  "net_profit": -0.7,
-  "wins": 4,
+  "net_profit": 0.12,
+  "wins": 5,
   "losses": 4,
   "draws": 0,
   "unknown": 0,
-  "resolved": 8,
+  "resolved": 9,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -40,17 +40,7 @@
     "EU50-OTC": 1792179420,
     "GBPCAD-OTC": 1792179480
   },
-  "active_order": {
-    "order_id": 14362102172,
-    "asset": "GBPCAD-OTC",
-    "direction": "put",
-    "momentum": 0.22659,
-    "momentum20": 0.43999,
-    "candle_time": 1792179480,
-    "opened_at": 1792179588.5781145,
-    "trade_date": "2026-10-16",
-    "session_id": "38954987452-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -292,6 +282,14 @@
       "net_profit": 0.83,
       "last_result": "WIN",
       "last_updated": "2026-10-16T20:39:34.235843+01:00"
+    },
+    "GBPCAD-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T20:41:19.592162+01:00"
     }
   }
 }
