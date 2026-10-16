@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 4.9,
+  "net_profit": 3.9,
   "wins": 12,
-  "losses": 5,
+  "losses": 6,
   "draws": 0,
   "unknown": 0,
-  "resolved": 17,
+  "resolved": 18,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -28,17 +28,7 @@
     "CARDANO-OTC": 1792165320,
     "XPDUSD-OTC": 1792165500
   },
-  "active_order": {
-    "order_id": 14361550694,
-    "asset": "XPDUSD-OTC",
-    "direction": "put",
-    "momentum": 1.35233,
-    "momentum20": 1.10777,
-    "candle_time": 1792165500,
-    "opened_at": 1792165565.3394203,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -160,6 +150,14 @@
       "net_profit": 0.82,
       "last_result": "WIN",
       "last_updated": "2026-10-16T16:44:30.449663+01:00"
+    },
+    "XPDUSD-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T16:47:10.339621+01:00"
     }
   }
 }
