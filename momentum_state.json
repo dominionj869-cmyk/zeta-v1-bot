@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 0.08,
-  "wins": 17,
+  "net_profit": 0.9,
+  "wins": 18,
   "losses": 14,
   "draws": 0,
   "unknown": 0,
-  "resolved": 31,
+  "resolved": 32,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -39,17 +39,7 @@
     "URANIUM-OTC": 1792166640,
     "TRUMPUSD-OTC": 1792166760
   },
-  "active_order": {
-    "order_id": 14361606658,
-    "asset": "TRUMPUSD-OTC",
-    "direction": "call",
-    "momentum": -12.94801,
-    "momentum20": -14.00793,
-    "candle_time": 1792166760,
-    "opened_at": 1792166836.1867924,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -259,6 +249,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-16T17:07:04.972405+01:00"
+    },
+    "TRUMPUSD-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T17:08:21.187006+01:00"
     }
   }
 }
