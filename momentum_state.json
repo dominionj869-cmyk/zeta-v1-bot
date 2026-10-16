@@ -13,7 +13,8 @@
     "ARBUSD-OTC": 1792157880,
     "COFFEE-OTC": 1792163760,
     "USDSGD-OTC": 1792163820,
-    "LTCUSD-OTC": 1792164000
+    "LTCUSD-OTC": 1792164000,
+    "SUGAR-OTC": 1792164120
   },
   "active_order": null,
   "stop_reason": "",
