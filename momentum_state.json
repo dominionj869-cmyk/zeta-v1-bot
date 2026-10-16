@@ -58,7 +58,17 @@
     "MSFT-OTC": 1792184940,
     "EURAUD-OTC": 1792185060
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362297967,
+    "asset": "EURAUD-OTC",
+    "direction": "call",
+    "momentum": -0.2609,
+    "momentum20": -0.37302,
+    "candle_time": 1792185060,
+    "opened_at": 1792185147.058044,
+    "trade_date": "2026-10-16",
+    "session_id": "38967300302-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
