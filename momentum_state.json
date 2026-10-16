@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38946492574-1",
-  "net_profit": 2.38,
-  "wins": 4,
+  "net_profit": 3.2,
+  "wins": 5,
   "losses": 1,
   "draws": 0,
   "unknown": 0,
-  "resolved": 5,
+  "resolved": 6,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -28,17 +28,7 @@
     "ARBUSD-OTC": 1792174740,
     "CARDANO-OTC": 1792174980
   },
-  "active_order": {
-    "order_id": 14361944251,
-    "asset": "DASHUSD-OTC",
-    "direction": "call",
-    "momentum": -1.80097,
-    "momentum20": -1.62596,
-    "candle_time": 1792175160,
-    "opened_at": 1792175238.7093182,
-    "trade_date": "2026-10-16",
-    "session_id": "38946492574-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -170,12 +160,12 @@
       "last_updated": "2026-10-16T18:48:23.381704+01:00"
     },
     "DASHUSD-OTC": {
-      "trades": 1,
-      "wins": 0,
+      "trades": 2,
+      "wins": 1,
       "losses": 1,
-      "net_profit": -1.0,
-      "last_result": "LOSS",
-      "last_updated": "2026-10-16T18:49:33.408355+01:00"
+      "net_profit": -0.18,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T19:28:23.709537+01:00"
     },
     "ARBUSD-OTC": {
       "trades": 1,
