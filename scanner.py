@@ -15,10 +15,11 @@ from iqoptionapi.stable_api import IQ_Option
 # MOMENTUM 10 CONTROLLED PRACTICE SCANNER
 # Momentum 10 selects the entry; Momentum 20 confirms the turn.
 
-WATCHLIST = [
-    "EURUSD", "GBPUSD", "AUDUSD", "USDJPY",
-    "EURUSD-OTC", "GBPUSD-OTC", "AUDUSD-OTC", "USDJPY-OTC",
-]
+# Discover up to 70 OTC assets from live IQ Option binary/turbo broker data.
+# Normal market currency pairs are intentionally excluded.
+WATCHLIST = []
+MAX_OTC_ASSETS = 70
+ASSET_MIN_TRADES_FOR_RANK = 5
 
 MOMENTUM_PERIOD = 10
 MOMENTUM_CONFIRM_PERIOD = 20
@@ -90,6 +91,8 @@ state = {
     "last_signal_candle": {},
     "active_order": None,
     "stop_reason": "",
+    # Historical totals persist across separate manual workflow runs.
+    "asset_stats": {},
 }
 
 
@@ -220,8 +223,11 @@ def load_state():
 
     if not isinstance(state.get("active_order"), (dict, type(None))):
         state["active_order"] = None
+    if not isinstance(state.get("asset_stats"), dict):
+        state["asset_stats"] = {}
 
-    # Risk totals reset for each manual workflow run; saved orders are retained.
+    # Risk totals reset for each manual workflow run; saved orders and asset
+    # performance history are retained across runs.
     if (
         state.get("session_id") != SESSION_ID
         or state.get("date") != today_string()
@@ -246,6 +252,81 @@ def log_trade(values):
             writer.writerow(values)
     except Exception as exc:
         print("CSV error:", exc, flush=True)
+
+
+def get_asset_stats_snapshot(asset):
+    with state_lock:
+        stats_all = state.get("asset_stats", {})
+        stats = stats_all.get(asset, {}) if isinstance(stats_all, dict) else {}
+        trades = int(stats.get("trades", 0))
+        wins = int(stats.get("wins", 0))
+        losses = int(stats.get("losses", 0))
+        net = round(float(stats.get("net_profit", 0.0)), 2)
+    win_rate = round((wins / trades) * 100.0, 1) if trades else 0.0
+    return {
+        "trades": trades,
+        "wins": wins,
+        "losses": losses,
+        "net_profit": net,
+        "win_rate": win_rate,
+    }
+
+
+def asset_performance_summary(limit=10):
+    with state_lock:
+        stats_all = state.get("asset_stats", {})
+        if not isinstance(stats_all, dict):
+            stats_all = {}
+        rows = []
+        for asset, stats in stats_all.items():
+            if not isinstance(stats, dict):
+                continue
+            trades = int(stats.get("trades", 0))
+            if trades <= 0:
+                continue
+            wins = int(stats.get("wins", 0))
+            losses = int(stats.get("losses", 0))
+            net = round(float(stats.get("net_profit", 0.0)), 2)
+            win_rate = (wins / trades) * 100.0
+            rows.append({
+                "asset": asset,
+                "trades": trades,
+                "wins": wins,
+                "losses": losses,
+                "net": net,
+                "win_rate": win_rate,
+            })
+
+    if not rows:
+        return "No resolved asset results have been recorded yet."
+
+    qualified = [row for row in rows if row["trades"] >= ASSET_MIN_TRADES_FOR_RANK]
+    if qualified:
+        rows = sorted(
+            qualified,
+            key=lambda row: (row["net"], row["net"] / row["trades"], row["win_rate"]),
+            reverse=True,
+        )[:limit]
+        heading = "ASSET RANKING (minimum " + str(ASSET_MIN_TRADES_FOR_RANK) + " trades):"
+    else:
+        rows = sorted(
+            rows,
+            key=lambda row: (row["trades"], row["net"], row["win_rate"]),
+            reverse=True,
+        )[:limit]
+        heading = "PROVISIONAL ASSET RESULTS (not enough assets have " + str(
+            ASSET_MIN_TRADES_FOR_RANK
+        ) + " trades yet):"
+
+    lines = [heading]
+    for row in rows:
+        lines.append(
+            row["asset"] + " | trades=" + str(row["trades"])
+            + " | W/L=" + str(row["wins"]) + "/" + str(row["losses"])
+            + " | win rate=" + str(round(row["win_rate"], 1)) + "%"
+            + " | net=$" + str(row["net"])
+        )
+    return "\n".join(lines)
 
 
 def diagnostic(asset, message, force=False):
@@ -333,8 +414,83 @@ def find_asset_id(data, target):
     return None
 
 
+def otc_name_from_info(info):
+    if not isinstance(info, dict):
+        return None
+
+    name_keys = ("name", "active", "symbol", "ticker", "instrument")
+    for key in name_keys:
+        value = info.get(key)
+        if not isinstance(value, str):
+            continue
+
+        # IQ Option payloads may name assets like "turbo.EURUSD-OTC".
+        # Use the final dotted segment and remove separators used in display names.
+        parts = value.upper().split(".")
+        for part in reversed(parts):
+            candidate = part.strip().replace("/", "").replace(" ", "")
+            if candidate.endswith("-OTC") and len(candidate) > 4:
+                return candidate
+    return None
+
+
+def flag_is_false(value):
+    if value is False or value == 0:
+        return True
+    if isinstance(value, str) and value.strip().lower() in ("false", "0", "no", "disabled"):
+        return True
+    return False
+
+
+def flag_is_true(value):
+    if value is True or value == 1:
+        return True
+    if isinstance(value, str) and value.strip().lower() in ("true", "1", "yes"):
+        return True
+    return False
+
+
+def collect_otc_from_option_data(source, found):
+    """Collect only OTC entries exposed under IQ Option binary/turbo options."""
+    if isinstance(source, list):
+        for item in source:
+            collect_otc_from_option_data(item, found)
+        return
+
+    if not isinstance(source, dict):
+        return
+
+    for key, value in source.items():
+        key_name = normalize_name(key)
+        if key_name in ("BINARY", "TURBO") and isinstance(value, dict):
+            actives = value.get("actives")
+            if isinstance(actives, dict):
+                for id_key, info in actives.items():
+                    if not isinstance(info, dict):
+                        continue
+                    if "enabled" in info and flag_is_false(info.get("enabled")):
+                        continue
+                    if flag_is_true(info.get("is_suspended")):
+                        continue
+                    if flag_is_true(info.get("closed")):
+                        continue
+
+                    asset = otc_name_from_info(info)
+                    active_id = as_active_id(info.get("active_id"))
+                    if active_id is None:
+                        active_id = as_active_id(info.get("actives_id"))
+                    if active_id is None:
+                        active_id = as_active_id(id_key)
+
+                    if asset and active_id is not None:
+                        found.setdefault(asset, active_id)
+
+        # Covers both v2 payloads and legacy payloads wrapped in "result".
+        collect_otc_from_option_data(value, found)
+
+
 def refresh_assets(reset=False):
-    global asset_ids, last_asset_refresh
+    global asset_ids, last_asset_refresh, WATCHLIST
 
     if api is None:
         return False
@@ -350,41 +506,37 @@ def refresh_assets(reset=False):
     except Exception as exc:
         print("Legacy init refresh warning:", exc, flush=True)
 
-    discovered = {}
-    for asset in WATCHLIST:
-        active_id = None
-        for source in sources:
-            active_id = find_asset_id(source, asset)
-            if active_id is not None:
-                break
+    candidates = {}
+    for source in sources:
+        collect_otc_from_option_data(source, candidates)
 
-        if active_id is None:
-            try:
-                active_id = as_active_id(OP_code.ACTIVES.get(asset))
-            except Exception:
-                active_id = None
+    # Stable ordering makes the selected set reproducible when the broker
+    # exposes more than 70 OTC assets. Only currently listed, enabled and
+    # non-suspended binary/turbo assets are considered.
+    selected_names = sorted(candidates.keys())[:MAX_OTC_ASSETS]
+    discovered = {name: candidates[name] for name in selected_names}
 
-        if active_id is not None:
-            discovered[asset] = active_id
+    if discovered:
+        asset_ids = discovered
+        WATCHLIST = list(discovered.keys())
+        for asset, active_id in asset_ids.items():
             try:
                 OP_code.ACTIVES[asset] = active_id
             except Exception:
                 pass
-
-    if discovered:
-        asset_ids = discovered
     elif reset:
         asset_ids = {}
+        WATCHLIST = []
 
     last_asset_refresh = time.time()
     print(
-        "Asset refresh:", len(asset_ids), "of", len(WATCHLIST), "pairs found.",
-        flush=True,
+        "OTC asset refresh:", len(asset_ids), "available OTC assets found; limit:",
+        MAX_OTC_ASSETS, flush=True,
     )
-
-    for asset in WATCHLIST:
-        if asset not in asset_ids:
-            print("Pair not found in broker data:", asset, flush=True)
+    if not asset_ids:
+        print("No available OTC binary/turbo assets found; will retry.", flush=True)
+    else:
+        print("OTC assets:", ", ".join(WATCHLIST), flush=True)
 
     return bool(asset_ids)
 
@@ -738,11 +890,36 @@ def monitor_trade(order):
                         state["losses"] = int(state["losses"]) + 1
                     state["resolved"] = int(state["resolved"]) + 1
 
+                # Per-asset history deliberately persists between manual runs.
+                stats_all = state.get("asset_stats", {})
+                if not isinstance(stats_all, dict):
+                    stats_all = {}
+                    state["asset_stats"] = stats_all
+                asset_stats = stats_all.get(asset)
+                if not isinstance(asset_stats, dict):
+                    asset_stats = {
+                        "trades": 0, "wins": 0, "losses": 0,
+                        "net_profit": 0.0, "last_result": "",
+                        "last_updated": "",
+                    }
+                    stats_all[asset] = asset_stats
+                asset_stats["trades"] = int(asset_stats.get("trades", 0)) + 1
+                if outcome == "WIN":
+                    asset_stats["wins"] = int(asset_stats.get("wins", 0)) + 1
+                else:
+                    asset_stats["losses"] = int(asset_stats.get("losses", 0)) + 1
+                asset_stats["net_profit"] = round(
+                    float(asset_stats.get("net_profit", 0.0)) + net_change, 2
+                )
+                asset_stats["last_result"] = outcome
+                asset_stats["last_updated"] = datetime.now(LAGOS).isoformat()
+
                 state["active_order"] = None
                 session_net = round(float(state["net_profit"]), 2)
                 resolved = int(state["resolved"])
                 wins_now = int(state["wins"])
                 losses_now = int(state["losses"])
+                asset_stat_snapshot = dict(asset_stats)
 
             save_state()
             log_trade({
@@ -768,7 +945,11 @@ def monitor_trade(order):
                 "Net trade result: $" + str(round(net_change, 2)) + "\n"
                 "Run net: $" + str(session_net) + "\n"
                 "Resolved: " + str(resolved) + "/" + str(MAX_RESOLVED_TRADES) + "\n"
-                "Wins: " + str(wins_now) + " | Losses: " + str(losses_now)
+                "Wins: " + str(wins_now) + " | Losses: " + str(losses_now) + "\n"
+                "Asset history: " + str(asset_stat_snapshot.get("trades", 0)) + " trades"
+                + " | W/L=" + str(asset_stat_snapshot.get("wins", 0)) + "/"
+                + str(asset_stat_snapshot.get("losses", 0))
+                + " | Net=$" + str(asset_stat_snapshot.get("net_profit", 0.0))
             )
             if not same_session:
                 message += (
@@ -776,6 +957,7 @@ def monitor_trade(order):
                 )
             print(message, flush=True)
             telegram(message)
+            print(asset_performance_summary(), flush=True)
 
             if same_session:
                 allowed, reason = risk_status()
@@ -877,7 +1059,7 @@ def heartbeat():
         active_asset = active.get("asset") if isinstance(active, dict) else "None"
         print(
             "HEARTBEAT | Run:", state.get("session_id"),
-            "| Pairs:", len(asset_ids), "/", len(WATCHLIST),
+            "| OTC assets:", len(asset_ids), "/", MAX_OTC_ASSETS,
             "| Resolved:", state.get("resolved"),
             "| Wins:", state.get("wins"),
             "| Losses:", state.get("losses"),
@@ -893,7 +1075,9 @@ def run_scanner():
 
     print("Momentum 10/20 scanner starting in PRACTICE mode.", flush=True)
     print("Run ID:", SESSION_ID, flush=True)
-    print("Watchlist:", ", ".join(WATCHLIST), flush=True)
+    print("OTC discovery limit:", MAX_OTC_ASSETS, "assets", flush=True)
+    print("Only broker-listed, enabled, non-suspended OTC binary/turbo assets are scanned.", flush=True)
+    print("Per-asset results are saved across manual runs for later ranking.", flush=True)
     print("Run profit target: +$15 | Run loss stop: -$5", flush=True)
     print("Maximum resolved trades:", MAX_RESOLVED_TRADES, flush=True)
     print(
@@ -940,7 +1124,7 @@ def run_scanner():
             stop_event.wait(SCAN_INTERVAL)
             continue
 
-        for asset in WATCHLIST:
+        for asset in list(WATCHLIST):
             if stop_event.is_set():
                 break
             with state_lock:
@@ -1026,7 +1210,8 @@ def run_scanner():
         )
     save_state()
     print(summary, flush=True)
-    telegram(summary)
+    print(asset_performance_summary(), flush=True)
+    telegram(summary + "\n\n" + asset_performance_summary())
 
 
 if __name__ == "__main__":
