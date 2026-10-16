@@ -43,7 +43,17 @@
     "INTEL-OTC": 1792167060,
     "EOSUSD-OTC": 1792167240
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361626517,
+    "asset": "EOSUSD-OTC",
+    "direction": "call",
+    "momentum": -8.67794,
+    "momentum20": -3.07027,
+    "candle_time": 1792167240,
+    "opened_at": 1792167326.735316,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
