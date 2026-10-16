@@ -38,7 +38,8 @@
     "FB-OTC": 1792179300,
     "AIG-OTC": 1792179360,
     "EU50-OTC": 1792179420,
-    "GBPCAD-OTC": 1792179480
+    "GBPCAD-OTC": 1792179480,
+    "ALIBABA-OTC": 1792179600
   },
   "active_order": null,
   "stop_reason": "",
