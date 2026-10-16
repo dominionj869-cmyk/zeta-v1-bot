@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38967300302-1",
-  "net_profit": -2.17,
+  "net_profit": -3.17,
   "wins": 1,
-  "losses": 3,
+  "losses": 4,
   "draws": 0,
   "unknown": 0,
-  "resolved": 4,
+  "resolved": 5,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -59,17 +59,7 @@
     "EURAUD-OTC": 1792185060,
     "APPLE-OTC": 1792185120
   },
-  "active_order": {
-    "order_id": 14362304716,
-    "asset": "COKE-OTC",
-    "direction": "put",
-    "momentum": 2.81135,
-    "momentum20": 1.4126,
-    "candle_time": 1792185240,
-    "opened_at": 1792185317.5574784,
-    "trade_date": "2026-10-16",
-    "session_id": "38967300302-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -257,12 +247,12 @@
       "last_updated": "2026-10-16T19:35:26.286979+01:00"
     },
     "COKE-OTC": {
-      "trades": 1,
+      "trades": 2,
       "wins": 1,
-      "losses": 0,
-      "net_profit": 0.83,
-      "last_result": "WIN",
-      "last_updated": "2026-10-16T20:29:09.344126+01:00"
+      "losses": 1,
+      "net_profit": -0.17,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T22:16:22.557632+01:00"
     },
     "ATOMUSD-OTC": {
       "trades": 1,
