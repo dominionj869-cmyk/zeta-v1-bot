@@ -22,7 +22,8 @@
     "JUPUSD-OTC": 1792172280,
     "USDIDR-OTC": 1792172400,
     "PENGUUSD-OTC": 1792172460,
-    "TRON-OTC": 1792172640
+    "TRON-OTC": 1792172640,
+    "LUNA-OTC": 1792172760
   },
   "active_order": null,
   "stop_reason": "",
