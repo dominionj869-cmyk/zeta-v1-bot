@@ -1,6 +1,6 @@
 {
   "date": "2026-10-16",
-  "session_id": "38893142715-1",
+  "session_id": "38909478425-1",
   "net_profit": 0.0,
   "wins": 0,
   "losses": 0,
@@ -12,5 +12,6 @@
     "EURUSD-OTC": 1792154940
   },
   "active_order": null,
-  "stop_reason": ""
+  "stop_reason": "",
+  "asset_stats": {}
 }
