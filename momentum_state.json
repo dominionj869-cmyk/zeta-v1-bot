@@ -43,7 +43,17 @@
     "CITI-OTC": 1792180860,
     "GOOGLE-OTC": 1792181280
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362164938,
+    "asset": "GOOGLE-OTC",
+    "direction": "put",
+    "momentum": 0.10364,
+    "momentum20": -0.10756,
+    "candle_time": 1792181280,
+    "opened_at": 1792181390.3694885,
+    "trade_date": "2026-10-16",
+    "session_id": "38959217437-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
