@@ -1,5 +1,6 @@
 {
-  "date": "2026-10-15",
+  "date": "2026-10-16",
+  "session_id": "38887680165-1",
   "net_profit": 0.0,
   "wins": 0,
   "losses": 0,
@@ -18,5 +19,6 @@
     "candle_time": 1792012200,
     "opened_at": 1792012268.3480673,
     "trade_date": "2026-10-14"
-  }
+  },
+  "stop_reason": ""
 }
