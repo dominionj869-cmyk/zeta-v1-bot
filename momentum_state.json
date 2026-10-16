@@ -55,7 +55,17 @@
     "AMZNEBAY-OTC": 1792183620,
     "COTTON-OTC": 1792183680
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362248887,
+    "asset": "COTTON-OTC",
+    "direction": "put",
+    "momentum": 0.1205,
+    "momentum20": 0.24889,
+    "candle_time": 1792183680,
+    "opened_at": 1792183779.424149,
+    "trade_date": "2026-10-16",
+    "session_id": "38963595146-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
