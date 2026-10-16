@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": -2.27,
-  "wins": 19,
+  "net_profit": -1.45,
+  "wins": 20,
   "losses": 18,
   "draws": 0,
   "unknown": 0,
-  "resolved": 37,
+  "resolved": 38,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -43,17 +43,7 @@
     "INTEL-OTC": 1792167060,
     "EOSUSD-OTC": 1792167240
   },
-  "active_order": {
-    "order_id": 14361626517,
-    "asset": "EOSUSD-OTC",
-    "direction": "call",
-    "momentum": -8.67794,
-    "momentum20": -3.07027,
-    "candle_time": 1792167240,
-    "opened_at": 1792167326.735316,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -295,6 +285,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-16T17:14:11.929293+01:00"
+    },
+    "EOSUSD-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T17:16:31.735558+01:00"
     }
   }
 }
