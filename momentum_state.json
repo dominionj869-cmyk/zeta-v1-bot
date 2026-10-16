@@ -1,13 +1,12 @@
-
 {
   "date": "2026-10-16",
-  "session_id": "38920514533-1",
-  "net_profit": 0.82,
-  "wins": 1,
+  "session_id": "38922645415-1",
+  "net_profit": 0.0,
+  "wins": 0,
   "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 1,
+  "resolved": 0,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
