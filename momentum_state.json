@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38967300302-1",
-  "net_profit": -1.0,
-  "wins": 0,
+  "net_profit": -0.17,
+  "wins": 1,
   "losses": 1,
   "draws": 0,
   "unknown": 0,
-  "resolved": 1,
+  "resolved": 2,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -57,17 +57,7 @@
     "METAGOOGLE-OTC": 1792184880,
     "MSFT-OTC": 1792184940
   },
-  "active_order": {
-    "order_id": 14362293904,
-    "asset": "MSFT-OTC",
-    "direction": "put",
-    "momentum": 0.71592,
-    "momentum20": -0.04006,
-    "candle_time": 1792184940,
-    "opened_at": 1792185047.235631,
-    "trade_date": "2026-10-16",
-    "session_id": "38967300302-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -437,6 +427,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-16T22:10:28.820651+01:00"
+    },
+    "MSFT-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.83,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T22:12:18.250222+01:00"
     }
   }
 }
