@@ -41,7 +41,8 @@
     "USDHKD-OTC": 1792166820,
     "TAOUSD-OTC": 1792167000,
     "INTEL-OTC": 1792167060,
-    "EOSUSD-OTC": 1792167240
+    "EOSUSD-OTC": 1792167240,
+    "ANTHROPIC-OTC": 1792167300
   },
   "active_order": null,
   "stop_reason": "",
