@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38963595146-1",
-  "net_profit": 0.0,
+  "net_profit": -1.0,
   "wins": 0,
-  "losses": 0,
+  "losses": 1,
   "draws": 0,
   "unknown": 0,
-  "resolved": 0,
+  "resolved": 1,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -48,17 +48,7 @@
     "EURUSD-OTC": 1792181700,
     "CANNABIS-OTC": 1792183020
   },
-  "active_order": {
-    "order_id": 14362225489,
-    "asset": "CANNABIS-OTC",
-    "direction": "put",
-    "momentum": 0.62641,
-    "momentum20": 0.86694,
-    "candle_time": 1792183020,
-    "opened_at": 1792183086.9701293,
-    "trade_date": "2026-10-16",
-    "session_id": "38963595146-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -364,6 +354,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-16T21:18:19.178227+01:00"
+    },
+    "CANNABIS-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T21:39:11.970334+01:00"
     }
   }
 }
