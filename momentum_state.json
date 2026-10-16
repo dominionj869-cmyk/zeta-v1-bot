@@ -21,7 +21,8 @@
     "HBARUSD-OTC": 1792164600,
     "FWONA-OTC": 1792164660,
     "NZDCHF-OTC": 1792164780,
-    "SUIUSD-OTC": 1792164840
+    "SUIUSD-OTC": 1792164840,
+    "COTTON-OTC": 1792165020
   },
   "active_order": null,
   "stop_reason": "",
