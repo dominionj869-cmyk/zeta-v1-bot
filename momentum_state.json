@@ -38,7 +38,8 @@
     "USDPHP-OTC": 1792166520,
     "URANIUM-OTC": 1792166640,
     "TRUMPUSD-OTC": 1792166760,
-    "USDHKD-OTC": 1792166820
+    "USDHKD-OTC": 1792166820,
+    "TAOUSD-OTC": 1792167000
   },
   "active_order": null,
   "stop_reason": "",
