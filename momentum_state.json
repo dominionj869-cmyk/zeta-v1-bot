@@ -26,7 +26,8 @@
     "LUNA-OTC": 1792172760,
     "DASHUSD-OTC": 1792175160,
     "ARBUSD-OTC": 1792174740,
-    "CARDANO-OTC": 1792174980
+    "CARDANO-OTC": 1792174980,
+    "SOLUSD-OTC": 1792175220
   },
   "active_order": null,
   "stop_reason": "",
