@@ -30,7 +30,8 @@
     "RAYDIUMUSD-OTC": 1792165560,
     "DOTUSD-OTC": 1792165620,
     "WLDUSD-OTC": 1792165740,
-    "ORDIUSD-OTC": 1792165800
+    "ORDIUSD-OTC": 1792165800,
+    "WIFUSD-OTC": 1792165920
   },
   "active_order": null,
   "stop_reason": "",
