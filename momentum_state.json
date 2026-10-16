@@ -32,7 +32,8 @@
     "WLDUSD-OTC": 1792165740,
     "ORDIUSD-OTC": 1792165800,
     "WIFUSD-OTC": 1792165920,
-    "COCOA-OTC": 1792166040
+    "COCOA-OTC": 1792166040,
+    "PEPEUSD-OTC": 1792166100
   },
   "active_order": null,
   "stop_reason": "",
