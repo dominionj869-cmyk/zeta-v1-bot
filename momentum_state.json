@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 2.26,
-  "wins": 16,
+  "net_profit": 3.08,
+  "wins": 17,
   "losses": 11,
   "draws": 0,
   "unknown": 0,
-  "resolved": 27,
+  "resolved": 28,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -36,17 +36,7 @@
     "PEPEUSD-OTC": 1792166100,
     "TRON-OTC": 1792166400
   },
-  "active_order": {
-    "order_id": 14361590961,
-    "asset": "TRON-OTC",
-    "direction": "put",
-    "momentum": 2.46029,
-    "momentum20": -0.04496,
-    "candle_time": 1792166400,
-    "opened_at": 1792166465.259133,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -232,6 +222,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-16T16:57:28.715952+01:00"
+    },
+    "TRON-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T17:02:10.259359+01:00"
     }
   }
 }
