@@ -54,7 +54,8 @@
     "FLOKIUSD-OTC": 1792183440,
     "AMZNEBAY-OTC": 1792183620,
     "COTTON-OTC": 1792183680,
-    "METAGOOGLE-OTC": 1792184880
+    "METAGOOGLE-OTC": 1792184880,
+    "MSFT-OTC": 1792184940
   },
   "active_order": null,
   "stop_reason": "",
