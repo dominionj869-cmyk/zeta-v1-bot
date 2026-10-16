@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38959217437-1",
-  "net_profit": 1.29,
-  "wins": 4,
+  "net_profit": 2.12,
+  "wins": 5,
   "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 6,
+  "resolved": 7,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -44,17 +44,7 @@
     "GOOGLE-OTC": 1792181280,
     "GRTUSD-OTC": 1792181400
   },
-  "active_order": {
-    "order_id": 14362168657,
-    "asset": "GRTUSD-OTC",
-    "direction": "call",
-    "momentum": -2.43417,
-    "momentum20": -2.39097,
-    "candle_time": 1792181400,
-    "opened_at": 1792181496.326504,
-    "trade_date": "2026-10-16",
-    "session_id": "38959217437-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -328,6 +318,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-16T21:11:21.383509+01:00"
+    },
+    "GRTUSD-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.83,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T21:13:07.341637+01:00"
     }
   }
 }
