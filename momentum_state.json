@@ -34,7 +34,17 @@
     "WIFUSD-OTC": 1792165920,
     "COCOA-OTC": 1792166040
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361576417,
+    "asset": "COCOA-OTC",
+    "direction": "put",
+    "momentum": 2.27143,
+    "momentum20": 0.94497,
+    "candle_time": 1792166040,
+    "opened_at": 1792166108.9696865,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
