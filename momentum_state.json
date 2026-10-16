@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 3.92,
+  "net_profit": 2.92,
   "wins": 6,
-  "losses": 1,
+  "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 7,
+  "resolved": 8,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -20,17 +20,7 @@
     "XRPUSD-OTC": 1792164540,
     "HBARUSD-OTC": 1792164600
   },
-  "active_order": {
-    "order_id": 14361512439,
-    "asset": "HBARUSD-OTC",
-    "direction": "call",
-    "momentum": -0.81642,
-    "momentum20": -1.15739,
-    "candle_time": 1792164600,
-    "opened_at": 1792164683.954462,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -88,6 +78,14 @@
       "net_profit": 0.82,
       "last_result": "WIN",
       "last_updated": "2026-10-16T16:31:18.108160+01:00"
+    },
+    "HBARUSD-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T16:32:28.954710+01:00"
     }
   }
 }
