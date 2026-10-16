@@ -15,7 +15,17 @@
     "EOSUSD-OTC": 1792171320,
     "HBARUSD-OTC": 1792171380
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361805252,
+    "asset": "AUDNZD-OTC",
+    "direction": "put",
+    "momentum": 0.77413,
+    "momentum20": 0.61293,
+    "candle_time": 1792171500,
+    "opened_at": 1792171574.0160372,
+    "trade_date": "2026-10-16",
+    "session_id": "38938720610-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
