@@ -58,7 +58,8 @@
     "MSFT-OTC": 1792184940,
     "EURAUD-OTC": 1792185060,
     "APPLE-OTC": 1792185120,
-    "CASINOS-OTC": 1792194360
+    "CASINOS-OTC": 1792194360,
+    "AUS200-OTC": 1792194780
   },
   "active_order": null,
   "stop_reason": "",
