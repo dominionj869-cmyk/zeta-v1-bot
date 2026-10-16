@@ -56,7 +56,8 @@
     "COTTON-OTC": 1792183680,
     "METAGOOGLE-OTC": 1792184880,
     "MSFT-OTC": 1792184940,
-    "EURAUD-OTC": 1792185060
+    "EURAUD-OTC": 1792185060,
+    "APPLE-OTC": 1792185120
   },
   "active_order": null,
   "stop_reason": "",
