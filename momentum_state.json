@@ -1,29 +1,28 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 0.0,
-  "wins": 0,
+  "net_profit": 0.82,
+  "wins": 1,
   "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 0,
+  "resolved": 1,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
     "ARBUSD-OTC": 1792157880,
     "COFFEE-OTC": 1792163760
   },
-  "active_order": {
-    "order_id": 14361477694,
-    "asset": "COFFEE-OTC",
-    "direction": "call",
-    "momentum": -0.43248,
-    "momentum20": 0.19612,
-    "candle_time": 1792163760,
-    "opened_at": 1792163841.5448909,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
-  "asset_stats": {}
+  "asset_stats": {
+    "COFFEE-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T16:18:26.545147+01:00"
+    }
+  }
 }
