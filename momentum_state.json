@@ -11,7 +11,8 @@
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
     "ARBUSD-OTC": 1792157880,
-    "COFFEE-OTC": 1792163760
+    "COFFEE-OTC": 1792163760,
+    "USDSGD-OTC": 1792163820
   },
   "active_order": null,
   "stop_reason": "",
