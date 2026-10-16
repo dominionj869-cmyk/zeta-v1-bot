@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 1.08,
+  "net_profit": 0.08,
   "wins": 17,
-  "losses": 13,
+  "losses": 14,
   "draws": 0,
   "unknown": 0,
-  "resolved": 30,
+  "resolved": 31,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -38,17 +38,7 @@
     "USDPHP-OTC": 1792166520,
     "URANIUM-OTC": 1792166640
   },
-  "active_order": {
-    "order_id": 14361602555,
-    "asset": "URANIUM-OTC",
-    "direction": "put",
-    "momentum": 0.75391,
-    "momentum20": -0.04898,
-    "candle_time": 1792166640,
-    "opened_at": 1792166733.9568284,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -250,6 +240,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-16T17:04:11.566869+01:00"
+    },
+    "URANIUM-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T17:07:04.972405+01:00"
     }
   }
 }
