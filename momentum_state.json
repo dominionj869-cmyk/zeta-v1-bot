@@ -42,7 +42,17 @@
     "ALIBABA-OTC": 1792179600,
     "CITI-OTC": 1792180860
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362153674,
+    "asset": "EOSUSD-OTC",
+    "direction": "put",
+    "momentum": -2.23009,
+    "momentum20": -10.47594,
+    "candle_time": 1792180980,
+    "opened_at": 1792181075.5173051,
+    "trade_date": "2026-10-16",
+    "session_id": "38959217437-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
