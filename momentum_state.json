@@ -23,7 +23,8 @@
     "USDIDR-OTC": 1792172400,
     "PENGUUSD-OTC": 1792172460,
     "TRON-OTC": 1792172640,
-    "LUNA-OTC": 1792172760
+    "LUNA-OTC": 1792172760,
+    "DASHUSD-OTC": 1792172820
   },
   "active_order": null,
   "stop_reason": "",
