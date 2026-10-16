@@ -57,7 +57,8 @@
     "METAGOOGLE-OTC": 1792184880,
     "MSFT-OTC": 1792184940,
     "EURAUD-OTC": 1792185060,
-    "APPLE-OTC": 1792185120
+    "APPLE-OTC": 1792185120,
+    "CASINOS-OTC": 1792194360
   },
   "active_order": null,
   "stop_reason": "",
