@@ -13,7 +13,17 @@
     "USDCLP-OTC": 1792171140,
     "AUDNZD-OTC": 1792171260
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361794708,
+    "asset": "AUDNZD-OTC",
+    "direction": "put",
+    "momentum": 0.37667,
+    "momentum20": 0.56565,
+    "candle_time": 1792171260,
+    "opened_at": 1792171335.54637,
+    "trade_date": "2026-10-16",
+    "session_id": "38938720610-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
