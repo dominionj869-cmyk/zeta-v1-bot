@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38971559805-1",
-  "net_profit": -1.0,
+  "net_profit": -2.0,
   "wins": 0,
-  "losses": 1,
+  "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 1,
+  "resolved": 2,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -61,17 +61,7 @@
     "CASINOS-OTC": 1792194360,
     "AUS200-OTC": 1792194780
   },
-  "active_order": {
-    "order_id": 14362670216,
-    "asset": "AUS200-OTC",
-    "direction": "put",
-    "momentum": -0.00508,
-    "momentum20": -0.12328,
-    "candle_time": 1792194780,
-    "opened_at": 1792194847.7284024,
-    "trade_date": "2026-10-17",
-    "session_id": "38971559805-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -473,6 +463,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-17T00:48:14.450915+01:00"
+    },
+    "AUS200-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-17T00:55:12.728711+01:00"
     }
   }
 }
