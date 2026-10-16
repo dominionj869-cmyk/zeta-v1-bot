@@ -53,7 +53,8 @@
     "BIDU-OTC": 1792183320,
     "FLOKIUSD-OTC": 1792183440,
     "AMZNEBAY-OTC": 1792183620,
-    "COTTON-OTC": 1792183680
+    "COTTON-OTC": 1792183680,
+    "METAGOOGLE-OTC": 1792184880
   },
   "active_order": null,
   "stop_reason": "",
