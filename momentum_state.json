@@ -27,7 +27,7 @@
     "DASHUSD-OTC": 1792172820
   },
   "active_order": null,
-  "stop_reason": "",
+  "stop_reason": "Five losing trades reached; stopping this run.",
   "asset_stats": {
     "ANTHROPIC-OTC": {
       "trades": 1,
