@@ -870,11 +870,38 @@ def monitor_trade(order):
             if result is None:
                 raise RuntimeError("Trade result is not available yet.")
 
-            broker_profit = float(result)
-            if broker_profit > 0:
+            # iqoptionapi check_win_v4 normally returns (status, profit),
+            # for example ("win", 1.82), ("loose", -1.0), or ("equal", 0).
+            # Some forks may return a single numeric value instead.
+            broker_status = ""
+            profit_value = result
+            if isinstance(result, (tuple, list)):
+                if len(result) < 2:
+                    raise RuntimeError(
+                        "Trade result tuple has no profit value: " + repr(result)
+                    )
+                broker_status = str(result[0]).strip().lower()
+                profit_value = result[1]
+                if profit_value is None:
+                    raise RuntimeError(
+                        "Trade result is not ready: " + repr(result)
+                    )
+
+            try:
+                broker_profit = float(profit_value)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise RuntimeError(
+                    "Unrecognized broker result: " + repr(result)
+                ) from exc
+
+            if broker_status in ("win", "won") and broker_profit > 0:
+                outcome = "WIN"
+                net_change = round(broker_profit, 2)
+            elif not broker_status and broker_profit > 0:
                 outcome = "WIN"
                 net_change = round(broker_profit, 2)
             else:
+                # Project rule: losses and zero/equal results count as a full stake loss.
                 outcome = "LOSS"
                 net_change = -STAKE
 
