@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 1.73,
+  "net_profit": 0.73,
   "wins": 19,
-  "losses": 14,
+  "losses": 15,
   "draws": 0,
   "unknown": 0,
-  "resolved": 33,
+  "resolved": 34,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -40,17 +40,7 @@
     "TRUMPUSD-OTC": 1792166760,
     "USDHKD-OTC": 1792166820
   },
-  "active_order": {
-    "order_id": 14361613525,
-    "asset": "FWONA-OTC",
-    "direction": "put",
-    "momentum": 1.9519,
-    "momentum20": 2.51788,
-    "candle_time": 1792166940,
-    "opened_at": 1792167012.0874696,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
@@ -118,12 +108,12 @@
       "last_updated": "2026-10-16T16:32:28.954710+01:00"
     },
     "FWONA-OTC": {
-      "trades": 1,
+      "trades": 2,
       "wins": 1,
-      "losses": 0,
-      "net_profit": 0.82,
-      "last_result": "WIN",
-      "last_updated": "2026-10-16T16:34:10.076976+01:00"
+      "losses": 1,
+      "net_profit": -0.18,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T17:11:17.087721+01:00"
     },
     "NZDCHF-OTC": {
       "trades": 1,
