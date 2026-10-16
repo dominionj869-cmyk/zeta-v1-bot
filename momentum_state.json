@@ -59,7 +59,17 @@
     "EURAUD-OTC": 1792185060,
     "APPLE-OTC": 1792185120
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362307717,
+    "asset": "COFFEE-OTC",
+    "direction": "put",
+    "momentum": 0.78443,
+    "momentum20": 0.97126,
+    "candle_time": 1792185300,
+    "opened_at": 1792185391.6511657,
+    "trade_date": "2026-10-16",
+    "session_id": "38967300302-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
