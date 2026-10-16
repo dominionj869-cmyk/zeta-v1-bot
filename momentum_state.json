@@ -34,7 +34,8 @@
     "COKE-OTC": 1792178820,
     "ATOMUSD-OTC": 1792178880,
     "COCOA-OTC": 1792178940,
-    "DOTUSD-OTC": 1792179000
+    "DOTUSD-OTC": 1792179000,
+    "FB-OTC": 1792179180
   },
   "active_order": null,
   "stop_reason": "",
