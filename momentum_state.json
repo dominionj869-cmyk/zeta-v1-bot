@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38959217437-1",
-  "net_profit": 2.47,
+  "net_profit": 1.47,
   "wins": 3,
-  "losses": 0,
+  "losses": 1,
   "draws": 0,
   "unknown": 0,
-  "resolved": 3,
+  "resolved": 4,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -42,17 +42,7 @@
     "ALIBABA-OTC": 1792179600,
     "CITI-OTC": 1792180860
   },
-  "active_order": {
-    "order_id": 14362159622,
-    "asset": "GBPCAD-OTC",
-    "direction": "put",
-    "momentum": 0.44534,
-    "momentum20": 0.82511,
-    "candle_time": 1792181160,
-    "opened_at": 1792181239.6398492,
-    "trade_date": "2026-10-16",
-    "session_id": "38959217437-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -296,12 +286,12 @@
       "last_updated": "2026-10-16T20:39:34.235843+01:00"
     },
     "GBPCAD-OTC": {
-      "trades": 1,
+      "trades": 2,
       "wins": 1,
-      "losses": 0,
-      "net_profit": 0.82,
-      "last_result": "WIN",
-      "last_updated": "2026-10-16T20:41:19.592162+01:00"
+      "losses": 1,
+      "net_profit": -0.18,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-16T21:08:24.640102+01:00"
     },
     "ALIBABA-OTC": {
       "trades": 1,
