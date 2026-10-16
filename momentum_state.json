@@ -37,7 +37,8 @@
     "TRON-OTC": 1792166400,
     "USDPHP-OTC": 1792166520,
     "URANIUM-OTC": 1792166640,
-    "TRUMPUSD-OTC": 1792166760
+    "TRUMPUSD-OTC": 1792166760,
+    "USDHKD-OTC": 1792166820
   },
   "active_order": null,
   "stop_reason": "",
