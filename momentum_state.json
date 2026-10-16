@@ -32,7 +32,17 @@
     "WLDUSD-OTC": 1792165740,
     "ORDIUSD-OTC": 1792165800
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361566917,
+    "asset": "ORDIUSD-OTC",
+    "direction": "call",
+    "momentum": -1.4964,
+    "momentum20": 0.78032,
+    "candle_time": 1792165800,
+    "opened_at": 1792165894.072329,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
