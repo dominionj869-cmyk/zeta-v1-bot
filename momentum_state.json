@@ -39,7 +39,17 @@
     "URANIUM-OTC": 1792166640,
     "TRUMPUSD-OTC": 1792166760
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361606658,
+    "asset": "TRUMPUSD-OTC",
+    "direction": "call",
+    "momentum": -12.94801,
+    "momentum20": -14.00793,
+    "candle_time": 1792166760,
+    "opened_at": 1792166836.1867924,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
