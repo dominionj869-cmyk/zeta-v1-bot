@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38940300798-1",
-  "net_profit": 2.2,
-  "wins": 5,
+  "net_profit": 3.02,
+  "wins": 6,
   "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 7,
+  "resolved": 8,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -22,17 +22,7 @@
     "JUPUSD-OTC": 1792172280,
     "USDIDR-OTC": 1792172400
   },
-  "active_order": {
-    "order_id": 14361840324,
-    "asset": "USDIDR-OTC",
-    "direction": "put",
-    "momentum": 0.27,
-    "momentum20": -0.03198,
-    "candle_time": 1792172400,
-    "opened_at": 1792172487.2467365,
-    "trade_date": "2026-10-16",
-    "session_id": "38940300798-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -130,6 +120,14 @@
       "net_profit": 0.82,
       "last_result": "WIN",
       "last_updated": "2026-10-16T18:41:13.896720+01:00"
+    },
+    "USDIDR-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T18:42:32.246915+01:00"
     }
   }
 }
