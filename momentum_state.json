@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38940300798-1",
-  "net_profit": 0.87,
-  "wins": 1,
+  "net_profit": 1.74,
+  "wins": 2,
   "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 1,
+  "resolved": 2,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -17,17 +17,7 @@
     "FETUSD-OTC": 1792171800,
     "RAYDIUMUSD-OTC": 1792171920
   },
-  "active_order": {
-    "order_id": 14361822204,
-    "asset": "RAYDIUMUSD-OTC",
-    "direction": "put",
-    "momentum": 1.51541,
-    "momentum20": 2.47006,
-    "candle_time": 1792171920,
-    "opened_at": 1792171992.8173852,
-    "trade_date": "2026-10-16",
-    "session_id": "38940300798-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -85,6 +75,14 @@
       "net_profit": 0.87,
       "last_result": "WIN",
       "last_updated": "2026-10-16T18:33:02.958257+01:00"
+    },
+    "RAYDIUMUSD-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.87,
+      "last_result": "WIN",
+      "last_updated": "2026-10-16T18:34:17.817579+01:00"
     }
   }
 }
