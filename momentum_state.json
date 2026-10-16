@@ -25,7 +25,8 @@
     "COTTON-OTC": 1792165020,
     "FETUSD-OTC": 1792165140,
     "AUDNZD-OTC": 1792165260,
-    "CARDANO-OTC": 1792165320
+    "CARDANO-OTC": 1792165320,
+    "XPDUSD-OTC": 1792165500
   },
   "active_order": null,
   "stop_reason": "",
