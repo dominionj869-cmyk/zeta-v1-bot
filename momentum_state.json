@@ -52,7 +52,17 @@
     "BCHUSD-OTC": 1792183260,
     "BIDU-OTC": 1792183320
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362240290,
+    "asset": "CANNABIS-OTC",
+    "direction": "put",
+    "momentum": 0.92838,
+    "momentum20": 1.63336,
+    "candle_time": 1792183440,
+    "opened_at": 1792183510.3217647,
+    "trade_date": "2026-10-16",
+    "session_id": "38963595146-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
