@@ -9,7 +9,8 @@
   "resolved": 0,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
-    "EURUSD-OTC": 1792154940
+    "EURUSD-OTC": 1792154940,
+    "ARBUSD-OTC": 1792157880
   },
   "active_order": null,
   "stop_reason": "",
