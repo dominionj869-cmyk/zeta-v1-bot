@@ -54,7 +54,17 @@
     "FLOKIUSD-OTC": 1792183440,
     "AMZNEBAY-OTC": 1792183620
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362246472,
+    "asset": "AMZNEBAY-OTC",
+    "direction": "put",
+    "momentum": 2.20474,
+    "momentum20": 1.79212,
+    "candle_time": 1792183620,
+    "opened_at": 1792183702.2974188,
+    "trade_date": "2026-10-16",
+    "session_id": "38963595146-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
