@@ -18,7 +18,8 @@
     "RAYDIUMUSD-OTC": 1792171920,
     "TAOUSD-OTC": 1792172040,
     "PENUSD-OTC": 1792172160,
-    "COFFEE-OTC": 1792172220
+    "COFFEE-OTC": 1792172220,
+    "JUPUSD-OTC": 1792172280
   },
   "active_order": null,
   "stop_reason": "",
