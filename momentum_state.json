@@ -37,7 +37,8 @@
     "DOTUSD-OTC": 1792179000,
     "FB-OTC": 1792179300,
     "AIG-OTC": 1792179360,
-    "EU50-OTC": 1792179420
+    "EU50-OTC": 1792179420,
+    "GBPCAD-OTC": 1792179480
   },
   "active_order": null,
   "stop_reason": "",
