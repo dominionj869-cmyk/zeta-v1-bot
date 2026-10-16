@@ -33,7 +33,8 @@
     "INTEL-OTC": 1792175580,
     "COKE-OTC": 1792178820,
     "ATOMUSD-OTC": 1792178880,
-    "COCOA-OTC": 1792178940
+    "COCOA-OTC": 1792178940,
+    "DOTUSD-OTC": 1792179000
   },
   "active_order": null,
   "stop_reason": "",
