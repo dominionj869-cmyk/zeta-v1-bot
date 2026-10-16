@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
-  "session_id": "38954987452-1",
-  "net_profit": -0.05,
-  "wins": 6,
-  "losses": 5,
+  "session_id": "38959217437-1",
+  "net_profit": 0.0,
+  "wins": 0,
+  "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 11,
+  "resolved": 0,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -42,7 +42,7 @@
     "ALIBABA-OTC": 1792179600
   },
   "active_order": null,
-  "stop_reason": "Five losing trades reached; stopping this run.",
+  "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
       "trades": 1,
