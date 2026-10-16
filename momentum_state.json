@@ -59,7 +59,17 @@
     "EURAUD-OTC": 1792185060,
     "APPLE-OTC": 1792185120
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14362304716,
+    "asset": "COKE-OTC",
+    "direction": "put",
+    "momentum": 2.81135,
+    "momentum20": 1.4126,
+    "candle_time": 1792185240,
+    "opened_at": 1792185317.5574784,
+    "trade_date": "2026-10-16",
+    "session_id": "38967300302-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
