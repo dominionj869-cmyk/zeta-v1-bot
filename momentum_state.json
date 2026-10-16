@@ -1,12 +1,12 @@
 {
   "date": "2026-10-16",
   "session_id": "38922645415-1",
-  "net_profit": 3.57,
-  "wins": 8,
+  "net_profit": 4.39,
+  "wins": 9,
   "losses": 3,
   "draws": 0,
   "unknown": 0,
-  "resolved": 11,
+  "resolved": 12,
   "last_signal_candle": {
     "AUDUSD-OTC": 1792149120,
     "EURUSD-OTC": 1792154940,
@@ -23,26 +23,16 @@
     "NZDCHF-OTC": 1792164780,
     "SUIUSD-OTC": 1792164840
   },
-  "active_order": {
-    "order_id": 14361527502,
-    "asset": "COFFEE-OTC",
-    "direction": "put",
-    "momentum": 0.75154,
-    "momentum20": 0.68614,
-    "candle_time": 1792164960,
-    "opened_at": 1792165029.3899937,
-    "trade_date": "2026-10-16",
-    "session_id": "38922645415-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
-      "trades": 1,
-      "wins": 1,
+      "trades": 2,
+      "wins": 2,
       "losses": 0,
-      "net_profit": 0.82,
+      "net_profit": 1.64,
       "last_result": "WIN",
-      "last_updated": "2026-10-16T16:18:26.545147+01:00"
+      "last_updated": "2026-10-16T16:38:14.390207+01:00"
     },
     "USDSGD-OTC": {
       "trades": 1,
