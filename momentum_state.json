@@ -42,7 +42,8 @@
     "ALIBABA-OTC": 1792179600,
     "CITI-OTC": 1792180860,
     "GOOGLE-OTC": 1792181280,
-    "GRTUSD-OTC": 1792181400
+    "GRTUSD-OTC": 1792181400,
+    "AMAZON-OTC": 1792181520
   },
   "active_order": null,
   "stop_reason": "",
