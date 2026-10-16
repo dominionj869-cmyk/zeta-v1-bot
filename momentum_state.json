@@ -35,7 +35,17 @@
     "COCOA-OTC": 1792166040,
     "PEPEUSD-OTC": 1792166100
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14361582521,
+    "asset": "CARDANO-OTC",
+    "direction": "put",
+    "momentum": 11.83217,
+    "momentum20": 18.51146,
+    "candle_time": 1792166160,
+    "opened_at": 1792166252.9658568,
+    "trade_date": "2026-10-16",
+    "session_id": "38922645415-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "COFFEE-OTC": {
