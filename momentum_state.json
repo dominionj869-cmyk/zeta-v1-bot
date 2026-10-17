@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39038532262-1",
-  "net_profit": 1.95,
-  "wins": 6,
+  "net_profit": 2.78,
+  "wins": 7,
   "losses": 3,
   "draws": 0,
   "unknown": 0,
-  "resolved": 9,
+  "resolved": 10,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792241100,
     "LTCUSD-OTC": 1792171080,
@@ -76,17 +76,7 @@
     "CADCHF-OTC": 1792240980,
     "BONKUSD-OTC": 1792241160
   },
-  "active_order": {
-    "order_id": 14364357645,
-    "asset": "FB-OTC",
-    "direction": "put",
-    "momentum": 0.25607,
-    "momentum20": -0.10235,
-    "candle_time": 1792246140,
-    "opened_at": 1792246225.9377065,
-    "trade_date": "2026-10-17",
-    "session_id": "39038532262-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -306,12 +296,12 @@
       "last_updated": "2026-10-17T13:24:09.844320+01:00"
     },
     "FB-OTC": {
-      "trades": 4,
-      "wins": 1,
+      "trades": 5,
+      "wins": 2,
       "losses": 3,
-      "net_profit": -2.17,
+      "net_profit": -1.34,
       "last_result": "WIN",
-      "last_updated": "2026-10-17T15:10:12.019902+01:00"
+      "last_updated": "2026-10-17T15:11:30.937929+01:00"
     },
     "AIG-OTC": {
       "trades": 4,
