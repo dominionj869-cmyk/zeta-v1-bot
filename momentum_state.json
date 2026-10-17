@@ -76,7 +76,17 @@
     "CADCHF-OTC": 1792240980,
     "BONKUSD-OTC": 1792241160
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14364337640,
+    "asset": "GBPCAD-OTC",
+    "direction": "put",
+    "momentum": 0.30176,
+    "momentum20": 0.13447,
+    "candle_time": 1792245600,
+    "opened_at": 1792245664.013966,
+    "trade_date": "2026-10-17",
+    "session_id": "39038532262-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
