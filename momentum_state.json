@@ -75,7 +75,8 @@
     "HYPE-OTC": 1792240680,
     "CADCHF-OTC": 1792240980,
     "BONKUSD-OTC": 1792241160,
-    "AUDJPY-OTC": 1792263000
+    "AUDJPY-OTC": 1792263000,
+    "ETHUSD-OTC": 1792263660
   },
   "active_order": null,
   "stop_reason": "",
