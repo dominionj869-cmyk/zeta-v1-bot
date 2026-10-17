@@ -63,7 +63,17 @@
     "EURNZD-OTC": 1792222080,
     "AMZNALIBABA-OTC": 1792222140
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14363652976,
+    "asset": "COFFEE-OTC",
+    "direction": "put",
+    "momentum": 1.38129,
+    "momentum20": 1.29927,
+    "candle_time": 1792222200,
+    "opened_at": 1792222299.3460174,
+    "trade_date": "2026-10-17",
+    "session_id": "39013768699-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
