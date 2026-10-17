@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39019106947-1",
-  "net_profit": 6.1,
-  "wins": 11,
+  "net_profit": 6.93,
+  "wins": 12,
   "losses": 3,
   "draws": 0,
   "unknown": 0,
-  "resolved": 14,
+  "resolved": 15,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -67,17 +67,7 @@
     "FARTCOINUSD-OTC": 1792228560,
     "IMXUSD-OTC": 1792228620
   },
-  "active_order": {
-    "order_id": 14363814780,
-    "asset": "IMXUSD-OTC",
-    "direction": "call",
-    "momentum": -3.00798,
-    "momentum20": -2.08825,
-    "candle_time": 1792228620,
-    "opened_at": 1792228724.231612,
-    "trade_date": "2026-10-17",
-    "session_id": "39019106947-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -527,6 +517,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-17T10:18:27.241754+01:00"
+    },
+    "IMXUSD-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.83,
+      "last_result": "WIN",
+      "last_updated": "2026-10-17T10:20:15.246485+01:00"
     }
   }
 }
