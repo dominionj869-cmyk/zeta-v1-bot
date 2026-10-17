@@ -242,22 +242,99 @@ def load_state():
 
 
 def apply_verified_order_recovery():
-    """Never infer a trade result from a hard-coded order ID.
+    """Apply the user-verified result for one exact saved broker order once."""
+    verified = {
+        14361222265: {
+            "asset": "ARBUSD-OTC",
+            "direction": "put",
+            "result": "WIN",
+            "net_profit": 0.82,
+            "opening_price": 0.145885,
+            "closing_price": 0.145755,
+            "trade_date": "2026-10-16",
+            "trade_session_id": "38909478425-1",
+        }
+    }
 
-    Any saved unresolved order is retained and checked against IQ Option's
-    result/history APIs by monitor_trade(). This prevents stale order data
-    from clearing or falsely resolving an unrelated active order.
-    """
     with state_lock:
         order = state.get("active_order")
+        if not isinstance(order, dict):
+            return False
 
-    if isinstance(order, dict):
-        print(
-            "Saved order recovery: no hard-coded result will be applied. "
-            "The saved order will be checked against broker history.",
-            flush=True,
+        try:
+            order_id = int(order.get("order_id"))
+        except (TypeError, ValueError, OverflowError):
+            return False
+
+        result = verified.get(order_id)
+        if result is None:
+            return False
+
+        if str(order.get("asset", "")) != result["asset"]:
+            print("Verified recovery refused: asset does not match order ID.", flush=True)
+            return False
+        if str(order.get("direction", "")).lower() != result["direction"]:
+            print("Verified recovery refused: direction does not match order ID.", flush=True)
+            return False
+
+        # The order belongs to an earlier run. Update persistent asset history,
+        # but do not add it to this run's profit target or trade counters.
+        stats_all = state.get("asset_stats", {})
+        if not isinstance(stats_all, dict):
+            stats_all = {}
+            state["asset_stats"] = stats_all
+        asset_stats = stats_all.get(result["asset"])
+        if not isinstance(asset_stats, dict):
+            asset_stats = {
+                "trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "net_profit": 0.0,
+                "last_result": "",
+                "last_updated": "",
+            }
+            stats_all[result["asset"]] = asset_stats
+
+        asset_stats["trades"] = int(asset_stats.get("trades", 0)) + 1
+        asset_stats["wins"] = int(asset_stats.get("wins", 0)) + 1
+        asset_stats["net_profit"] = round(
+            float(asset_stats.get("net_profit", 0.0)) + result["net_profit"], 2
         )
-    return False
+        asset_stats["last_result"] = "WIN"
+        asset_stats["last_updated"] = datetime.now(LAGOS).isoformat()
+        state["active_order"] = None
+        session_net = round(float(state.get("net_profit", 0.0)), 2)
+
+    # Save the cleared order first. If the workflow restarts, this exact result
+    # cannot be applied twice because active_order will already be null.
+    save_state()
+    log_trade({
+        "time": datetime.now(LAGOS).isoformat(),
+        "date": result["trade_date"],
+        "session_id": result["trade_session_id"],
+        "asset": result["asset"],
+        "direction": "PUT",
+        "momentum": order.get("momentum", ""),
+        "momentum20": order.get("momentum20", ""),
+        "candle_time": order.get("candle_time", ""),
+        "order_id": order_id,
+        "result": "WIN",
+        "profit": result["net_profit"],
+        "session_net": session_net,
+    })
+    print(
+        "VERIFIED RECOVERY: order " + str(order_id)
+        + " recorded as WIN, net +$0.82. Active order cleared."
+        + " Prior-run result excluded from this run's risk totals.",
+        flush=True,
+    )
+    telegram(
+        "VERIFIED PRIOR-RUN RESULT RECOVERED\n"
+        "Asset: ARBUSD-OTC\nDirection: PUT\nResult: WIN\n"
+        "Net profit: +$0.82\nOrder ID: " + str(order_id)
+        + "\nPrior-run result excluded from this run's risk totals."
+    )
+    return True
 
 
 def log_trade(values):
@@ -772,9 +849,6 @@ def evaluate_signal(candles):
 
     m20_rising = momentum20_current > momentum20_previous
     m20_falling = momentum20_current < momentum20_previous
-    # Rule B: both momentum values must have the same required sign.
-    call_sign_aligned = current > 0 and momentum20_current > 0
-    put_sign_aligned = current < 0 and momentum20_current < 0
     bullish = closes[-1] > opens[-1]
     bearish = closes[-1] < opens[-1]
 
@@ -788,8 +862,6 @@ def evaluate_signal(candles):
         "m20_prev": round(momentum20_previous, 5),
         "m20_rising": m20_rising,
         "m20_falling": m20_falling,
-        "call_sign_aligned": call_sign_aligned,
-        "put_sign_aligned": put_sign_aligned,
         "last_candle": "BULLISH" if bullish else "BEARISH" if bearish else "DOJI",
         "candle_time": candle_times[-1],
     })
@@ -801,7 +873,7 @@ def evaluate_signal(candles):
     call_extreme = current <= low_limit
     put_extreme = current >= high_limit
 
-    if call_extreme and call_sign_aligned and current > previous and m20_rising and bullish:
+    if call_extreme and current > previous and m20_rising and bullish:
         details["status"] = "CALL SETUP"
         return {
             "direction": "call",
@@ -812,7 +884,7 @@ def evaluate_signal(candles):
             "candle_time": candle_times[-1],
         }, details
 
-    if put_extreme and put_sign_aligned and current < previous and m20_falling and bearish:
+    if put_extreme and current < previous and m20_falling and bearish:
         details["status"] = "PUT SETUP"
         return {
             "direction": "put",
@@ -824,29 +896,19 @@ def evaluate_signal(candles):
         }, details
 
     reasons = []
-    if current == 0 or momentum20_current == 0:
-        reasons.append("Rule B blocked: a momentum value is zero")
-    elif current > 0 and momentum20_current < 0:
-        reasons.append("Rule B blocked: CALL/PUT momentum signs disagree (M10 positive, M20 negative)")
-    elif current < 0 and momentum20_current > 0:
-        reasons.append("Rule B blocked: CALL/PUT momentum signs disagree (M10 negative, M20 positive)")
-    elif current > 0 and momentum20_current > 0 and not call_sign_aligned:
-        reasons.append("Rule B blocked: CALL sign alignment failed")
-    elif current < 0 and momentum20_current < 0 and not put_sign_aligned:
-        reasons.append("Rule B blocked: PUT sign alignment failed")
     if not call_extreme and not put_extreme:
         reasons.append("Momentum 10 is not at an extreme")
     if call_extreme and current <= previous:
         reasons.append("low extreme has not turned upward")
     if put_extreme and current >= previous:
         reasons.append("high extreme has not turned downward")
-    if call_extreme and call_sign_aligned and current > previous and not m20_rising:
+    if call_extreme and current > previous and not m20_rising:
         reasons.append("Momentum 20 does not confirm CALL turn")
-    if put_extreme and put_sign_aligned and current < previous and not m20_falling:
+    if put_extreme and current < previous and not m20_falling:
         reasons.append("Momentum 20 does not confirm PUT turn")
-    if call_extreme and call_sign_aligned and current > previous and m20_rising and not bullish:
+    if call_extreme and current > previous and m20_rising and not bullish:
         reasons.append("last candle is not bullish")
-    if put_extreme and put_sign_aligned and current < previous and m20_falling and not bearish:
+    if put_extreme and current < previous and m20_falling and not bearish:
         reasons.append("last candle is not bearish")
 
     details["status"] = "NO SETUP: " + "; ".join(reasons or ["conditions not aligned"])
@@ -1329,12 +1391,9 @@ def place_trade(asset, direction, signal):
             direction.upper(), order_id, flush=True,
         )
         telegram(
-            "PRACTICE TRADE OPENED - IQ OPTION ACCEPTED THE ORDER\n"
+            "PRACTICE TRADE OPENED\n"
             "Asset: " + asset + "\n"
             "Direction: " + direction.upper() + "\n"
-            "Momentum 10: " + str(signal["momentum"]) + "\n"
-            "Momentum 20: " + str(signal.get("momentum20", "n/a")) + "\n"
-            "Rule B: both momentum values have the required same sign\n"
             "Stake: $1 | Expiry: 1 minute\n"
             "Run target: +$15 | Net loss stop: -$5 | Stop after 5 losses\n"
             "Order ID: " + str(order_id)
@@ -1379,7 +1438,6 @@ def run_scanner():
     apply_verified_order_recovery()
 
     print("Momentum 10/20 scanner starting in PRACTICE mode.", flush=True)
-    print("Rule B enabled: CALL requires M10 > 0 and M20 > 0; PUT requires M10 < 0 and M20 < 0.", flush=True)
     print("Run ID:", SESSION_ID, flush=True)
     print("OTC discovery limit:", MAX_OTC_ASSETS, "assets", flush=True)
     print("Only broker-listed, enabled, non-suspended OTC binary/turbo assets are scanned.", flush=True)
@@ -1478,23 +1536,18 @@ def run_scanner():
                 continue
 
             save_state()
-            setup_message = (
-                "SETUP DETECTED - NOT AN ORDER YET\n"
+            message = (
+                "MOMENTUM 10 SIGNAL (MOMENTUM 20 CONFIRMED)\n"
                 "Asset: " + asset + "\n"
-                "Direction candidate: " + signal["direction"].upper() + "\n"
+                "Direction: " + signal["direction"].upper() + "\n"
+                "Timeframe: 1 minute | Expiry: 1 minute\n"
                 "Momentum 10: " + str(signal["momentum"]) + "\n"
                 "Momentum 20: " + str(signal["momentum20"]) + "\n"
-                "Rule B sign alignment: passed\n"
-                "Mode: PRACTICE; awaiting broker order acceptance."
+                "Mode: PRACTICE"
             )
-            print(setup_message, flush=True)
-            placed = place_trade(asset, signal["direction"], signal)
-            if not placed:
-                diagnostic(
-                    asset,
-                    "Setup found, but no accepted order was confirmed; check trade placement logs.",
-                    force=True,
-                )
+            print(message, flush=True)
+            telegram(message)
+            place_trade(asset, signal["direction"], signal)
 
             with state_lock:
                 if state.get("active_order") is not None:
