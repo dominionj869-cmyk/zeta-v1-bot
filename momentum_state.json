@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39032169795-1",
-  "net_profit": 0.32,
+  "net_profit": -0.68,
   "wins": 4,
-  "losses": 3,
+  "losses": 4,
   "draws": 0,
   "unknown": 0,
-  "resolved": 7,
+  "resolved": 8,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792230240,
     "LTCUSD-OTC": 1792171080,
@@ -73,17 +73,7 @@
     "CADJPY-OTC": 1792239900,
     "GER30-OTC": 1792240020
   },
-  "active_order": {
-    "order_id": 14364152854,
-    "asset": "GOOGLE-OTC",
-    "direction": "put",
-    "momentum": 0.22473,
-    "momentum20": 0.12476,
-    "candle_time": 1792240320,
-    "opened_at": 1792240398.7136514,
-    "trade_date": "2026-10-17",
-    "session_id": "39032169795-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -351,12 +341,12 @@
       "last_updated": "2026-10-17T10:00:24.477033+01:00"
     },
     "GOOGLE-OTC": {
-      "trades": 2,
+      "trades": 3,
       "wins": 0,
-      "losses": 2,
-      "net_profit": -2.0,
+      "losses": 3,
+      "net_profit": -3.0,
       "last_result": "LOSS",
-      "last_updated": "2026-10-16T21:20:21.890459+01:00"
+      "last_updated": "2026-10-17T13:34:23.713856+01:00"
     },
     "GRTUSD-OTC": {
       "trades": 2,
