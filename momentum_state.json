@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39032169795-1",
-  "net_profit": -1.0,
-  "wins": 0,
+  "net_profit": -0.18,
+  "wins": 1,
   "losses": 1,
   "draws": 0,
   "unknown": 0,
-  "resolved": 1,
+  "resolved": 2,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792230240,
     "LTCUSD-OTC": 1792171080,
@@ -71,17 +71,7 @@
     "HK33-OTC": 1792229340,
     "IOTAUSD-OTC": 1792230420
   },
-  "active_order": {
-    "order_id": 14364132467,
-    "asset": "DOTUSD-OTC",
-    "direction": "call",
-    "momentum": -1.15446,
-    "momentum20": -1.0627,
-    "candle_time": 1792239720,
-    "opened_at": 1792239784.844145,
-    "trade_date": "2026-10-17",
-    "session_id": "39032169795-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -293,12 +283,12 @@
       "last_updated": "2026-10-16T20:31:34.041623+01:00"
     },
     "DOTUSD-OTC": {
-      "trades": 2,
-      "wins": 1,
+      "trades": 3,
+      "wins": 2,
       "losses": 1,
-      "net_profit": -0.18,
+      "net_profit": 0.64,
       "last_result": "WIN",
-      "last_updated": "2026-10-17T10:37:07.238634+01:00"
+      "last_updated": "2026-10-17T13:24:09.844320+01:00"
     },
     "FB-OTC": {
       "trades": 2,
