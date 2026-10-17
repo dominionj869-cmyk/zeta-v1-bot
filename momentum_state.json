@@ -75,7 +75,17 @@
     "HYPE-OTC": 1792240680,
     "CADCHF-OTC": 1792240980
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14364174888,
+    "asset": "AMAZON-OTC",
+    "direction": "put",
+    "momentum": 0.35057,
+    "momentum20": -0.00498,
+    "candle_time": 1792241040,
+    "opened_at": 1792241112.7785628,
+    "trade_date": "2026-10-17",
+    "session_id": "39033671320-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
