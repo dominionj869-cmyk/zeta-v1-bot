@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39032169795-1",
-  "net_profit": -0.52,
-  "wins": 3,
+  "net_profit": 0.32,
+  "wins": 4,
   "losses": 3,
   "draws": 0,
   "unknown": 0,
-  "resolved": 6,
+  "resolved": 7,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792230240,
     "LTCUSD-OTC": 1792171080,
@@ -73,17 +73,7 @@
     "CADJPY-OTC": 1792239900,
     "GER30-OTC": 1792240020
   },
-  "active_order": {
-    "order_id": 14364149703,
-    "asset": "AMZNEBAY-OTC",
-    "direction": "put",
-    "momentum": 0.80306,
-    "momentum20": -0.30802,
-    "candle_time": 1792240200,
-    "opened_at": 1792240291.5811756,
-    "trade_date": "2026-10-17",
-    "session_id": "39032169795-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -431,12 +421,12 @@
       "last_updated": "2026-10-16T21:45:02.269909+01:00"
     },
     "AMZNEBAY-OTC": {
-      "trades": 3,
-      "wins": 2,
+      "trades": 4,
+      "wins": 3,
       "losses": 1,
-      "net_profit": 0.68,
-      "last_result": "LOSS",
-      "last_updated": "2026-10-17T13:28:32.352951+01:00"
+      "net_profit": 1.52,
+      "last_result": "WIN",
+      "last_updated": "2026-10-17T13:33:02.596775+01:00"
     },
     "COTTON-OTC": {
       "trades": 1,
