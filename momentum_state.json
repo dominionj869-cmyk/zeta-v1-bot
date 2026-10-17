@@ -62,7 +62,8 @@
     "AUS200-OTC": 1792194780,
     "EURNZD-OTC": 1792222080,
     "AMZNALIBABA-OTC": 1792227660,
-    "FR40-OTC": 1792228020
+    "FR40-OTC": 1792228020,
+    "INTELIBM-OTC": 1792228380
   },
   "active_order": null,
   "stop_reason": "",
