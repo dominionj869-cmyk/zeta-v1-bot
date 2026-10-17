@@ -66,7 +66,17 @@
     "INTELIBM-OTC": 1792228380,
     "FARTCOINUSD-OTC": 1792228560
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14363812748,
+    "asset": "FARTCOINUSD-OTC",
+    "direction": "call",
+    "momentum": -3.57574,
+    "momentum20": -2.1286,
+    "candle_time": 1792228560,
+    "opened_at": 1792228642.2415652,
+    "trade_date": "2026-10-17",
+    "session_id": "39019106947-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
