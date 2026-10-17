@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
-  "session_id": "39013768699-1",
-  "net_profit": 0.65,
-  "wins": 2,
-  "losses": 1,
+  "session_id": "39014118734-1",
+  "net_profit": 0.0,
+  "wins": 0,
+  "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 3,
+  "resolved": 0,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
