@@ -72,7 +72,8 @@
     "IOTAUSD-OTC": 1792230420,
     "CADJPY-OTC": 1792239900,
     "GER30-OTC": 1792240020,
-    "HYPE-OTC": 1792240680
+    "HYPE-OTC": 1792240680,
+    "CADCHF-OTC": 1792240980
   },
   "active_order": null,
   "stop_reason": "",
