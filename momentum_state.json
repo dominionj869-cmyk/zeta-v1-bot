@@ -73,7 +73,17 @@
     "CADJPY-OTC": 1792239900,
     "GER30-OTC": 1792240020
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14364157735,
+    "asset": "AMAZON-OTC",
+    "direction": "call",
+    "momentum": -0.22697,
+    "momentum20": -0.09226,
+    "candle_time": 1792240500,
+    "opened_at": 1792240567.3490524,
+    "trade_date": "2026-10-17",
+    "session_id": "39032169795-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
