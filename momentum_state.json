@@ -63,7 +63,17 @@
     "EURNZD-OTC": 1792222080,
     "AMZNALIBABA-OTC": 1792222140
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14363650702,
+    "asset": "AMZNALIBABA-OTC",
+    "direction": "put",
+    "momentum": 0.44393,
+    "momentum20": 0.36131,
+    "candle_time": 1792222140,
+    "opened_at": 1792222223.8356364,
+    "trade_date": "2026-10-17",
+    "session_id": "39013768699-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
