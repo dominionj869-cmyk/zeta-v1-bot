@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39019106947-1",
-  "net_profit": 7.1,
+  "net_profit": 6.1,
   "wins": 11,
-  "losses": 2,
+  "losses": 3,
   "draws": 0,
   "unknown": 0,
-  "resolved": 13,
+  "resolved": 14,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -66,17 +66,7 @@
     "INTELIBM-OTC": 1792228380,
     "FARTCOINUSD-OTC": 1792228560
   },
-  "active_order": {
-    "order_id": 14363812748,
-    "asset": "FARTCOINUSD-OTC",
-    "direction": "call",
-    "momentum": -3.57574,
-    "momentum20": -2.1286,
-    "candle_time": 1792228560,
-    "opened_at": 1792228642.2415652,
-    "trade_date": "2026-10-17",
-    "session_id": "39019106947-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -518,6 +508,14 @@
       "net_profit": 0.84,
       "last_result": "WIN",
       "last_updated": "2026-10-17T10:15:33.275560+01:00"
+    },
+    "FARTCOINUSD-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-17T10:18:27.241754+01:00"
     }
   }
 }
