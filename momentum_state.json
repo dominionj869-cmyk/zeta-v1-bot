@@ -67,7 +67,17 @@
     "FARTCOINUSD-OTC": 1792228560,
     "IMXUSD-OTC": 1792228620
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14363817146,
+    "asset": "AIG-OTC",
+    "direction": "put",
+    "momentum": 0.46328,
+    "momentum20": 0.3557,
+    "candle_time": 1792228740,
+    "opened_at": 1792228818.4924934,
+    "trade_date": "2026-10-17",
+    "session_id": "39019106947-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
