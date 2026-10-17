@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39022078482-1",
-  "net_profit": -1.3,
+  "net_profit": -2.3,
   "wins": 2,
-  "losses": 3,
+  "losses": 4,
   "draws": 0,
   "unknown": 0,
-  "resolved": 5,
+  "resolved": 6,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792230240,
     "LTCUSD-OTC": 1792171080,
@@ -71,17 +71,7 @@
     "HK33-OTC": 1792229340,
     "IOTAUSD-OTC": 1792230420
   },
-  "active_order": {
-    "order_id": 14363859519,
-    "asset": "DYDXUSD-OTC",
-    "direction": "call",
-    "momentum": -3.09094,
-    "momentum20": -1.81613,
-    "candle_time": 1792230480,
-    "opened_at": 1792230578.3156316,
-    "trade_date": "2026-10-17",
-    "session_id": "39022078482-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -245,12 +235,12 @@
       "last_updated": "2026-10-16T19:30:06.943718+01:00"
     },
     "DYDXUSD-OTC": {
-      "trades": 1,
+      "trades": 2,
       "wins": 1,
-      "losses": 0,
-      "net_profit": 0.87,
-      "last_result": "WIN",
-      "last_updated": "2026-10-16T19:31:16.673817+01:00"
+      "losses": 1,
+      "net_profit": -0.13,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-17T10:51:09.332144+01:00"
     },
     "USDPLN-OTC": {
       "trades": 1,
