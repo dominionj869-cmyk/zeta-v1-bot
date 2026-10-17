@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39019106947-1",
-  "net_profit": 1.65,
-  "wins": 2,
+  "net_profit": 2.47,
+  "wins": 3,
   "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 2,
+  "resolved": 3,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -63,17 +63,7 @@
     "EURNZD-OTC": 1792222080,
     "AMZNALIBABA-OTC": 1792222140
   },
-  "active_order": {
-    "order_id": 14363788642,
-    "asset": "BCHUSD-OTC",
-    "direction": "put",
-    "momentum": 0.86681,
-    "momentum20": 0.87403,
-    "candle_time": 1792227540,
-    "opened_at": 1792227631.656326,
-    "trade_date": "2026-10-17",
-    "session_id": "39019106947-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -405,12 +395,12 @@
       "last_updated": "2026-10-16T21:42:11.576908+01:00"
     },
     "BCHUSD-OTC": {
-      "trades": 1,
-      "wins": 1,
+      "trades": 2,
+      "wins": 2,
       "losses": 0,
-      "net_profit": 0.82,
+      "net_profit": 1.64,
       "last_result": "WIN",
-      "last_updated": "2026-10-16T21:43:23.820569+01:00"
+      "last_updated": "2026-10-17T10:02:02.669770+01:00"
     },
     "BIDU-OTC": {
       "trades": 1,
