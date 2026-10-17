@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39032169795-1",
-  "net_profit": 0.97,
-  "wins": 6,
+  "net_profit": 1.79,
+  "wins": 7,
   "losses": 4,
   "draws": 0,
   "unknown": 0,
-  "resolved": 10,
+  "resolved": 11,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792230240,
     "LTCUSD-OTC": 1792171080,
@@ -74,17 +74,7 @@
     "GER30-OTC": 1792240020,
     "HYPE-OTC": 1792240680
   },
-  "active_order": {
-    "order_id": 14364163283,
-    "asset": "HYPE-OTC",
-    "direction": "put",
-    "momentum": 1.4069,
-    "momentum20": 1.54412,
-    "candle_time": 1792240680,
-    "opened_at": 1792240752.8507895,
-    "trade_date": "2026-10-17",
-    "session_id": "39032169795-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -590,6 +580,14 @@
       "net_profit": 0.83,
       "last_result": "WIN",
       "last_updated": "2026-10-17T13:30:18.745006+01:00"
+    },
+    "HYPE-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-17T13:40:17.850970+01:00"
     }
   }
 }
