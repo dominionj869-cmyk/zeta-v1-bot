@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39019106947-1",
-  "net_profit": 8.1,
+  "net_profit": 7.1,
   "wins": 11,
-  "losses": 1,
+  "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 12,
+  "resolved": 13,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -65,17 +65,7 @@
     "FR40-OTC": 1792228020,
     "INTELIBM-OTC": 1792228380
   },
-  "active_order": {
-    "order_id": 14363810682,
-    "asset": "EURNZD-OTC",
-    "direction": "put",
-    "momentum": 0.18226,
-    "momentum20": 0.13576,
-    "candle_time": 1792228500,
-    "opened_at": 1792228565.079231,
-    "trade_date": "2026-10-17",
-    "session_id": "39019106947-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -487,12 +477,12 @@
       "last_updated": "2026-10-17T00:55:12.728711+01:00"
     },
     "EURNZD-OTC": {
-      "trades": 1,
+      "trades": 2,
       "wins": 1,
-      "losses": 0,
-      "net_profit": 0.82,
-      "last_result": "WIN",
-      "last_updated": "2026-10-17T08:30:19.071221+01:00"
+      "losses": 1,
+      "net_profit": -0.18,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-17T10:17:10.079541+01:00"
     },
     "AMZNALIBABA-OTC": {
       "trades": 2,
