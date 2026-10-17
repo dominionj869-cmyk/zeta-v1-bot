@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
-  "session_id": "39022078482-1",
-  "net_profit": -3.3,
-  "wins": 2,
-  "losses": 5,
+  "session_id": "39032169795-1",
+  "net_profit": 0.0,
+  "wins": 0,
+  "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 7,
+  "resolved": 0,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792230240,
     "LTCUSD-OTC": 1792171080,
@@ -72,7 +72,7 @@
     "IOTAUSD-OTC": 1792230420
   },
   "active_order": null,
-  "stop_reason": "Five losing trades reached; stopping this run.",
+  "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
       "trades": 2,
