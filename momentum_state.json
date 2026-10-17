@@ -72,7 +72,7 @@
     "IOTAUSD-OTC": 1792230420
   },
   "active_order": null,
-  "stop_reason": "",
+  "stop_reason": "Five losing trades reached; stopping this run.",
   "asset_stats": {
     "ANTHROPIC-OTC": {
       "trades": 2,
