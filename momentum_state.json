@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39032169795-1",
-  "net_profit": -2.18,
-  "wins": 1,
+  "net_profit": -1.35,
+  "wins": 2,
   "losses": 3,
   "draws": 0,
   "unknown": 0,
-  "resolved": 4,
+  "resolved": 5,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792230240,
     "LTCUSD-OTC": 1792171080,
@@ -73,17 +73,7 @@
     "CADJPY-OTC": 1792239900,
     "GER30-OTC": 1792240020
   },
-  "active_order": {
-    "order_id": 14364143429,
-    "asset": "GER30-OTC",
-    "direction": "put",
-    "momentum": 0.19254,
-    "momentum20": -0.04355,
-    "candle_time": 1792240020,
-    "opened_at": 1792240127.7288926,
-    "trade_date": "2026-10-17",
-    "session_id": "39032169795-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -581,6 +571,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-17T13:27:22.453084+01:00"
+    },
+    "GER30-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.83,
+      "last_result": "WIN",
+      "last_updated": "2026-10-17T13:30:18.745006+01:00"
     }
   }
 }
