@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39033671320-1",
-  "net_profit": 0.48,
+  "net_profit": -0.52,
   "wins": 3,
-  "losses": 2,
+  "losses": 3,
   "draws": 0,
   "unknown": 0,
-  "resolved": 5,
+  "resolved": 6,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792241100,
     "LTCUSD-OTC": 1792171080,
@@ -76,17 +76,7 @@
     "CADCHF-OTC": 1792240980,
     "BONKUSD-OTC": 1792241160
   },
-  "active_order": {
-    "order_id": 14364186298,
-    "asset": "APPLE-OTC",
-    "direction": "call",
-    "momentum": -0.25128,
-    "momentum20": -0.26069,
-    "candle_time": 1792241400,
-    "opened_at": 1792241464.0955036,
-    "trade_date": "2026-10-17",
-    "session_id": "39033671320-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -474,12 +464,12 @@
       "last_updated": "2026-10-17T10:08:21.959766+01:00"
     },
     "APPLE-OTC": {
-      "trades": 2,
+      "trades": 3,
       "wins": 0,
-      "losses": 2,
-      "net_profit": -2.0,
+      "losses": 3,
+      "net_profit": -3.0,
       "last_result": "LOSS",
-      "last_updated": "2026-10-17T10:35:26.297165+01:00"
+      "last_updated": "2026-10-17T13:52:09.095719+01:00"
     },
     "CASINOS-OTC": {
       "trades": 1,
