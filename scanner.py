@@ -242,17 +242,15 @@ def load_state():
 
 
 def apply_verified_order_recovery():
-    """Apply the user-verified result for one exact saved broker order once."""
+    """Recover the exact user-confirmed CITI-OTC result once."""
     verified = {
-        14361222265: {
-            "asset": "ARBUSD-OTC",
-            "direction": "put",
+        14363655762: {
+            "asset": "CITI-OTC",
+            "direction": "call",
             "result": "WIN",
-            "net_profit": 0.82,
-            "opening_price": 0.145885,
-            "closing_price": 0.145755,
-            "trade_date": "2026-10-16",
-            "trade_session_id": "38909478425-1",
+            "net_profit": 0.83,
+            "trade_date": "2026-10-17",
+            "trade_session_id": "39013768699-1",
         }
     }
 
@@ -271,21 +269,25 @@ def apply_verified_order_recovery():
             return False
 
         if str(order.get("asset", "")) != result["asset"]:
-            print("Verified recovery refused: asset does not match order ID.", flush=True)
-            return False
-        if str(order.get("direction", "")).lower() != result["direction"]:
-            print("Verified recovery refused: direction does not match order ID.", flush=True)
+            print("Recovery refused: asset does not match.", flush=True)
             return False
 
-        # The order belongs to an earlier run. Update persistent asset history,
-        # but do not add it to this run's profit target or trade counters.
+        if str(order.get("direction", "")).lower() != result["direction"]:
+            print("Recovery refused: direction does not match.", flush=True)
+            return False
+
+        if str(order.get("session_id", "")) != result["trade_session_id"]:
+            print("Recovery refused: session does not match.", flush=True)
+            return False
+
         stats_all = state.get("asset_stats", {})
         if not isinstance(stats_all, dict):
             stats_all = {}
             state["asset_stats"] = stats_all
-        asset_stats = stats_all.get(result["asset"])
-        if not isinstance(asset_stats, dict):
-            asset_stats = {
+
+        stats = stats_all.get("CITI-OTC")
+        if not isinstance(stats, dict):
+            stats = {
                 "trades": 0,
                 "wins": 0,
                 "losses": 0,
@@ -293,47 +295,50 @@ def apply_verified_order_recovery():
                 "last_result": "",
                 "last_updated": "",
             }
-            stats_all[result["asset"]] = asset_stats
+            stats_all["CITI-OTC"] = stats
 
-        asset_stats["trades"] = int(asset_stats.get("trades", 0)) + 1
-        asset_stats["wins"] = int(asset_stats.get("wins", 0)) + 1
-        asset_stats["net_profit"] = round(
-            float(asset_stats.get("net_profit", 0.0)) + result["net_profit"], 2
+        stats["trades"] = int(stats.get("trades", 0)) + 1
+        stats["wins"] = int(stats.get("wins", 0)) + 1
+        stats["net_profit"] = round(
+            float(stats.get("net_profit", 0.0)) + 0.83, 2
         )
-        asset_stats["last_result"] = "WIN"
-        asset_stats["last_updated"] = datetime.now(LAGOS).isoformat()
+        stats["last_result"] = "WIN"
+        stats["last_updated"] = datetime.now(LAGOS).isoformat()
+
+        # This order belongs to a previous workflow run.
+        # Preserve the current run's risk counters.
         state["active_order"] = None
         session_net = round(float(state.get("net_profit", 0.0)), 2)
 
-    # Save the cleared order first. If the workflow restarts, this exact result
-    # cannot be applied twice because active_order will already be null.
     save_state()
+
     log_trade({
         "time": datetime.now(LAGOS).isoformat(),
         "date": result["trade_date"],
         "session_id": result["trade_session_id"],
-        "asset": result["asset"],
-        "direction": "PUT",
+        "asset": "CITI-OTC",
+        "direction": "CALL",
         "momentum": order.get("momentum", ""),
         "momentum20": order.get("momentum20", ""),
         "candle_time": order.get("candle_time", ""),
         "order_id": order_id,
         "result": "WIN",
-        "profit": result["net_profit"],
+        "profit": 0.83,
         "session_net": session_net,
     })
-    print(
-        "VERIFIED RECOVERY: order " + str(order_id)
-        + " recorded as WIN, net +$0.82. Active order cleared."
-        + " Prior-run result excluded from this run's risk totals.",
-        flush=True,
-    )
-    telegram(
+
+    message = (
         "VERIFIED PRIOR-RUN RESULT RECOVERED\n"
-        "Asset: ARBUSD-OTC\nDirection: PUT\nResult: WIN\n"
-        "Net profit: +$0.82\nOrder ID: " + str(order_id)
-        + "\nPrior-run result excluded from this run's risk totals."
+        "Asset: CITI-OTC\n"
+        "Direction: CALL\n"
+        "Result: WIN\n"
+        "Net profit: +$0.83\n"
+        "Order ID: " + str(order_id) + "\n"
+        "Saved order cleared. Current run risk totals unchanged."
     )
+
+    print(message, flush=True)
+    telegram(message)
     return True
 
 
