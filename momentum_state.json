@@ -63,17 +63,7 @@
     "EURNZD-OTC": 1792222080,
     "AMZNALIBABA-OTC": 1792222140
   },
-  "active_order": {
-    "order_id": 14363655762,
-    "asset": "CITI-OTC",
-    "direction": "call",
-    "momentum": -2.09275,
-    "momentum20": -2.35584,
-    "candle_time": 1792222320,
-    "opened_at": 1792222399.4313538,
-    "trade_date": "2026-10-17",
-    "session_id": "39013768699-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -333,12 +323,12 @@
       "last_updated": "2026-10-16T20:42:28.724288+01:00"
     },
     "CITI-OTC": {
-      "trades": 1,
-      "wins": 1,
+      "trades": 2,
+      "wins": 2,
       "losses": 0,
-      "net_profit": 0.83,
+      "net_profit": 1.66,
       "last_result": "WIN",
-      "last_updated": "2026-10-16T21:03:10.970356+01:00"
+      "last_updated": "2026-10-17T09:54:28.855391+01:00"
     },
     "GOOGLE-OTC": {
       "trades": 2,
