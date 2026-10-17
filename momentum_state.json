@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39038532262-1",
-  "net_profit": 0.0,
-  "wins": 0,
+  "net_profit": 0.83,
+  "wins": 1,
   "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 0,
+  "resolved": 1,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792241100,
     "LTCUSD-OTC": 1792171080,
@@ -76,17 +76,7 @@
     "CADCHF-OTC": 1792240980,
     "BONKUSD-OTC": 1792241160
   },
-  "active_order": {
-    "order_id": 14364325186,
-    "asset": "CITI-OTC",
-    "direction": "put",
-    "momentum": 1.49994,
-    "momentum20": 1.17376,
-    "candle_time": 1792245240,
-    "opened_at": 1792245334.6118484,
-    "trade_date": "2026-10-17",
-    "session_id": "39038532262-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -346,12 +336,12 @@
       "last_updated": "2026-10-17T10:33:19.313567+01:00"
     },
     "CITI-OTC": {
-      "trades": 3,
-      "wins": 3,
+      "trades": 4,
+      "wins": 4,
       "losses": 0,
-      "net_profit": 2.49,
+      "net_profit": 3.32,
       "last_result": "WIN",
-      "last_updated": "2026-10-17T10:00:24.477033+01:00"
+      "last_updated": "2026-10-17T14:57:05.625842+01:00"
     },
     "GOOGLE-OTC": {
       "trades": 3,
