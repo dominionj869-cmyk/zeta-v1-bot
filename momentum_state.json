@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39019106947-1",
-  "net_profit": 3.3,
-  "wins": 4,
+  "net_profit": 4.14,
+  "wins": 5,
   "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 4,
+  "resolved": 5,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -63,17 +63,7 @@
     "EURNZD-OTC": 1792222080,
     "AMZNALIBABA-OTC": 1792227660
   },
-  "active_order": {
-    "order_id": 14363794143,
-    "asset": "AMZNEBAY-OTC",
-    "direction": "put",
-    "momentum": 1.15784,
-    "momentum20": 1.5482,
-    "candle_time": 1792227780,
-    "opened_at": 1792227854.1719253,
-    "trade_date": "2026-10-17",
-    "session_id": "39019106947-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -421,12 +411,12 @@
       "last_updated": "2026-10-16T21:45:02.269909+01:00"
     },
     "AMZNEBAY-OTC": {
-      "trades": 1,
-      "wins": 1,
+      "trades": 2,
+      "wins": 2,
       "losses": 0,
-      "net_profit": 0.84,
+      "net_profit": 1.68,
       "last_result": "WIN",
-      "last_updated": "2026-10-16T21:49:27.297599+01:00"
+      "last_updated": "2026-10-17T10:05:19.172113+01:00"
     },
     "COTTON-OTC": {
       "trades": 1,
