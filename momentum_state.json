@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39019106947-1",
-  "net_profit": 6.93,
-  "wins": 12,
+  "net_profit": 7.76,
+  "wins": 13,
   "losses": 3,
   "draws": 0,
   "unknown": 0,
-  "resolved": 15,
+  "resolved": 16,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -67,17 +67,7 @@
     "FARTCOINUSD-OTC": 1792228560,
     "IMXUSD-OTC": 1792228620
   },
-  "active_order": {
-    "order_id": 14363817146,
-    "asset": "AIG-OTC",
-    "direction": "put",
-    "momentum": 0.46328,
-    "momentum20": 0.3557,
-    "candle_time": 1792228740,
-    "opened_at": 1792228818.4924934,
-    "trade_date": "2026-10-17",
-    "session_id": "39019106947-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -305,12 +295,12 @@
       "last_updated": "2026-10-16T20:37:09.830053+01:00"
     },
     "AIG-OTC": {
-      "trades": 2,
-      "wins": 0,
+      "trades": 3,
+      "wins": 1,
       "losses": 2,
-      "net_profit": -2.0,
-      "last_result": "LOSS",
-      "last_updated": "2026-10-16T20:44:05.018908+01:00"
+      "net_profit": -1.17,
+      "last_result": "WIN",
+      "last_updated": "2026-10-17T10:21:23.492695+01:00"
     },
     "EU50-OTC": {
       "trades": 1,
