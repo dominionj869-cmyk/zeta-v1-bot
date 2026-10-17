@@ -73,7 +73,8 @@
     "CADJPY-OTC": 1792239900,
     "GER30-OTC": 1792240020,
     "HYPE-OTC": 1792240680,
-    "CADCHF-OTC": 1792240980
+    "CADCHF-OTC": 1792240980,
+    "BONKUSD-OTC": 1792241160
   },
   "active_order": null,
   "stop_reason": "",
