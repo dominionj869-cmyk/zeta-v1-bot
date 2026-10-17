@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39022078482-1",
-  "net_profit": -2.3,
+  "net_profit": -3.3,
   "wins": 2,
-  "losses": 4,
+  "losses": 5,
   "draws": 0,
   "unknown": 0,
-  "resolved": 6,
+  "resolved": 7,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792230240,
     "LTCUSD-OTC": 1792171080,
@@ -71,17 +71,7 @@
     "HK33-OTC": 1792229340,
     "IOTAUSD-OTC": 1792230420
   },
-  "active_order": {
-    "order_id": 14363862052,
-    "asset": "ATOMUSD-OTC",
-    "direction": "put",
-    "momentum": 0.4001,
-    "momentum20": -0.37812,
-    "candle_time": 1792230600,
-    "opened_at": 1792230673.3955405,
-    "trade_date": "2026-10-17",
-    "session_id": "39022078482-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -277,12 +267,12 @@
       "last_updated": "2026-10-16T22:16:22.557632+01:00"
     },
     "ATOMUSD-OTC": {
-      "trades": 1,
+      "trades": 2,
       "wins": 1,
-      "losses": 0,
-      "net_profit": 0.82,
-      "last_result": "WIN",
-      "last_updated": "2026-10-16T20:30:19.889549+01:00"
+      "losses": 1,
+      "net_profit": -0.18,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-17T10:52:18.395757+01:00"
     },
     "COCOA-OTC": {
       "trades": 1,
