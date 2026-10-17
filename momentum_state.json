@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39019106947-1",
-  "net_profit": 4.14,
+  "net_profit": 3.14,
   "wins": 5,
-  "losses": 0,
+  "losses": 1,
   "draws": 0,
   "unknown": 0,
-  "resolved": 5,
+  "resolved": 6,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -63,17 +63,7 @@
     "EURNZD-OTC": 1792222080,
     "AMZNALIBABA-OTC": 1792227660
   },
-  "active_order": {
-    "order_id": 14363795991,
-    "asset": "GRTUSD-OTC",
-    "direction": "put",
-    "momentum": 2.77705,
-    "momentum20": 3.70077,
-    "candle_time": 1792227840,
-    "opened_at": 1792227935.722777,
-    "trade_date": "2026-10-17",
-    "session_id": "39019106947-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -349,12 +339,12 @@
       "last_updated": "2026-10-16T21:20:21.890459+01:00"
     },
     "GRTUSD-OTC": {
-      "trades": 1,
+      "trades": 2,
       "wins": 1,
-      "losses": 0,
-      "net_profit": 0.83,
-      "last_result": "WIN",
-      "last_updated": "2026-10-16T21:13:07.341637+01:00"
+      "losses": 1,
+      "net_profit": -0.17,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-17T10:07:06.737530+01:00"
     },
     "AMAZON-OTC": {
       "trades": 1,
