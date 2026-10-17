@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39033671320-1",
-  "net_profit": 0.0,
-  "wins": 0,
+  "net_profit": 0.82,
+  "wins": 1,
   "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 0,
+  "resolved": 1,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792230240,
     "LTCUSD-OTC": 1792171080,
@@ -75,17 +75,7 @@
     "HYPE-OTC": 1792240680,
     "CADCHF-OTC": 1792240980
   },
-  "active_order": {
-    "order_id": 14364172648,
-    "asset": "CADCHF-OTC",
-    "direction": "call",
-    "momentum": -0.17857,
-    "momentum20": -0.23339,
-    "candle_time": 1792240980,
-    "opened_at": 1792241043.7674913,
-    "trade_date": "2026-10-17",
-    "session_id": "39033671320-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -599,6 +589,14 @@
       "net_profit": 0.82,
       "last_result": "WIN",
       "last_updated": "2026-10-17T13:40:17.850970+01:00"
+    },
+    "CADCHF-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.82,
+      "last_result": "WIN",
+      "last_updated": "2026-10-17T13:45:08.767711+01:00"
     }
   }
 }
