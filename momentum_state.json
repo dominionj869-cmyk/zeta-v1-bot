@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39032169795-1",
-  "net_profit": -0.18,
+  "net_profit": -1.18,
   "wins": 1,
-  "losses": 1,
+  "losses": 2,
   "draws": 0,
   "unknown": 0,
-  "resolved": 2,
+  "resolved": 3,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792230240,
     "LTCUSD-OTC": 1792171080,
@@ -72,17 +72,7 @@
     "IOTAUSD-OTC": 1792230420,
     "CADJPY-OTC": 1792239900
   },
-  "active_order": {
-    "order_id": 14364138324,
-    "asset": "CADJPY-OTC",
-    "direction": "call",
-    "momentum": -0.11327,
-    "momentum20": -0.06728,
-    "candle_time": 1792239900,
-    "opened_at": 1792239977.4528139,
-    "trade_date": "2026-10-17",
-    "session_id": "39032169795-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -572,6 +562,14 @@
       "net_profit": -1.0,
       "last_result": "LOSS",
       "last_updated": "2026-10-17T10:49:27.909688+01:00"
+    },
+    "CADJPY-OTC": {
+      "trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "net_profit": -1.0,
+      "last_result": "LOSS",
+      "last_updated": "2026-10-17T13:27:22.453084+01:00"
     }
   }
 }
