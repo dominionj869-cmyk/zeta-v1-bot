@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39019106947-1",
-  "net_profit": 0.0,
-  "wins": 0,
+  "net_profit": 0.82,
+  "wins": 1,
   "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 0,
+  "resolved": 1,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -63,17 +63,7 @@
     "EURNZD-OTC": 1792222080,
     "AMZNALIBABA-OTC": 1792222140
   },
-  "active_order": {
-    "order_id": 14363782012,
-    "asset": "EOSUSD-OTC",
-    "direction": "put",
-    "momentum": 10.62779,
-    "momentum20": 13.30371,
-    "candle_time": 1792227300,
-    "opened_at": 1792227366.2386475,
-    "trade_date": "2026-10-17",
-    "session_id": "39019106947-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -109,12 +99,12 @@
       "last_updated": "2026-10-16T21:15:26.618875+01:00"
     },
     "EOSUSD-OTC": {
-      "trades": 4,
-      "wins": 2,
+      "trades": 5,
+      "wins": 3,
       "losses": 2,
-      "net_profit": -0.36,
+      "net_profit": 0.46,
       "last_result": "WIN",
-      "last_updated": "2026-10-16T21:06:06.532066+01:00"
+      "last_updated": "2026-10-17T09:57:11.238862+01:00"
     },
     "HBARUSD-OTC": {
       "trades": 2,
