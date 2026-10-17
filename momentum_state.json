@@ -59,7 +59,8 @@
     "EURAUD-OTC": 1792185060,
     "APPLE-OTC": 1792185120,
     "CASINOS-OTC": 1792194360,
-    "AUS200-OTC": 1792194780
+    "AUS200-OTC": 1792194780,
+    "EURNZD-OTC": 1792222080
   },
   "active_order": null,
   "stop_reason": "",
