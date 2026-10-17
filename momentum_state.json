@@ -76,7 +76,8 @@
     "CADCHF-OTC": 1792240980,
     "BONKUSD-OTC": 1792263720,
     "AUDJPY-OTC": 1792263000,
-    "ETHUSD-OTC": 1792263660
+    "ETHUSD-OTC": 1792263660,
+    "JPM-OTC": 1792263780
   },
   "active_order": null,
   "stop_reason": "",
