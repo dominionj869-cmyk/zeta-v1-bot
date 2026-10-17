@@ -70,7 +70,17 @@
     "FWONA-OTC": 1792229280,
     "HK33-OTC": 1792229340
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14363841462,
+    "asset": "AIG-OTC",
+    "direction": "put",
+    "momentum": 0.54152,
+    "momentum20": 0.93759,
+    "candle_time": 1792229760,
+    "opened_at": 1792229830.0076742,
+    "trade_date": "2026-10-17",
+    "session_id": "39021204627-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
