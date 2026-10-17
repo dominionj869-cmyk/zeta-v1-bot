@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39019106947-1",
-  "net_profit": 0.82,
-  "wins": 1,
+  "net_profit": 1.65,
+  "wins": 2,
   "losses": 0,
   "draws": 0,
   "unknown": 0,
-  "resolved": 1,
+  "resolved": 2,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -63,17 +63,7 @@
     "EURNZD-OTC": 1792222080,
     "AMZNALIBABA-OTC": 1792222140
   },
-  "active_order": {
-    "order_id": 14363786870,
-    "asset": "CITI-OTC",
-    "direction": "call",
-    "momentum": -3.42751,
-    "momentum20": -1.61759,
-    "candle_time": 1792227480,
-    "opened_at": 1792227559.476811,
-    "trade_date": "2026-10-17",
-    "session_id": "39019106947-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -333,12 +323,12 @@
       "last_updated": "2026-10-16T20:42:28.724288+01:00"
     },
     "CITI-OTC": {
-      "trades": 2,
-      "wins": 2,
+      "trades": 3,
+      "wins": 3,
       "losses": 0,
-      "net_profit": 1.66,
+      "net_profit": 2.49,
       "last_result": "WIN",
-      "last_updated": "2026-10-17T09:54:28.855391+01:00"
+      "last_updated": "2026-10-17T10:00:24.477033+01:00"
     },
     "GOOGLE-OTC": {
       "trades": 2,
