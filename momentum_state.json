@@ -76,7 +76,17 @@
     "CADCHF-OTC": 1792240980,
     "BONKUSD-OTC": 1792241160
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14364340456,
+    "asset": "COKE-OTC",
+    "direction": "call",
+    "momentum": -3.31146,
+    "momentum20": 0.18174,
+    "candle_time": 1792245660,
+    "opened_at": 1792245739.2134774,
+    "trade_date": "2026-10-17",
+    "session_id": "39038532262-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
