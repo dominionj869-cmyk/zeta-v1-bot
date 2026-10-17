@@ -71,7 +71,17 @@
     "HK33-OTC": 1792229340,
     "IOTAUSD-OTC": 1792230420
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14363859519,
+    "asset": "DYDXUSD-OTC",
+    "direction": "call",
+    "momentum": -3.09094,
+    "momentum20": -1.81613,
+    "candle_time": 1792230480,
+    "opened_at": 1792230578.3156316,
+    "trade_date": "2026-10-17",
+    "session_id": "39022078482-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
