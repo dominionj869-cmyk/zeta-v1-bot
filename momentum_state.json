@@ -70,7 +70,17 @@
     "FWONA-OTC": 1792229280,
     "HK33-OTC": 1792229340
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14363854624,
+    "asset": "AUS200-OTC",
+    "direction": "call",
+    "momentum": -0.18716,
+    "momentum20": -0.07885,
+    "candle_time": 1792230300,
+    "opened_at": 1792230381.6362195,
+    "trade_date": "2026-10-17",
+    "session_id": "39022078482-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
