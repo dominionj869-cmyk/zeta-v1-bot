@@ -67,7 +67,17 @@
     "FARTCOINUSD-OTC": 1792228560,
     "IMXUSD-OTC": 1792228620
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14363814780,
+    "asset": "IMXUSD-OTC",
+    "direction": "call",
+    "momentum": -3.00798,
+    "momentum20": -2.08825,
+    "candle_time": 1792228620,
+    "opened_at": 1792228724.231612,
+    "trade_date": "2026-10-17",
+    "session_id": "39019106947-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
