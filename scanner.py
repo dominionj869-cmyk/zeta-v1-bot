@@ -64,6 +64,58 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s"
 )
 
+
+def _disable_digital_open_worker(self):
+    """Disable the library's unused digital-market polling thread.
+
+    This bot trades binary Forex options and does not need digital-underlying
+    lists. The installed iqoptionapi worker assumes every response contains an
+    ``underlying`` key and can crash when the broker returns None.
+    """
+    logging.info("Digital-market background watcher disabled; Forex scanner does not use it")
+
+
+def _safe_get_candles(self, active, interval, count, endtime):
+    """Bound candle requests so a temporary API outage cannot hang the scan forever."""
+    try:
+        active_code = OP_code.ACTIVES.get(active)
+        if active_code is None:
+            logging.warning("No IQ Option active ID found for %s", active)
+            return None
+        self.api.candles.candles_data = None
+        self.api.getcandles(active_code, interval, count, endtime)
+        deadline = time.time() + CANDLE_REQUEST_TIMEOUT
+        while time.time() < deadline:
+            candles = getattr(self.api.candles, "candles_data", None)
+            if candles is not None:
+                return candles
+            try:
+                if not self.check_connect():
+                    logging.warning("Connection lost while waiting for candles for %s", active)
+                    return None
+            except Exception:
+                return None
+            time.sleep(0.1)
+        logging.warning("Candle request timed out for %s after %s seconds", active, CANDLE_REQUEST_TIMEOUT)
+        return None
+    except Exception as exc:
+        logging.warning("Candle request failed for %s: %s", active, exc)
+        return None
+
+
+# Patch the library BEFORE creating an IQ_Option instance. This matters because
+# some iqoptionapi versions start the digital watcher during initialisation or
+# connection setup, before a per-instance patch would be applied.
+try:
+    if hasattr(IQ_Option, "_IQ_Option__get_digital_open"):
+        IQ_Option._IQ_Option__get_digital_open = _disable_digital_open_worker
+        logging.info("Patched unused IQ Option digital-market watcher")
+    else:
+        logging.warning("Digital watcher method not found in this iqoptionapi version")
+    IQ_Option.get_candles = _safe_get_candles
+except Exception as patch_error:
+    logging.warning("Could not apply IQ Option safety patches: %s", patch_error)
+
 IQ = None
 ASSETS = []
 ASSET_REFRESH_AT = 0
@@ -196,19 +248,32 @@ def add_asset(result, name, active_id=None):
         return
     clean_name = pair + ("-OTC" if is_otc else "")
     existing = result.get(clean_name, {})
-    if active_id is None:
-        active_id = existing.get("id")
-    if active_id is None:
+    resolved_id = None
+    for candidate in (active_id, existing.get("id")):
         try:
-            active_id = OP_code.ACTIVES.get(clean_name)
-        except Exception:
-            active_id = None
+            if candidate is not None:
+                resolved_id = int(candidate)
+                break
+        except (TypeError, ValueError):
+            continue
+    if resolved_id is None:
+        try:
+            candidate = OP_code.ACTIVES.get(clean_name)
+            if candidate is not None:
+                resolved_id = int(candidate)
+        except (TypeError, ValueError, AttributeError):
+            resolved_id = None
     result[clean_name] = {
         "name": clean_name,
         "pair": pair,
         "otc": is_otc,
-        "id": active_id
+        "id": resolved_id
     }
+    try:
+        if resolved_id is not None:
+            OP_code.ACTIVES[clean_name] = resolved_id
+    except (TypeError, ValueError, AttributeError):
+        pass
 
 
 def walk_asset_tree(node, result, parent_key=None):
@@ -242,7 +307,7 @@ def refresh_assets(force=False):
     except Exception as exc:
         logging.warning("Active-code refresh failed: %s", exc)
 
-    for method_name in ("get_all_init_v2", "get_all_init", "get_all_open_time"):
+    for method_name in ("get_all_init_v2", "get_all_init"):
         try:
             method = getattr(IQ, method_name, None)
             if method:
@@ -277,23 +342,34 @@ def connect_iq():
         raise RuntimeError("Missing IQ_EMAIL or IQ_PASSWORD GitHub secret")
 
     api = IQ_Option(IQ_EMAIL, IQ_PASSWORD)
-    connected = api.connect()
-    ok = connected[0] if isinstance(connected, tuple) else bool(connected)
-    if not ok:
-        reason = connected[1] if isinstance(connected, tuple) and len(connected) > 1 else "unknown reason"
-        raise RuntimeError("IQ Option connection failed: {}".format(reason))
-
-    api.change_balance(BALANCE_MODE)
-    time.sleep(1)
-    IQ = api
-    logging.info("Connected to IQ Option in %s mode", BALANCE_MODE)
-    send_telegram(
-        "<b>Momentum Forex Scanner connected</b>\n"
-        "Balance: PRACTICE\nStake: ${:.2f}\nTarget: +${:.2f}\nLoss limit: -${:.2f}\n"
-        "Max losing trades: {}\nMax resolved trades: {}\nForex only: normal + OTC".format(
-            STAKE, SESSION_PROFIT_TARGET, SESSION_LOSS_LIMIT,
-            MAX_LOSING_TRADES, MAX_RESOLVED_TRADES)
-    )
+    last_error = "unknown reason"
+    for attempt in range(1, 6):
+        try:
+            connected = api.connect()
+            ok = connected[0] if isinstance(connected, tuple) else bool(connected)
+            if not ok:
+                last_error = connected[1] if isinstance(connected, tuple) and len(connected) > 1 else "connection rejected"
+                raise ConnectionError(str(last_error))
+            api.change_balance(BALANCE_MODE)
+            time.sleep(1)
+            if not api.check_connect():
+                raise ConnectionError("connection dropped after login")
+            IQ = api
+            logging.info("Connected to IQ Option in %s mode", BALANCE_MODE)
+            send_telegram(
+                "<b>Momentum Forex Scanner connected</b>\n"
+                "Balance: PRACTICE\nStake: ${:.2f}\nTarget: +${:.2f}\nLoss limit: -${:.2f}\n"
+                "Max losing trades: {}\nMax resolved trades: {}\nForex only: normal + OTC".format(
+                    STAKE, SESSION_PROFIT_TARGET, SESSION_LOSS_LIMIT,
+                    MAX_LOSING_TRADES, MAX_RESOLVED_TRADES)
+            )
+            return
+        except Exception as exc:
+            last_error = str(exc)
+            logging.warning("IQ Option connection attempt %s/5 failed: %s", attempt, last_error)
+            if attempt < 5:
+                time.sleep(RECONNECT_SECONDS)
+    raise RuntimeError("Could not connect to IQ Option after 5 attempts: {}".format(last_error))
 
 
 def momentum_series(closes, period):
@@ -610,9 +686,15 @@ def main():
                 logging.warning("Reconnecting to IQ Option...")
                 last_reconnect_notice = time.time()
             try:
-                IQ.connect()
+                connected = IQ.connect()
+                ok = connected[0] if isinstance(connected, tuple) else bool(connected)
+                if not ok:
+                    reason = connected[1] if isinstance(connected, tuple) and len(connected) > 1 else "connection rejected"
+                    raise ConnectionError(str(reason))
                 IQ.change_balance(BALANCE_MODE)
                 time.sleep(2)
+                if not IQ.check_connect():
+                    raise ConnectionError("connection dropped after reconnect")
                 refresh_assets(force=True)
             except Exception as exc:
                 logging.warning("Reconnect failed: %s", exc)
@@ -634,6 +716,12 @@ def main():
                 STOP_EVENT.set()
                 break
             try:
+                active_id = item.get("id")
+                if active_id is not None:
+                    try:
+                        OP_code.ACTIVES[item["name"]] = int(active_id)
+                    except (TypeError, ValueError):
+                        pass
                 candles = get_closed_candles(item["name"])
                 signal = evaluate_signal(candles)
                 if signal:
