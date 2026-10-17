@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39019106947-1",
-  "net_profit": 6.76,
-  "wins": 13,
+  "net_profit": 7.59,
+  "wins": 14,
   "losses": 4,
   "draws": 0,
   "unknown": 0,
-  "resolved": 17,
+  "resolved": 18,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -68,17 +68,7 @@
     "IMXUSD-OTC": 1792228620,
     "ICPUSD-OTC": 1792228860
   },
-  "active_order": {
-    "order_id": 14363820650,
-    "asset": "ICPUSD-OTC",
-    "direction": "put",
-    "momentum": 0.78421,
-    "momentum20": 0.58627,
-    "candle_time": 1792228860,
-    "opened_at": 1792228970.4825802,
-    "trade_date": "2026-10-17",
-    "session_id": "39019106947-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -536,6 +526,14 @@
       "net_profit": 0.83,
       "last_result": "WIN",
       "last_updated": "2026-10-17T10:20:15.246485+01:00"
+    },
+    "ICPUSD-OTC": {
+      "trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "net_profit": 0.83,
+      "last_result": "WIN",
+      "last_updated": "2026-10-17T10:24:21.497371+01:00"
     }
   }
 }
