@@ -31,8 +31,8 @@ CANDLE_SECONDS = 60
 MOMENTUM_PERIOD = 10
 MOMENTUM_CONFIRM_PERIOD = 20
 MOMENTUM_LOOKBACK = 50
-EXTREME_PERCENTILE = 0.10
-MIN_TURN_DISTANCE = 0.03
+EXTREME_PERCENTILE = 0.08
+MIN_TURN_DISTANCE = 0.06
 
 SESSION_PROFIT_TARGET = 5.0
 SESSION_LOSS_LIMIT = 3.0
@@ -511,11 +511,90 @@ def format_stats():
     )
 
 
+def extract_numeric_profit(value):
+    """Extract a confirmed numeric net result from common IQ API responses.
+
+    False/None/status text means the broker has not provided a usable result.
+    Never guess a win/loss from a status label or stake amount.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            number = float(value)
+            if number == number and abs(number) != float("inf"):
+                return number
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text.lower() in {
+            "false", "none", "null", "pending", "open", "win", "won",
+            "loss", "lost", "loose", "draw", "unknown"
+        }:
+            return None
+        try:
+            number = float(text)
+            if number == number and abs(number) != float("inf"):
+                return number
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return None
+    if isinstance(value, dict):
+        profit_keys = (
+            "profit", "profit_amount", "profitAmount", "close_profit",
+            "closeProfit", "net_profit", "netProfit", "win_amount", "winAmount"
+        )
+        for key in profit_keys:
+            if key in value:
+                result = extract_numeric_profit(value.get(key))
+                if result is not None:
+                    return result
+        # Some API versions wrap the settlement object inside a result field.
+        for key in ("result", "data", "betinfo", "bet_info", "option"):
+            nested = value.get(key)
+            if isinstance(nested, (dict, list)):
+                result = extract_numeric_profit(nested)
+                if result is not None:
+                    return result
+        if isinstance(value.get("result"), (int, float, str)):
+            result = extract_numeric_profit(value.get("result"))
+            if result is not None:
+                return result
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            result = extract_numeric_profit(item)
+            if result is not None:
+                return result
+    return None
+
+
+def query_order_profit(order_id):
+    """Try supported result methods; return a numeric result or None if unknown."""
+    methods = ("check_win_v4", "check_win", "get_betinfo", "get_betinfo_v2")
+    for method_name in methods:
+        method = getattr(IQ, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            raw = method(order_id)
+        except Exception as exc:
+            logging.debug("%s failed for order %s: %s", method_name, order_id, exc)
+            continue
+        profit = extract_numeric_profit(raw)
+        if profit is not None:
+            logging.info("Resolved order %s using %s: %+.2f", order_id, method_name, profit)
+            return profit
+        if raw not in (None, False, "False", "false", "", {}):
+            logging.debug("Unparsed %s response for order %s: %s", method_name, order_id, repr(raw)[:300])
+    return None
+
+
 def settle_result(asset, direction, profit, m10=None, m20=None):
-    try:
-        profit = float(profit)
-    except (TypeError, ValueError):
-        raise ValueError("Broker returned an unreadable trade result")
+    profit = extract_numeric_profit(profit)
+    if profit is None:
+        raise ValueError("Broker has not returned a confirmed numeric trade result")
 
     # The user's risk rule treats $0 as a loss for win/loss statistics.
     is_win = profit > 0.0
@@ -548,22 +627,26 @@ def settle_result(asset, direction, profit, m10=None, m20=None):
 
 
 def wait_for_order_result(order_id, asset, direction, m10, m20):
-    """Resolve the one open trade before allowing another entry."""
-    last_notice = time.time()
+    """Keep monitoring the same order until a numeric settlement is confirmed."""
+    last_notice = 0
+    last_bad_response_notice = 0
     while not STOP_EVENT.is_set():
-        try:
-            # This method normally blocks until the binary option is settled.
-            result = IQ.check_win_v4(order_id)
-            if result is not None:
-                settle_result(asset, direction, result, m10, m20)
-                return
-        except Exception as exc:
-            logging.warning("Result check failed for order %s: %s", order_id, exc)
+        profit = query_order_profit(order_id)
+        if profit is not None:
+            settle_result(asset, direction, profit, m10, m20)
+            return
 
-        # If an API version returns None early, keep monitoring this same order.
-        if time.time() - last_notice >= 30:
+        now = time.time()
+        if now - last_bad_response_notice >= 60:
+            logging.warning(
+                "Order %s result is not readable yet; preserving pending order and retrying. "
+                "Check the order in IQ Option Practice history. No new trade will be placed.",
+                order_id
+            )
+            last_bad_response_notice = now
+        if now - last_notice >= 30:
             logging.info("Still checking open order %s; no new trade will be placed", order_id)
-            last_notice = time.time()
+            last_notice = now
         time.sleep(ORDER_RESULT_RETRY_SECONDS)
 
 
