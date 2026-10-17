@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39019106947-1",
-  "net_profit": 7.59,
+  "net_profit": 6.59,
   "wins": 14,
-  "losses": 4,
+  "losses": 5,
   "draws": 0,
   "unknown": 0,
-  "resolved": 18,
+  "resolved": 19,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792167300,
     "LTCUSD-OTC": 1792171080,
@@ -68,17 +68,7 @@
     "IMXUSD-OTC": 1792228620,
     "ICPUSD-OTC": 1792228860
   },
-  "active_order": {
-    "order_id": 14363823208,
-    "asset": "AMZNALIBABA-OTC",
-    "direction": "put",
-    "momentum": 1.44967,
-    "momentum20": 2.22022,
-    "candle_time": 1792228980,
-    "opened_at": 1792229065.0737698,
-    "trade_date": "2026-10-17",
-    "session_id": "39019106947-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -498,12 +488,12 @@
       "last_updated": "2026-10-17T10:17:10.079541+01:00"
     },
     "AMZNALIBABA-OTC": {
-      "trades": 3,
+      "trades": 4,
       "wins": 2,
-      "losses": 1,
-      "net_profit": 0.66,
+      "losses": 2,
+      "net_profit": -0.34,
       "last_result": "LOSS",
-      "last_updated": "2026-10-17T10:22:33.098405+01:00"
+      "last_updated": "2026-10-17T10:25:30.073953+01:00"
     },
     "FR40-OTC": {
       "trades": 1,
