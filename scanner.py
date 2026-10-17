@@ -36,8 +36,6 @@ MIN_TURN_DISTANCE = 0.06
 
 SESSION_PROFIT_TARGET = 5.0
 SESSION_LOSS_LIMIT = 3.0
-MAX_LOSING_TRADES = 5
-MAX_RESOLVED_TRADES = 20
 
 SCAN_INTERVAL = 5
 ASSET_REFRESH_SECONDS = 900
@@ -359,9 +357,8 @@ def connect_iq():
             send_telegram(
                 "<b>Momentum Forex Scanner connected</b>\n"
                 "Balance: PRACTICE\nStake: ${:.2f}\nTarget: +${:.2f}\nLoss limit: -${:.2f}\n"
-                "Max losing trades: {}\nMax resolved trades: {}\nForex only: normal + OTC".format(
-                    STAKE, SESSION_PROFIT_TARGET, SESSION_LOSS_LIMIT,
-                    MAX_LOSING_TRADES, MAX_RESOLVED_TRADES)
+                "Forex only: normal + OTC".format(
+                    STAKE, SESSION_PROFIT_TARGET, SESSION_LOSS_LIMIT)
             )
             return
         except Exception as exc:
@@ -497,23 +494,20 @@ def evaluate_signal(candles):
 
 
 def risk_stop_reason():
+    # Stop only at the dollar-based session limits. Total trade count and
+    # historical loss count are statistics, not automatic stop conditions.
     if float(STATE.get("profit", 0.0)) >= SESSION_PROFIT_TARGET:
         return "Session profit target reached"
     if float(STATE.get("profit", 0.0)) <= -SESSION_LOSS_LIMIT:
         return "Session loss limit reached"
-    if int(STATE.get("losses", 0)) >= MAX_LOSING_TRADES:
-        return "Maximum losing trades reached"
-    if int(STATE.get("resolved", 0)) >= MAX_RESOLVED_TRADES:
-        return "Maximum resolved trades reached"
     return None
 
 
 def format_stats():
     return (
-        "Profit: {:+.2f}\nWins: {}\nLosses: {}\nResolved: {}/{}".format(
+        "Profit: {:+.2f}\nWins: {}\nLosses: {}\nResolved trades: {}".format(
             float(STATE.get("profit", 0.0)), int(STATE.get("wins", 0)),
-            int(STATE.get("losses", 0)), int(STATE.get("resolved", 0)),
-            MAX_RESOLVED_TRADES)
+            int(STATE.get("losses", 0)), int(STATE.get("resolved", 0)))
     )
 
 
