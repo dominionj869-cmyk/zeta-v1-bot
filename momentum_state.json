@@ -76,7 +76,17 @@
     "CADCHF-OTC": 1792240980,
     "BONKUSD-OTC": 1792241160
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14364981939,
+    "asset": "CARDANO-OTC",
+    "direction": "put",
+    "momentum": 6.77251,
+    "momentum20": 3.62919,
+    "candle_time": 1792262340,
+    "opened_at": 1792262418.191929,
+    "trade_date": "2026-10-17",
+    "session_id": "39058950392-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
