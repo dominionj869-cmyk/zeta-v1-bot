@@ -71,7 +71,7 @@
     "HK33-OTC": 1792229340
   },
   "active_order": null,
-  "stop_reason": "",
+  "stop_reason": "Five losing trades reached; stopping this run.",
   "asset_stats": {
     "ANTHROPIC-OTC": {
       "trades": 1,
