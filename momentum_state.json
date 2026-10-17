@@ -63,7 +63,17 @@
     "EURNZD-OTC": 1792222080,
     "AMZNALIBABA-OTC": 1792227660
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14363795991,
+    "asset": "GRTUSD-OTC",
+    "direction": "put",
+    "momentum": 2.77705,
+    "momentum20": 3.70077,
+    "candle_time": 1792227840,
+    "opened_at": 1792227935.722777,
+    "trade_date": "2026-10-17",
+    "session_id": "39019106947-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
