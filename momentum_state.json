@@ -1,12 +1,12 @@
 {
   "date": "2026-10-17",
   "session_id": "39032169795-1",
-  "net_profit": -0.68,
-  "wins": 4,
+  "net_profit": 0.14,
+  "wins": 5,
   "losses": 4,
   "draws": 0,
   "unknown": 0,
-  "resolved": 8,
+  "resolved": 9,
   "last_signal_candle": {
     "ANTHROPIC-OTC": 1792230240,
     "LTCUSD-OTC": 1792171080,
@@ -73,17 +73,7 @@
     "CADJPY-OTC": 1792239900,
     "GER30-OTC": 1792240020
   },
-  "active_order": {
-    "order_id": 14364155081,
-    "asset": "COCOA-OTC",
-    "direction": "put",
-    "momentum": 0.90215,
-    "momentum20": -0.26408,
-    "candle_time": 1792240380,
-    "opened_at": 1792240472.886795,
-    "trade_date": "2026-10-17",
-    "session_id": "39032169795-1"
-  },
+  "active_order": null,
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
@@ -287,12 +277,12 @@
       "last_updated": "2026-10-17T10:52:18.395757+01:00"
     },
     "COCOA-OTC": {
-      "trades": 1,
-      "wins": 1,
+      "trades": 2,
+      "wins": 2,
       "losses": 0,
-      "net_profit": 0.82,
+      "net_profit": 1.64,
       "last_result": "WIN",
-      "last_updated": "2026-10-16T20:31:34.041623+01:00"
+      "last_updated": "2026-10-17T13:36:03.902884+01:00"
     },
     "DOTUSD-OTC": {
       "trades": 3,
