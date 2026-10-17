@@ -76,7 +76,17 @@
     "CADCHF-OTC": 1792240980,
     "BONKUSD-OTC": 1792241160
   },
-  "active_order": null,
+  "active_order": {
+    "order_id": 14364264910,
+    "asset": "ATOMUSD-OTC",
+    "direction": "call",
+    "momentum": -1.18319,
+    "momentum20": -0.88465,
+    "candle_time": 1792243620,
+    "opened_at": 1792243702.1103342,
+    "trade_date": "2026-10-17",
+    "session_id": "39035917166-1"
+  },
   "stop_reason": "",
   "asset_stats": {
     "ANTHROPIC-OTC": {
