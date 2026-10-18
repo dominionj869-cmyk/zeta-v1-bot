@@ -42,6 +42,7 @@ HEARTBEAT_SECONDS = 300
 RECONNECT_SECONDS = 30
 CANDLE_REQUEST_TIMEOUT = 10
 ORDER_RESULT_RETRY_SECONDS = 5
+REJECTED_ASSET_COOLDOWN_SECONDS = 600
 CANDLE_REQUEST_COUNT = MOMENTUM_LOOKBACK + MOMENTUM_CONFIRM_PERIOD + 12
 LOG_FILE = "momentum_signal_log.csv"
 STATE_FILE = "momentum_state.json"
@@ -70,6 +71,7 @@ else:
 IQ = None
 ASSETS = []
 ASSET_REFRESH_AT = 0.0
+REJECTED_ASSETS = {}
 STOP_EVENT = threading.Event()
 TRADE_LOCK = threading.Lock()
 STATE_LOCK = threading.RLock()
@@ -677,9 +679,18 @@ def place_trade(asset_info, signal):
             success = bool(result)
             order_id = None
         if not success or order_id is None:
+            REJECTED_ASSETS[asset] = time.time() + REJECTED_ASSET_COOLDOWN_SECONDS
             log_trade(asset, direction, signal.get("momentum"), "ORDER_REJECTED", "")
-            logging.warning("Broker rejected order on %s: %r", asset, result)
-            send_telegram("<b>Order rejected</b>\nAsset: {}\nBroker response: {}".format(asset, result))
+            logging.warning(
+                "Broker rejected order on %s; cooling this asset down for %s seconds: %r",
+                asset, REJECTED_ASSET_COOLDOWN_SECONDS, result
+            )
+            send_telegram(
+                "<b>Order rejected</b>\nAsset: {}\nBroker response: {}\n"
+                "Skipping this asset for {} minutes. No trade loss recorded.".format(
+                    asset, result, int(REJECTED_ASSET_COOLDOWN_SECONDS / 60)
+                )
+            )
             return
         STATE["pending_order_id"] = order_id
         STATE["pending_asset"] = asset
@@ -767,7 +778,13 @@ def main():
             if STOP_EVENT.is_set() or stop_if_limit_reached():
                 break
             try:
-                candles = get_closed_candles(item["name"])
+                asset_name = item["name"]
+                cooldown_until = REJECTED_ASSETS.get(asset_name, 0.0)
+                if time.time() < cooldown_until:
+                    continue
+                if cooldown_until:
+                    REJECTED_ASSETS.pop(asset_name, None)
+                candles = get_closed_candles(asset_name)
                 signal = evaluate_signal(candles)
                 if signal is None:
                     continue
