@@ -11,10 +11,10 @@ from iqoptionapi.stable_api import IQ_Option
 import iqoptionapi.constants as OP_code
 
 # ==================== SETTINGS ====================
-MOMENTUM_PERIOD = 10
+MOMENTUM_PERIOD = 20
 MOMENTUM_LOOKBACK = 50
-EXTREME_PERCENTILE = 0.10
-MIN_TURN_DISTANCE = 0.03
+EXTREME_PERCENTILE = 0.07
+MIN_TURN_DISTANCE = 0.07
 CANDLE_SECONDS = 60
 EXPIRY_MINUTES = 1
 CANDLE_COUNT = 80
