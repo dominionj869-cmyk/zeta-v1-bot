@@ -1,834 +1,694 @@
 import os
-import re
 import csv
 import json
 import time
-import math
 import logging
-import threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import requests
-import iqoptionapi.constants as OP_code
 from iqoptionapi.stable_api import IQ_Option
+import iqoptionapi.constants as OP_code
 
-# MOMENTUM 10 + TWO CONFIRMATIONS (M20 TREND AND ENGULFING CANDLE)
-# PRACTICE ONLY. Do not change BALANCE_MODE to REAL.
-
-IQ_EMAIL = os.getenv("IQ_EMAIL", "").strip()
-IQ_PASSWORD = os.getenv("IQ_PASSWORD", "").strip()
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-
-BALANCE_MODE = "PRACTICE"
-AUTO_TRADE = True
-STAKE = 1.0
-EXPIRY_MINUTES = 1
-CANDLE_SECONDS = 60
-
+# ==================== SETTINGS ====================
 MOMENTUM_PERIOD = 10
-MOMENTUM_CONFIRM_PERIOD = 20
 MOMENTUM_LOOKBACK = 50
 EXTREME_PERCENTILE = 0.08
 MIN_TURN_DISTANCE = 0.06
-
-SESSION_PROFIT_TARGET = 5.0
-SESSION_LOSS_LIMIT = 3.0
-
+CANDLE_SECONDS = 60
+EXPIRY_MINUTES = 1
+CANDLE_COUNT = 80
+AUTO_TRADE = True
+BALANCE_MODE = "PRACTICE"
+STAKE = 1.0
+TARGET_TRADES = 50
+DAILY_PROFIT_TARGET = 35.0
+MAX_LOSING_GROUPS = 20
+MAX_GROUP_TRADES = 3
+RECOVERY_STAKES = [1.0, 2.0, 4.0]
 SCAN_INTERVAL = 5
-ASSET_REFRESH_SECONDS = 900
 HEARTBEAT_SECONDS = 300
 RECONNECT_SECONDS = 30
-CANDLE_REQUEST_TIMEOUT = 10
-ORDER_RESULT_RETRY_SECONDS = 5
-REJECTED_ASSET_COOLDOWN_SECONDS = 600
-CANDLE_REQUEST_COUNT = MOMENTUM_LOOKBACK + MOMENTUM_CONFIRM_PERIOD + 12
+RESULT_RETRY_SECONDS = 1
+CANDLE_TIMEOUT = 15
 LOG_FILE = "momentum_signal_log.csv"
 STATE_FILE = "momentum_state.json"
 LAGOS = ZoneInfo("Africa/Lagos")
+EMAIL = os.getenv("IQ_EMAIL", "")
+PASSWORD = os.getenv("IQ_PASSWORD", "")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-CURRENCIES = {
-    "USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD",
-    "CNY", "HKD", "SGD", "SEK", "NOK", "DKK", "PLN", "CZK",
-    "HUF", "TRY", "ZAR", "MXN", "BRL", "INR", "THB", "AED",
-    "SAR", "ILS", "KRW", "TWD", "RUB", "RON", "BGN", "ISK",
-    "PHP", "IDR", "MYR"
+api = None
+crypto_assets = []
+crypto_active_ids = {}
+last_heartbeat = 0
+last_signal_candles = {}
+
+CRYPTO_SYMBOLS = {
+    "BTC", "ETH", "LTC", "XRP", "BCH", "EOS", "ETC", "ADA", "DOT",
+    "SOL", "DOGE", "TRX", "LINK", "XLM", "BNB", "DASH", "ZEC", "NEO",
+    "QTUM", "IOTA", "ATOM", "AVAX", "SHIB", "UNI", "FIL", "APT", "ARB",
+    "OP", "PEPE", "TON", "NEAR", "ICP", "SUI", "INJ", "AAVE", "ALGO",
+    "VET", "FTM", "HBAR", "MANA", "SAND", "AXS", "CRV", "COMP", "MKR",
+    "SNX", "YFI", "GRT", "EGLD", "RUNE", "THETA", "XTZ", "KAVA", "ZIL",
+    "ENJ", "CHZ", "BAT", "1INCH", "IMX", "SEI", "TIA", "WIF", "BONK",
+    "FLOKI", "ORDI", "JUP", "WLD"
 }
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s"
-)
-
-if os.getenv("GITHUB_RUN_ID"):
-    SESSION_ID = str(os.getenv("GITHUB_RUN_ID")) + "-" + str(
-        os.getenv("GITHUB_RUN_ATTEMPT", "1")
-    )
-else:
-    SESSION_ID = str(int(time.time() * 1000))
-
-IQ = None
-ASSETS = []
-ASSET_REFRESH_AT = 0.0
-REJECTED_ASSETS = {}
-STOP_EVENT = threading.Event()
-TRADE_LOCK = threading.Lock()
-STATE_LOCK = threading.RLock()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(message)s", force=True)
 
 
-def now_lagos():
-    return datetime.now(LAGOS)
+def log(message):
+    logging.info(message)
 
 
-def send_telegram(message):
+def telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
-    url = "https://api.telegram.org/bot{}/sendMessage".format(TELEGRAM_TOKEN)
+    url = "https://api.telegram.org/bot" + TELEGRAM_TOKEN + "/sendMessage"
     try:
-        response = requests.post(
-            url,
-            data={
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": message,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            },
-            timeout=10,
-        )
-        response.raise_for_status()
+        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": message}, timeout=10)
     except Exception as exc:
-        logging.warning("Telegram send failed: %s", exc)
+        log("Telegram error: " + str(exc))
 
 
-def fresh_state():
+def new_state():
     return {
-        "date": now_lagos().date().isoformat(),
-        "session_id": SESSION_ID,
-        "profit": 0.0,
+        "date": datetime.now(LAGOS).date().isoformat(),
+        "trades": 0,
         "wins": 0,
         "losses": 0,
-        "resolved": 0,
-        "pending_order_id": None,
-        "pending_asset": None,
-        "pending_direction": None,
-        "pending_started": None,
-        "last_signals": {},
-        "stop_reason": "",
+        "group_wins": 0,
+        "group_losses": 0,
+        "group_active": False,
+        "group_attempts": 0,
+        "group_asset": "",
+        "group_direction": "",
+        "net_profit": 0.0
     }
 
 
 def load_state():
-    current = fresh_state()
-    saved = {}
+    today = datetime.now(LAGOS).date().isoformat()
     try:
-        with open(STATE_FILE, "r", encoding="utf-8") as handle:
-            loaded = json.load(handle)
-        if isinstance(loaded, dict):
-            saved = loaded
+        with open(STATE_FILE, "r", encoding="utf-8") as file:
+            state = json.load(file)
+        if state.get("date") == today:
+            defaults = new_state()
+            defaults.update(state)
+            return defaults
     except (OSError, ValueError, TypeError):
-        saved = {}
-
-    if saved.get("session_id") == SESSION_ID and saved.get("date") == current["date"]:
-        current.update(saved)
-    else:
-        # New run: reset only this run's risk totals, but preserve unresolved
-        # order details so the bot never opens a second trade while one is pending.
-        current["pending_order_id"] = saved.get("pending_order_id")
-        current["pending_asset"] = saved.get("pending_asset")
-        current["pending_direction"] = saved.get("pending_direction")
-        current["pending_started"] = saved.get("pending_started")
-        old_signals = saved.get("last_signals", {})
-        current["last_signals"] = old_signals if isinstance(old_signals, dict) else {}
-    if not isinstance(current.get("last_signals"), dict):
-        current["last_signals"] = {}
-    return current
+        pass
+    return new_state()
 
 
-STATE = load_state()
+def save_state(state):
+    temp_file = STATE_FILE + ".tmp"
+    with open(temp_file, "w", encoding="utf-8") as file:
+        json.dump(state, file, indent=2)
+    os.replace(temp_file, STATE_FILE)
 
 
-def save_state():
+def write_csv(row):
+    exists = os.path.exists(LOG_FILE)
+    with open(LOG_FILE, "a", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        if not exists:
+            writer.writerow(["time", "asset", "direction", "order_id", "outcome", "profit"])
+        writer.writerow(row)
+
+
+def last_logged_losing_trade():
     try:
-        with STATE_LOCK:
-            with open(STATE_FILE + ".tmp", "w", encoding="utf-8") as handle:
-                json.dump(STATE, handle, indent=2)
-            os.replace(STATE_FILE + ".tmp", STATE_FILE)
-    except OSError as exc:
-        logging.warning("Could not save state: %s", exc)
+        with open(LOG_FILE, "r", newline="", encoding="utf-8") as file:
+            rows = list(csv.DictReader(file))
+        if not rows:
+            return "", ""
+        latest = rows[-1]
+        if str(latest.get("outcome", "")).upper() == "LOSS":
+            return str(latest.get("asset", "")), str(latest.get("direction", "")).lower()
+    except (OSError, csv.Error):
+        pass
+    return "", ""
 
 
-def log_trade(asset, direction, m10, status, profit="", order_id=""):
-    fields = [
-        "timestamp_lagos", "session_id", "asset", "direction",
-        "momentum10", "status", "profit", "order_id", "session_profit"
-    ]
+# ==================== CRYPTO-ONLY DISCOVERY ====================
+def normalize_asset_name(name):
+    text = str(name).strip().upper().replace("_", "-")
+    if "." in text:
+        text = text.split(".", 1)[1]
+    return text
+
+
+def is_crypto_name(name):
+    normalized = normalize_asset_name(name)
+    base = normalized.split("-")[0]
+    return any(base.startswith(symbol) for symbol in CRYPTO_SYMBOLS)
+
+
+def discover_asset():
+    """Read only binary/turbo initialization data; never call get_all_open_time()."""
+    global crypto_assets, crypto_active_ids
+    crypto_assets = []
+    crypto_active_ids = {}
+
+    if api is None:
+        log("Crypto discovery skipped: API is not connected.")
+        return []
+
     try:
-        exists = os.path.exists(LOG_FILE)
-        with open(LOG_FILE, "a", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fields)
-            if not exists or os.path.getsize(LOG_FILE) == 0:
-                writer.writeheader()
-            writer.writerow({
-                "timestamp_lagos": now_lagos().isoformat(timespec="seconds"),
-                "session_id": SESSION_ID,
-                "asset": asset,
-                "direction": direction,
-                "momentum10": "" if m10 is None else round(float(m10), 5),
-                "status": status,
-                "profit": profit,
-                "order_id": order_id,
-                "session_profit": round(float(STATE.get("profit", 0.0)), 2),
-            })
+        log("Discovering crypto assets from binary/turbo data only...")
+        raw_data = api.get_all_init_v2()
     except Exception as exc:
-        logging.warning("CSV logging error: %s", exc)
+        log("Crypto discovery error: " + str(exc))
+        return []
 
+    if not isinstance(raw_data, dict):
+        log("Crypto discovery returned no data; will retry safely.")
+        return []
 
-def format_stats():
-    return (
-        "Session P/L: ${:+.2f}\nWins: {}\nLosses: {}\nResolved trades: {}"
-    ).format(
-        float(STATE.get("profit", 0.0)),
-        int(STATE.get("wins", 0)),
-        int(STATE.get("losses", 0)),
-        int(STATE.get("resolved", 0)),
-    )
+    market_data = raw_data.get("result", raw_data)
+    if not isinstance(market_data, dict):
+        log("Unexpected binary/turbo data structure; will retry.")
+        return []
 
-
-def risk_stop_reason():
-    """Return a stop reason whenever either monetary session limit is reached."""
-    profit = round(float(STATE.get("profit", 0.0)), 2)
-    if profit >= SESSION_PROFIT_TARGET:
-        return "Session profit target reached (+${:.2f})".format(SESSION_PROFIT_TARGET)
-    if profit <= -SESSION_LOSS_LIMIT:
-        return "Session loss limit reached (-${:.2f})".format(SESSION_LOSS_LIMIT)
-    return None
-
-
-def stop_if_limit_reached():
-    reason = risk_stop_reason()
-    if reason and not STOP_EVENT.is_set():
-        STOP_EVENT.set()
-        STATE["stop_reason"] = reason
-        save_state()
-        message = "<b>SCANNER STOPPED</b>\n{}\n{}".format(reason, format_stats())
-        logging.warning(message.replace("<b>", "").replace("</b>", ""))
-        send_telegram(message)
-    return bool(reason)
-
-
-def normalize_name(value):
-    return "".join(char for char in str(value).upper() if char.isalnum())
-
-
-def normalize_forex_name(value):
-    if not isinstance(value, str):
-        return None, False
-    raw = value.strip().upper().split(".")[-1]
-    if not raw:
-        return None, False
-    is_otc = "OTC" in raw
-    letters = re.sub(r"[^A-Z]", "", raw)
-    for suffix in ("OTC", "BINARY", "TURBO", "DIGITAL"):
-        if letters.endswith(suffix):
-            letters = letters[:-len(suffix)]
-    if len(letters) < 6:
-        return None, False
-    pair = letters[-6:]
-    if pair[:3] not in CURRENCIES or pair[3:] not in CURRENCIES:
-        return None, False
-    return pair, is_otc
-
-
-def add_asset(found, name, active_id=None):
-    pair, is_otc = normalize_forex_name(name)
-    if not pair:
-        return
-    clean_name = pair + ("-OTC" if is_otc else "")
-    resolved_id = None
-    for candidate in (active_id, getattr(OP_code, "ACTIVES", {}).get(clean_name)):
-        try:
-            if candidate is not None:
-                resolved_id = int(candidate)
-                break
-        except (TypeError, ValueError, OverflowError):
+    found = set()
+    for market_name in ("turbo", "binary"):
+        market = market_data.get(market_name, {})
+        if not isinstance(market, dict):
+            log("No usable " + market_name + " market data.")
             continue
-    found[clean_name] = {
-        "name": clean_name,
-        "pair": pair,
-        "otc": is_otc,
-        "id": resolved_id,
-    }
-    if resolved_id is not None:
-        try:
-            OP_code.ACTIVES[clean_name] = resolved_id
-        except Exception:
-            pass
+
+        actives = market.get("actives", {})
+        if not isinstance(actives, dict):
+            continue
+
+        for active_id, details in actives.items():
+            if not isinstance(details, dict):
+                continue
+            if details.get("enabled") is not True:
+                continue
+            if details.get("is_suspended") is True:
+                continue
+
+            raw_name = details.get("name", "")
+            asset_name = normalize_asset_name(raw_name)
+            if asset_name and is_crypto_name(asset_name):
+                try:
+                    numeric_active_id = int(active_id)
+                except (TypeError, ValueError):
+                    continue
+                found.add(asset_name)
+                crypto_active_ids[asset_name] = numeric_active_id
+                # stable_api.get_candles() requires a symbol-to-active-ID entry.
+                OP_code.ACTIVES[asset_name] = numeric_active_id
+
+    crypto_assets = sorted(found)
+    log("Open crypto option assets found: " + str(len(crypto_assets)))
+    for asset_name in crypto_assets:
+        log("CRYPTO FOUND: " + asset_name)
+
+    if not crypto_assets:
+        log("No eligible crypto binary/turbo options found. No trades will be placed.")
+    return list(crypto_assets)
 
 
-def walk_asset_tree(node, found, parent_key=None):
-    if isinstance(node, dict):
-        name = node.get("name") or node.get("active_name") or node.get("symbol")
-        active_id = node.get("id") or node.get("active_id") or node.get("activeId")
-        if name:
-            add_asset(found, str(name), active_id if active_id is not None else parent_key)
-        elif isinstance(parent_key, str):
-            add_asset(found, parent_key, active_id)
-        for key, value in node.items():
-            walk_asset_tree(value, found, key)
-    elif isinstance(node, list):
-        for item in node:
-            walk_asset_tree(item, found, parent_key)
-
-
-def refresh_assets(force=False):
-    global ASSETS, ASSET_REFRESH_AT
-    if ASSETS and not force and time.time() - ASSET_REFRESH_AT < ASSET_REFRESH_SECONDS:
-        return ASSETS
-    found = {}
-    try:
-        active_map = IQ.get_all_ACTIVES_OPCODE()
-        if isinstance(active_map, dict):
-            for name, active_id in active_map.items():
-                add_asset(found, str(name), active_id)
-    except Exception as exc:
-        logging.warning("Active-code asset discovery failed: %s", exc)
-    for method_name in ("get_all_init_v2", "get_all_init"):
-        try:
-            method = getattr(IQ, method_name, None)
-            if callable(method):
-                walk_asset_tree(method(), found)
-        except Exception as exc:
-            logging.warning("%s asset discovery failed: %s", method_name, exc)
-    assets = list(found.values())
-    assets.sort(key=lambda item: (item["otc"], item["name"]))
-    if assets:
-        ASSETS = assets
-        ASSET_REFRESH_AT = time.time()
-        normal_count = sum(1 for item in assets if not item["otc"])
-        otc_count = sum(1 for item in assets if item["otc"])
-        logging.info("Forex assets: %s total; %s normal; %s OTC", len(assets), normal_count, otc_count)
-        send_telegram(
-            "<b>Forex assets refreshed</b>\nTotal: {}\nNormal: {}\nOTC: {}".format(
-                len(assets), normal_count, otc_count
-            )
-        )
-    else:
-        logging.warning("No forex assets discovered from IQ Option data.")
-    return ASSETS
-
-
-def disable_digital_open_worker(self):
-    logging.info("Disabled unused IQ Option digital-market watcher")
-
-
-def safe_get_candles(self, active, interval, count, endtime):
-    try:
-        active_code = getattr(OP_code, "ACTIVES", {}).get(active)
-        if active_code is None:
-            logging.debug("No IQ Option active code for %s", active)
-            return None
-        self.api.candles.candles_data = None
-        self.api.getcandles(active_code, interval, count, endtime)
-        deadline = time.time() + CANDLE_REQUEST_TIMEOUT
-        while time.time() < deadline:
-            data = getattr(self.api.candles, "candles_data", None)
-            if data is not None:
-                return data
-            try:
-                if not self.check_connect():
-                    return None
-            except Exception:
-                return None
-            time.sleep(0.1)
-        logging.warning("Candle request timed out for %s", active)
-    except Exception as exc:
-        logging.warning("Candle request error for %s: %s", active, exc)
-    return None
-
-
-try:
-    if hasattr(IQ_Option, "_IQ_Option__get_digital_open"):
-        IQ_Option._IQ_Option__get_digital_open = disable_digital_open_worker
-    IQ_Option.get_candles = safe_get_candles
-except Exception as exc:
-    logging.warning("IQ Option candle safety patch failed: %s", exc)
-
-
+# ==================== CONNECTION ====================
 def connect_iq():
-    global IQ
-    if not IQ_EMAIL or not IQ_PASSWORD:
-        raise RuntimeError("Missing IQ_EMAIL or IQ_PASSWORD GitHub secret")
-    last_error = "unknown error"
-    client = IQ_Option(IQ_EMAIL, IQ_PASSWORD)
-    for attempt in range(1, 6):
-        try:
-            result = client.connect()
-            ok = result[0] if isinstance(result, tuple) else bool(result)
-            if not ok:
-                last_error = str(result[1] if isinstance(result, tuple) and len(result) > 1 else result)
-                raise ConnectionError(last_error)
-            client.change_balance(BALANCE_MODE)
-            time.sleep(1)
-            if not client.check_connect():
-                raise ConnectionError("Connection dropped after login")
-            IQ = client
-            logging.info("Connected to IQ Option in PRACTICE mode")
-            send_telegram(
-                "<b>Scanner connected</b>\nMode: PRACTICE\nStake: ${:.2f}\nExpiry: {} minute\n"
-                "Target: +${:.2f}\nStop loss: -${:.2f}\n"
-                "Confirmations: M20 trend + engulfing candle".format(
-                    STAKE, EXPIRY_MINUTES, SESSION_PROFIT_TARGET, SESSION_LOSS_LIMIT
-                )
-            )
-            return
-        except Exception as exc:
-            last_error = str(exc)
-            logging.warning("Connection attempt %s/5 failed: %s", attempt, last_error)
-            if attempt < 5:
-                time.sleep(RECONNECT_SECONDS)
-    raise RuntimeError("Could not connect to IQ Option: " + last_error)
+    global api, crypto_assets, crypto_active_ids
+    api = None
+    crypto_assets = []
+    crypto_active_ids = {}
 
-
-def momentum_series(closes, period):
-    values = []
-    for index in range(period, len(closes)):
-        old = closes[index - period]
-        current = closes[index]
-        if old <= 0:
-            values.append(0.0)
-        else:
-            values.append(((current / old) - 1.0) * 100.0)
-    return values
-
-
-def percentile_value(values, fraction):
-    ordered = sorted(values)
-    if not ordered:
-        return 0.0
-    index = int((len(ordered) - 1) * fraction)
-    index = max(0, min(len(ordered) - 1, index))
-    return ordered[index]
-
-
-def get_closed_candles(asset):
-    try:
-        raw = IQ.get_candles(asset, CANDLE_SECONDS, CANDLE_REQUEST_COUNT, int(time.time()))
-    except Exception as exc:
-        logging.debug("Candle fetch failed for %s: %s", asset, exc)
-        return []
-    if not isinstance(raw, list):
-        return []
-    try:
-        raw.sort(key=lambda row: int(row.get("from", 0)))
-    except Exception:
-        return []
-    current_time = int(time.time())
-    closed = []
-    for candle in raw:
-        try:
-            start = int(candle.get("from", 0))
-            if start > 0 and start + CANDLE_SECONDS <= current_time:
-                closed.append(candle)
-        except (TypeError, ValueError):
-            continue
-    return closed
-
-
-def bullish_engulfing(previous, current):
-    try:
-        po = float(previous["open"])
-        pc = float(previous["close"])
-        co = float(current["open"])
-        cc = float(current["close"])
-    except (KeyError, TypeError, ValueError):
+    if not EMAIL or not PASSWORD:
+        log("Missing IQ_EMAIL or IQ_PASSWORD secret.")
         return False
-    return pc < po and cc > co and co <= pc and cc >= po
 
-
-def bearish_engulfing(previous, current):
     try:
-        po = float(previous["open"])
-        pc = float(previous["close"])
-        co = float(current["open"])
-        cc = float(current["close"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    return pc > po and cc < co and co >= pc and cc <= po
+        log("Connecting to IQ Option...")
+        new_api = IQ_Option(EMAIL, PASSWORD)
+        result = new_api.connect()
+        connected = bool(result[0]) if isinstance(result, tuple) else bool(result)
+        if not connected or not new_api.check_connect():
+            log("IQ Option connection failed.")
+            return False
 
+        new_api.change_balance(BALANCE_MODE)
+        api = new_api
+        log("Connected. Balance mode: " + BALANCE_MODE)
 
-def evaluate_signal(candles):
-    """M10 extreme + turn, confirmed by M20 direction and a closed engulfing candle."""
-    minimum = MOMENTUM_LOOKBACK + MOMENTUM_CONFIRM_PERIOD + 2
-    if len(candles) < minimum:
-        return None
-    try:
-        closes = [float(row["close"]) for row in candles]
-        candle_time = int(candles[-1].get("from", 0))
-    except (KeyError, TypeError, ValueError):
-        return None
-
-    values10 = momentum_series(closes, MOMENTUM_PERIOD)
-    values20 = momentum_series(closes, MOMENTUM_CONFIRM_PERIOD)
-    if len(values10) < MOMENTUM_LOOKBACK + 3 or len(values20) < 3:
-        return None
-
-    current10 = values10[-1]
-    previous10 = values10[-2]
-    before_previous10 = values10[-3]
-    history10 = values10[-(MOMENTUM_LOOKBACK + 1):-1]
-    low_extreme = percentile_value(history10, EXTREME_PERCENTILE)
-    high_extreme = percentile_value(history10, 1.0 - EXTREME_PERCENTILE)
-    turn_size = abs(current10 - previous10)
-    if turn_size < MIN_TURN_DISTANCE:
-        return None
-
-    current20 = values20[-1]
-    previous20 = values20[-2]
-    m20_rising = current20 > previous20
-    m20_falling = current20 < previous20
-    previous_candle = candles[-2]
-    current_candle = candles[-1]
-
-    turning_up = current10 > previous10 and previous10 <= before_previous10
-    turning_down = current10 < previous10 and previous10 >= before_previous10
-
-    if current10 <= low_extreme and turning_up and m20_rising:
-        if bullish_engulfing(previous_candle, current_candle):
-            return {
-                "direction": "call",
-                "momentum": round(current10, 5),
-                "previous": round(previous10, 5),
-                "momentum20": round(current20, 5),
-                "previous20": round(previous20, 5),
-                "extreme": round(low_extreme, 5),
-                "candle_time": candle_time,
-                "confirmation": "M20 rising + bullish engulfing",
-            }
-
-    if current10 >= high_extreme and turning_down and m20_falling:
-        if bearish_engulfing(previous_candle, current_candle):
-            return {
-                "direction": "put",
-                "momentum": round(current10, 5),
-                "previous": round(previous10, 5),
-                "momentum20": round(current20, 5),
-                "previous20": round(previous20, 5),
-                "extreme": round(high_extreme, 5),
-                "candle_time": candle_time,
-                "confirmation": "M20 falling + bearish engulfing",
-            }
-    return None
-
-
-def extract_numeric_profit(value):
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        number = float(value)
-        if math.isfinite(number):
-            return number
-        return None
-    if isinstance(value, str):
-        text = value.strip()
-        if not text or text.lower() in {
-            "false", "none", "null", "pending", "open", "win", "won",
-            "loss", "lost", "loose", "draw", "unknown"
-        }:
-            return None
-        try:
-            number = float(text)
-            return number if math.isfinite(number) else None
-        except (TypeError, ValueError, OverflowError):
-            return None
-    if isinstance(value, dict):
-        for key in (
-            "profit", "profit_amount", "profitAmount", "close_profit",
-            "closeProfit", "net_profit", "netProfit", "win_amount", "winAmount"
-        ):
-            if key in value:
-                result = extract_numeric_profit(value.get(key))
-                if result is not None:
-                    return result
-        for key in ("result", "data", "betinfo", "bet_info", "option"):
-            nested = value.get(key)
-            if isinstance(nested, (dict, list, tuple)):
-                result = extract_numeric_profit(nested)
-                if result is not None:
-                    return result
-        if isinstance(value.get("result"), (int, float, str)):
-            return extract_numeric_profit(value.get("result"))
-    if isinstance(value, (list, tuple)):
-        for item in value:
-            result = extract_numeric_profit(item)
-            if result is not None:
-                return result
-    return None
-
-
-def query_order_profit(order_id):
-    for name in ("check_win_v4", "check_win", "get_betinfo", "get_betinfo_v2"):
-        method = getattr(IQ, name, None)
-        if not callable(method):
-            continue
-        try:
-            raw = method(order_id)
-        except Exception as exc:
-            logging.debug("%s failed for order %s: %s", name, order_id, exc)
-            continue
-        value = extract_numeric_profit(raw)
-        if value is not None:
-            logging.info("Order %s resolved through %s: %+.2f", order_id, name, value)
-            return value
-    return None
-
-
-def settle_result(asset, direction, broker_profit, m10=None, order_id=""):
-    if broker_profit is None:
-        raise ValueError("Cannot settle an order without a numeric broker result")
-
-    # User's accounting rule: a $0 result on a $1 binary trade counts as -$1.
-    if broker_profit == 0:
-        net_change = -STAKE
-    else:
-        net_change = float(broker_profit)
-    is_win = net_change > 0
-    label = "WIN" if is_win else "LOSS"
-
-    with STATE_LOCK:
-        STATE["profit"] = round(float(STATE.get("profit", 0.0)) + net_change, 2)
-        STATE["resolved"] = int(STATE.get("resolved", 0)) + 1
-        if is_win:
-            STATE["wins"] = int(STATE.get("wins", 0)) + 1
-        else:
-            STATE["losses"] = int(STATE.get("losses", 0)) + 1
-        STATE["pending_order_id"] = None
-        STATE["pending_asset"] = None
-        STATE["pending_direction"] = None
-        STATE["pending_started"] = None
-    save_state()
-    log_trade(asset, direction, m10, label, round(net_change, 2), order_id)
-    logging.info("%s | %s %s | %+0.2f | %s", label, asset, direction, net_change, format_stats())
-    send_telegram(
-        "<b>Trade result: {}</b>\nAsset: {}\nDirection: {}\nBroker result: ${:+.2f}\n"
-        "Risk-accounted result: ${:+.2f}\n{}".format(
-            label, asset, direction.upper(), broker_profit, net_change, format_stats()
-        )
-    )
-    stop_if_limit_reached()
-
-
-def wait_for_order_result(order_id, asset, direction, m10):
-    last_notice = 0.0
-    while not STOP_EVENT.is_set():
-        value = query_order_profit(order_id)
-        if value is not None:
-            settle_result(asset, direction, value, m10, order_id)
-            return
-        now = time.time()
-        if now - last_notice >= 60:
-            logging.warning(
-                "Broker result for order %s is unreadable. Keeping order pending; no new trade.",
-                order_id,
-            )
-            last_notice = now
-        time.sleep(ORDER_RESULT_RETRY_SECONDS)
-
-
-def recover_pending_order():
-    order_id = STATE.get("pending_order_id")
-    if not order_id:
-        return
-    asset = STATE.get("pending_asset") or "UNKNOWN"
-    direction = STATE.get("pending_direction") or "unknown"
-    logging.warning("Recovering unresolved order %s (%s %s)", order_id, asset, direction)
-    send_telegram(
-        "<b>Recovering unresolved order</b>\nOrder: {}\nAsset: {}\n"
-        "The scanner will not place another trade until this order is resolved.".format(
-            order_id, asset
-        )
-    )
-    wait_for_order_result(order_id, asset, direction, None)
-
-
-def place_trade(asset_info, signal):
-    asset = asset_info["name"]
-    direction = signal["direction"]
-    with TRADE_LOCK:
-        if STOP_EVENT.is_set() or stop_if_limit_reached():
-            return
-        if STATE.get("pending_order_id"):
-            logging.warning("A pending order exists; refusing to place a second order")
-            return
-        active_id = asset_info.get("id")
-        if active_id is not None:
+        assets = discover_asset()
+        if not assets:
+            log("No crypto assets confirmed. Trading remains disabled; retrying connection later.")
             try:
-                OP_code.ACTIVES[asset] = int(active_id)
+                api.close_connect()
             except Exception:
                 pass
-        try:
-            result = IQ.buy(STAKE, asset, direction, EXPIRY_MINUTES)
-        except Exception as exc:
-            log_trade(asset, direction, signal.get("momentum"), "ORDER_ERROR", "")
-            logging.warning("Order placement failed for %s: %s", asset, exc)
-            return
-        if isinstance(result, tuple):
-            success = bool(result[0])
-            order_id = result[1] if len(result) > 1 else None
-        else:
-            success = bool(result)
-            order_id = None
-        if not success or order_id is None:
-            REJECTED_ASSETS[asset] = time.time() + REJECTED_ASSET_COOLDOWN_SECONDS
-            log_trade(asset, direction, signal.get("momentum"), "ORDER_REJECTED", "")
-            logging.warning(
-                "Broker rejected order on %s; cooling this asset down for %s seconds: %r",
-                asset, REJECTED_ASSET_COOLDOWN_SECONDS, result
-            )
-            send_telegram(
-                "<b>Order rejected</b>\nAsset: {}\nBroker response: {}\n"
-                "Skipping this asset for {} minutes. No trade loss recorded.".format(
-                    asset, result, int(REJECTED_ASSET_COOLDOWN_SECONDS / 60)
-                )
-            )
-            return
-        STATE["pending_order_id"] = order_id
-        STATE["pending_asset"] = asset
-        STATE["pending_direction"] = direction
-        STATE["pending_started"] = now_lagos().isoformat(timespec="seconds")
-        save_state()
-        log_trade(asset, direction, signal.get("momentum"), "OPENED", "", order_id)
-        send_telegram(
-            "<b>Trade opened in PRACTICE</b>\nAsset: {}\nDirection: {}\nStake: ${:.2f}\n"
-            "Expiry: {} minute\nM10: {:.5f}\nM20: {:.5f}\nConfirmation: {}\n{}".format(
-                asset, direction.upper(), STAKE, EXPIRY_MINUTES,
-                signal["momentum"], signal["momentum20"], signal["confirmation"], format_stats()
-            )
+            api = None
+            return False
+
+        telegram(
+            "Crypto Momentum scanner connected.\n"
+            + "Mode: " + BALANCE_MODE + "\n"
+            + "Crypto assets found: " + str(len(assets)) + "\n"
+            + "Stake: $" + format(STAKE, ".2f")
         )
-        logging.info("Opened order %s on %s %s", order_id, asset, direction.upper())
-    wait_for_order_result(order_id, asset, direction, signal.get("momentum"))
+        return True
+    except Exception as exc:
+        log("Connection error: " + str(exc))
+        api = None
+        crypto_assets = []
+        return False
 
 
-def heartbeat(last_time):
-    if time.time() - last_time < HEARTBEAT_SECONDS:
-        return last_time
-    message = "<b>Momentum 10 scanner heartbeat</b>\n{}\nForex assets: {}\n{}".format(
-        now_lagos().strftime("%Y-%m-%d %H:%M:%S WAT"), len(ASSETS), format_stats()
-    )
-    send_telegram(message)
-    logging.info(message.replace("<b>", "").replace("</b>", "").replace("\n", " | "))
-    return time.time()
+# ==================== CANDLES ====================
+def get_candles(asset):
+    if api is None or not api.check_connect():
+        return []
+    try:
+        candles = api.get_candles(asset, CANDLE_SECONDS, CANDLE_COUNT, time.time())
+        if not isinstance(candles, list):
+            log("Invalid candle response for " + asset)
+            return []
 
-
-def main():
-    connect_iq()
-    refresh_assets(force=True)
-    if not ASSETS:
-        raise RuntimeError("No forex assets found in IQ Option active data")
-
-    if stop_if_limit_reached():
-        return
-    if STATE.get("pending_order_id"):
-        recover_pending_order()
-    if STOP_EVENT.is_set() or stop_if_limit_reached():
-        return
-
-    send_telegram(
-        "<b>Momentum 10 scanner started</b>\nMode: PRACTICE\n"
-        "Entry: M10 extreme + confirmed turn\n"
-        "Confirmation 1: M20 momentum trend\n"
-        "Confirmation 2: fully closed engulfing candle\n"
-        "Target: +${:.2f} | Stop loss: -${:.2f}\n{}".format(
-            SESSION_PROFIT_TARGET, SESSION_LOSS_LIMIT, format_stats()
-        )
-    )
-    last_heartbeat = time.time()
-    last_reconnect_notice = 0.0
-
-    while not STOP_EVENT.is_set():
-        if stop_if_limit_reached():
-            break
-        try:
-            if not IQ.check_connect():
-                raise ConnectionError("IQ Option connection lost")
-        except Exception:
-            if time.time() - last_reconnect_notice >= RECONNECT_SECONDS:
-                logging.warning("IQ Option connection lost; attempting reconnection")
-                last_reconnect_notice = time.time()
+        now = time.time()
+        completed = []
+        for candle in candles:
             try:
-                response = IQ.connect()
-                connected = response[0] if isinstance(response, tuple) else bool(response)
-                if not connected:
-                    raise ConnectionError("reconnection rejected")
-                IQ.change_balance(BALANCE_MODE)
-                time.sleep(2)
-                if not IQ.check_connect():
-                    raise ConnectionError("reconnected session not ready")
-                refresh_assets(force=True)
-            except Exception as exc:
-                logging.warning("Reconnect failed: %s", exc)
+                candle_end = float(candle.get("to", 0))
+                if candle_end and candle_end < now:
+                    completed.append(candle)
+            except (TypeError, ValueError, AttributeError):
+                continue
+
+        completed.sort(key=lambda item: float(item.get("from", 0)))
+        required = MOMENTUM_LOOKBACK + MOMENTUM_PERIOD + 2
+        if len(completed) < required:
+            log("Not enough completed candles for " + asset + ": " + str(len(completed)))
+            return []
+        return completed
+    except Exception as exc:
+        log("Candle error for " + asset + ": " + str(exc))
+        return []
+
+
+# ==================== MOMENTUM STRATEGY ====================
+def percentile(values, fraction):
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * fraction
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = position - lower
+    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+
+def calculate_signal(candles, asset):
+    if len(candles) < MOMENTUM_LOOKBACK + MOMENTUM_PERIOD + 2:
+        return None
+
+    try:
+        closes = [float(candle["close"]) for candle in candles]
+    except (KeyError, TypeError, ValueError):
+        log("Invalid candle close values for " + asset)
+        return None
+
+    momentums = []
+    for index in range(MOMENTUM_PERIOD, len(closes)):
+        previous_close = closes[index - MOMENTUM_PERIOD]
+        if previous_close == 0:
+            return None
+        momentum = ((closes[index] - previous_close) / previous_close) * 100.0
+        momentums.append(momentum)
+
+    if len(momentums) < MOMENTUM_LOOKBACK + 2:
+        return None
+
+    current_candle = candles[-1]
+    candle_id = int(current_candle.get("from", 0))
+    if last_signal_candles.get(asset) == candle_id:
+        return None
+
+    history = momentums[-(MOMENTUM_LOOKBACK + 2):-2]
+    if len(history) < MOMENTUM_LOOKBACK:
+        return None
+
+    low_limit = percentile(history, EXTREME_PERCENTILE)
+    high_limit = percentile(history, 1.0 - EXTREME_PERCENTILE)
+    previous_momentum = momentums[-2]
+    current_momentum = momentums[-1]
+    candle_open = float(current_candle["open"])
+    candle_close = float(current_candle["close"])
+    turn = current_momentum - previous_momentum
+
+    if previous_momentum <= low_limit and turn >= MIN_TURN_DISTANCE and candle_close > candle_open:
+        last_signal_candles[asset] = candle_id
+        return "call"
+    if previous_momentum >= high_limit and turn <= -MIN_TURN_DISTANCE and candle_close < candle_open:
+        last_signal_candles[asset] = candle_id
+        return "put"
+    return None
+
+
+# ==================== RISK CONTROLS ====================
+def trading_allowed(state):
+    if state["trades"] >= TARGET_TRADES:
+        log("Individual trade limit reached.")
+        return False
+    if state["group_losses"] >= MAX_LOSING_GROUPS:
+        log("Maximum losing groups reached: " + str(MAX_LOSING_GROUPS))
+        return False
+    if state["net_profit"] >= DAILY_PROFIT_TARGET:
+        log("Daily profit target reached.")
+        return False
+    return True
+
+
+# ==================== TRADE MANAGEMENT ====================
+def place_trade(direction, state, asset):
+    if not is_crypto_name(asset):
+        log("SAFETY BLOCK: refused non-crypto asset " + str(asset))
+        return
+    if not AUTO_TRADE:
+        log("Signal only: " + asset + " " + direction.upper())
+        telegram("Crypto signal: " + asset + " " + direction.upper())
+        return
+    if api is None or not api.check_connect():
+        log("Trade skipped. Broker disconnected.")
+        return
+    if not trading_allowed(state):
+        return
+
+    active_group = bool(state.get("group_active", False))
+    if active_group:
+        locked_asset = str(state.get("group_asset", ""))
+        locked_direction = str(state.get("group_direction", "")).lower()
+        if locked_asset != asset or locked_direction != direction.lower():
+            log("SAFETY BLOCK: recovery must use the original pair and direction.")
+            return
+
+    attempt_number = int(state.get("group_attempts", 0)) + 1
+    if attempt_number > MAX_GROUP_TRADES:
+        log("Recovery group already reached its attempt limit.")
+        state["group_active"] = False
+        state["group_attempts"] = 0
+        state["group_asset"] = ""
+        state["group_direction"] = ""
+        save_state(state)
+        return
+
+    stake = RECOVERY_STAKES[attempt_number - 1]
+    if not active_group:
+        state["group_active"] = True
+        state["group_attempts"] = 0
+        state["group_asset"] = asset
+        state["group_direction"] = direction.lower()
+        save_state(state)
+
+    log(
+        "Signal/recovery trade: " + direction.upper()
+        + " | Asset: " + asset
+        + " | Stake: $" + format(stake, ".2f")
+        + " | Group attempt: " + str(attempt_number)
+        + "/" + str(MAX_GROUP_TRADES)
+    )
+    telegram(
+        "Crypto trade: " + asset
+        + "\nDirection: " + direction.upper()
+        + "\nStake: $" + format(stake, ".2f")
+        + "\nGroup attempt: " + str(attempt_number) + "/" + str(MAX_GROUP_TRADES)
+        + "\nExpiry: 1 minute"
+    )
+
+    try:
+        accepted, order_id = api.buy(stake, asset, direction, EXPIRY_MINUTES)
+    except Exception as exc:
+        log("Order submission error: " + str(exc))
+        if not active_group:
+            state["group_active"] = False
+            state["group_attempts"] = 0
+            state["group_asset"] = ""
+            state["group_direction"] = ""
+            save_state(state)
+        return
+    if not accepted or not order_id:
+        log("Broker did not accept order for " + asset)
+        if not active_group:
+            state["group_active"] = False
+            state["group_attempts"] = 0
+            state["group_asset"] = ""
+            state["group_direction"] = ""
+            save_state(state)
+        return
+
+    state["trades"] += 1
+    state["group_attempts"] = attempt_number
+    save_state(state)
+    log("Order accepted. ID: " + str(order_id))
+
+    while True:
+        try:
+            result = api.check_win_v4(order_id)
+            if result is None:
+                log("Trade result pending; checking again shortly.")
+                time.sleep(RESULT_RETRY_SECONDS)
+                continue
+            # iqoptionapi 7.1.1 returns (status, profit), not a bare number.
+            if isinstance(result, (tuple, list)):
+                if len(result) < 2:
+                    log("Unexpected trade result format: " + repr(result))
+                    time.sleep(RESULT_RETRY_SECONDS)
+                    continue
+                result_status = str(result[0]).lower()
+                profit_value = result[1]
+                if profit_value is None:
+                    log("Trade result not finalized yet: " + result_status)
+                    time.sleep(RESULT_RETRY_SECONDS)
+                    continue
+                result = float(profit_value)
+                log("Broker result status: " + result_status)
+            else:
+                result = float(result)
+            break
+        except Exception as exc:
+            log("Result check failed: " + str(exc))
+            time.sleep(RESULT_RETRY_SECONDS)
+            if api is None or not api.check_connect():
+                log("Connection lost while waiting for result; reconnecting.")
+                if not connect_iq():
+                    time.sleep(RECONNECT_SECONDS)
+
+    if result > 0:
+        profit = result
+        state["wins"] += 1
+        state["group_wins"] += 1
+        outcome = "WIN"
+        group_message = "GROUP WIN: sequence ended; no replacement trade."
+        state["group_active"] = False
+        state["group_attempts"] = 0
+        state["group_asset"] = ""
+        state["group_direction"] = ""
+    else:
+        profit = -stake if result == 0 else result
+        state["losses"] += 1
+        outcome = "LOSS"
+        if attempt_number >= MAX_GROUP_TRADES:
+            state["group_losses"] += 1
+            state["group_active"] = False
+            state["group_attempts"] = 0
+            state["group_asset"] = ""
+            state["group_direction"] = ""
+            group_message = (
+                "GROUP LOSS: all " + str(MAX_GROUP_TRADES)
+                + " attempts lost. Total group stakes: $7.00. Moving to another pair."
+            )
+        else:
+            state["group_active"] = True
+            state["group_asset"] = asset
+            state["group_direction"] = direction.lower()
+            group_message = (
+                "LOSS: immediate recovery next on SAME pair and SAME direction: "
+                + asset + " " + direction.upper()
+                + " | Next stake: $" + format(RECOVERY_STAKES[attempt_number], ".2f")
+            )
+
+    state["net_profit"] = round(state["net_profit"] + profit, 2)
+    save_state(state)
+    log(
+        outcome + " | Asset: " + asset
+        + " | Direction: " + direction.upper()
+        + " | Stake: $" + format(stake, ".2f")
+        + " | Result: " + format(result, ".2f")
+        + " | Counted P/L: " + format(profit, ".2f")
+        + " | Daily P/L: $" + format(state["net_profit"], ".2f")
+    )
+    log(group_message)
+    write_csv([datetime.now(LAGOS).isoformat(), asset, direction, order_id, outcome, round(profit, 2)])
+    telegram(
+        "Crypto trade " + outcome
+        + "\nAsset: " + asset
+        + "\nDirection: " + direction.upper()
+        + "\nStake: $" + format(stake, ".2f")
+        + "\nCounted P/L: $" + format(profit, ".2f")
+        + "\nDaily P/L: $" + format(state["net_profit"], ".2f")
+        + "\n" + group_message
+        + "\nGroup wins: " + str(state["group_wins"])
+        + " | Group losses: " + str(state["group_losses"])
+    )
+
+
+# ==================== MAIN SCANNER ====================
+def run_scanner():
+    global last_heartbeat, crypto_assets
+    state = load_state()
+    log("CRYPTO MOMENTUM 10 SCANNER STARTING")
+    log("Balance mode: " + BALANCE_MODE)
+    log("Automatic trading: " + str(AUTO_TRADE))
+    log("Stake: $" + format(STAKE, ".2f"))
+    log("Expiry: " + str(EXPIRY_MINUTES) + " minute")
+    log("Trade cap: " + str(TARGET_TRADES))
+    log("Profit target: $" + format(DAILY_PROFIT_TARGET, ".2f"))
+    log("Losing group stop: " + str(MAX_LOSING_GROUPS))
+    log("Recovery: same pair and direction, stakes $1, $2, $4; no new signal needed after a loss")
+    log("Discovery: binary/turbo only; no forex fallback")
+    telegram(
+        "Crypto Momentum 10 scanner starting.\n"
+        + "Mode: " + BALANCE_MODE
+        + "\nStake: $" + format(STAKE, ".2f")
+        + "\nProfit target: $" + format(DAILY_PROFIT_TARGET, ".2f")
+        + "\nMaximum losing groups: " + str(MAX_LOSING_GROUPS)
+    )
+
+    while True:
+        try:
+            today = datetime.now(LAGOS).date().isoformat()
+            if state.get("date") != today:
+                state = new_state()
+                save_state(state)
+                log("New Lagos trading day. Counters reset.")
+
+            if api is None or not api.check_connect():
+                log("Connecting or reconnecting...")
+                if not connect_iq():
+                    log("Connection/discovery retry in " + str(RECONNECT_SECONDS) + " seconds.")
+                    time.sleep(RECONNECT_SECONDS)
+                    continue
+
+            if not trading_allowed(state):
+                log("Trading paused by risk controls.")
+                time.sleep(60)
+                continue
+
+            assets = list(crypto_assets)
+            if not assets:
+                log("Crypto list empty; retrying discovery.")
+                assets = discover_asset()
+            if not assets:
+                log("No confirmed crypto assets. No trade will be placed.")
                 time.sleep(RECONNECT_SECONDS)
                 continue
 
-        if time.time() - ASSET_REFRESH_AT >= ASSET_REFRESH_SECONDS:
-            refresh_assets(force=True)
-        last_heartbeat = heartbeat(last_heartbeat)
-
-        for item in list(ASSETS):
-            if STOP_EVENT.is_set() or stop_if_limit_reached():
-                break
-            try:
-                asset_name = item["name"]
-                cooldown_until = REJECTED_ASSETS.get(asset_name, 0.0)
-                if time.time() < cooldown_until:
-                    continue
-                if cooldown_until:
-                    REJECTED_ASSETS.pop(asset_name, None)
-                candles = get_closed_candles(asset_name)
-                signal = evaluate_signal(candles)
-                if signal is None:
-                    continue
-                last_key = str(signal.get("candle_time", ""))
-                last_signals = STATE.setdefault("last_signals", {})
-                if last_signals.get(item["name"]) == last_key:
-                    continue
-                last_signals[item["name"]] = last_key
-                save_state()
-                log_trade(item["name"], signal["direction"], signal["momentum"], "SIGNAL", "")
-                logging.info(
-                    "CONFIRMED SIGNAL %s %s | M10=%.5f | M20=%.5f | %s",
-                    item["name"], signal["direction"].upper(), signal["momentum"],
-                    signal["momentum20"], signal["confirmation"]
-                )
-                send_telegram(
-                    "<b>Confirmed setup</b>\nAsset: {}\nDirection: {}\n"
-                    "M10: {:.5f}\nM20: {:.5f}\nConfirmations: {}\n"
-                    "Engulfing candle: confirmed".format(
-                        item["name"], signal["direction"].upper(), signal["momentum"],
-                        signal["momentum20"], signal["confirmation"]
+            if state.get("group_active", False):
+                locked_asset = str(state.get("group_asset", ""))
+                locked_direction = str(state.get("group_direction", "")).lower()
+                if not locked_asset or locked_direction not in ("call", "put"):
+                    recovered_asset, recovered_direction = last_logged_losing_trade()
+                    if recovered_asset and is_crypto_name(recovered_asset) and recovered_direction in ("call", "put"):
+                        locked_asset = recovered_asset
+                        locked_direction = recovered_direction
+                        state["group_asset"] = locked_asset
+                        state["group_direction"] = locked_direction
+                        save_state(state)
+                        log("Recovered unfinished group: " + locked_asset + " " + locked_direction.upper())
+                    else:
+                        log("Cannot safely recover unfinished group; resetting it.")
+                        state["group_active"] = False
+                        state["group_attempts"] = 0
+                        state["group_asset"] = ""
+                        state["group_direction"] = ""
+                        save_state(state)
+                if state.get("group_active", False):
+                    if locked_asset not in crypto_assets:
+                        log("GROUP LOCK: waiting for original pair " + locked_asset + "; other pairs blocked.")
+                        time.sleep(1)
+                        continue
+                    log(
+                        "GROUP LOCK: immediate same-pair recovery " + locked_asset
+                        + " " + locked_direction.upper()
+                        + " | Next attempt " + str(int(state.get("group_attempts", 0)) + 1)
+                        + "/" + str(MAX_GROUP_TRADES)
                     )
-                )
-                if AUTO_TRADE:
-                    place_trade(item, signal)
-            except Exception as exc:
-                logging.warning("Scan error for %s: %s", item.get("name", "UNKNOWN"), exc)
-            time.sleep(0.15)
-        time.sleep(SCAN_INTERVAL)
+                    trades_before = state["trades"]
+                    place_trade(locked_direction, state, locked_asset)
+                    if state.get("group_active", False):
+                        # A completed loss retries immediately; a rejected order waits briefly.
+                        if state["trades"] == trades_before:
+                            time.sleep(1)
+                        continue
+                else:
+                    log("No active recovery group; returning to normal scanning.")
 
-    reason = STATE.get("stop_reason") or risk_stop_reason() or "Scanner stopped"
-    logging.info("Scanner finished: %s | %s", reason, format_stats())
-    send_telegram("<b>Scanner finished</b>\n{}\n{}".format(reason, format_stats()))
+            if not state.get("group_active", False):
+                assets = list(crypto_assets)
+                if not assets:
+                    log("Crypto list empty; retrying discovery.")
+                    assets = discover_asset()
+                if not assets:
+                    log("No confirmed crypto assets. No trade will be placed.")
+                    time.sleep(RECONNECT_SECONDS)
+                    continue
+
+                log("Scanning " + str(len(assets)) + " confirmed crypto assets.")
+                for asset in assets:
+                    if not trading_allowed(state):
+                        break
+                    if not is_crypto_name(asset):
+                        log("SAFETY BLOCK: skipped non-crypto asset " + str(asset))
+                        continue
+                    if api is None or not api.check_connect():
+                        log("Connection lost. Reconnecting.")
+                        if not connect_iq():
+                            break
+                        break
+                    candles = get_candles(asset)
+                    if not candles:
+                        continue
+                    signal = calculate_signal(candles, asset)
+                    if signal:
+                        log("Confirmed crypto signal: " + asset + " " + signal.upper())
+                        place_trade(signal, state, asset)
+                        if AUTO_TRADE:
+                            break
+
+                # If a first/second attempt lost, the next loop immediately recovers
+                # on the locked pair and direction instead of scanning a new pair.
+                if state.get("group_active", False):
+                    continue
+
+            now = time.time()
+            if now - last_heartbeat >= HEARTBEAT_SECONDS:
+                log(
+                    "HEARTBEAT | Trades: " + str(state["trades"])
+                    + " | Trade wins: " + str(state["wins"])
+                    + " | Trade losses: " + str(state["losses"])
+                    + " | Group wins: " + str(state["group_wins"])
+                    + " | Group losses: " + str(state["group_losses"])
+                    + " / " + str(MAX_LOSING_GROUPS) + " max losing groups"
+                    + " | Daily P/L: $" + format(state["net_profit"], ".2f")
+                    + " | Crypto assets: " + str(len(crypto_assets))
+                )
+                last_heartbeat = now
+            time.sleep(SCAN_INTERVAL)
+
+        except KeyboardInterrupt:
+            log("Scanner stopped by user.")
+            break
+        except Exception as exc:
+            log("Scanner loop error: " + str(exc))
+            time.sleep(SCAN_INTERVAL)
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        STOP_EVENT.set()
-        save_state()
-        logging.info("Scanner stopped by keyboard interrupt")
-    except Exception as exc:
-        logging.exception("Fatal scanner error")
-        send_telegram("<b>Scanner error</b>\n{}".format(exc))
-        save_state()
-        raise
+    run_scanner()
