@@ -1,4 +1,3 @@
-
 import os
 import re
 import csv
@@ -16,7 +15,7 @@ from iqoptionapi.stable_api import IQ_Option
 
 
 # ============================================================
-# FOREX OTC BREAKOUT + RETEST WITH IPDA DETECTION
+# FOREX OTC BREAKOUT + RETEST + MARKET STRUCTURE + IPDA
 # PRACTICE ACCOUNT ONLY
 # ============================================================
 
@@ -32,13 +31,17 @@ STAKE = 1.0
 EXPIRY_MINUTES = 1
 CANDLE_SECONDS = 60
 
-# Original breakout + retest rules.
+# Original breakout + retest settings.
 BREAKOUT_LOOKBACK = 10
 RETEST_TOLERANCE = 0.20
 MIN_BREAKOUT_BODY_RATIO = 0.50
 MAX_RETEST_CANDLES = 6
 
-# IPDA-inspired additional analysis.
+# After retest, allow time to form market structure.
+MAX_STRUCTURE_CANDLES = 12
+
+# IPDA-inspired contextual checks.
+# Market structure confirmation is always required.
 REQUIRE_LIQUIDITY_SWEEP = False
 REQUIRE_FVG_CONFLUENCE = False
 LIQUIDITY_LOOKBACK = 5
@@ -59,7 +62,10 @@ ORDER_RESULT_RETRY_SECONDS = 5
 REJECTED_ASSET_COOLDOWN_SECONDS = 600
 
 CANDLE_REQUEST_COUNT = max(
-    BREAKOUT_LOOKBACK + MAX_RETEST_CANDLES + 10,
+    BREAKOUT_LOOKBACK
+    + MAX_RETEST_CANDLES
+    + MAX_STRUCTURE_CANDLES
+    + 10,
     LIQUIDITY_LOOKBACK + 10,
 )
 
@@ -90,6 +96,10 @@ STATE_LOCK = threading.RLock()
 PENDING_BREAKOUTS = {}
 
 
+# ============================================================
+# TIME, TELEGRAM, STATE AND LOGGING
+# ============================================================
+
 def now_lagos():
     return datetime.now(LAGOS)
 
@@ -114,6 +124,7 @@ def send_telegram(message):
             timeout=10,
         )
         response.raise_for_status()
+
     except Exception as exc:
         logging.warning("Telegram error: %s", exc)
 
@@ -151,7 +162,7 @@ def load_state():
     if saved.get("date") == current["date"]:
         current.update(saved)
     else:
-        # Reset daily statistics but preserve an unresolved order.
+        # Reset daily totals, but retain unresolved order details.
         for key in (
             "pending_order_id",
             "pending_asset",
@@ -235,6 +246,7 @@ def stop_if_limit_reached():
         save_state()
 
         logging.warning("%s", reason)
+
         send_telegram(
             "<b>SCANNER STOPPED</b>\n{}\n{}".format(
                 reason,
@@ -254,6 +266,8 @@ def log_trade(
     level="",
     liquidity_sweep="",
     fvg="",
+    market_structure="",
+    second_pivot="",
 ):
     fields = [
         "timestamp_lagos",
@@ -266,6 +280,8 @@ def log_trade(
         "breakout_level",
         "liquidity_sweep",
         "fvg_confluence",
+        "market_structure",
+        "second_pivot",
         "session_profit",
     ]
 
@@ -278,7 +294,10 @@ def log_trade(
             newline="",
             encoding="utf-8",
         ) as handle:
-            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=fields,
+            )
 
             if not exists or os.path.getsize(LOG_FILE) == 0:
                 writer.writeheader()
@@ -296,6 +315,8 @@ def log_trade(
                 "breakout_level": level,
                 "liquidity_sweep": liquidity_sweep,
                 "fvg_confluence": fvg,
+                "market_structure": market_structure,
+                "second_pivot": second_pivot,
                 "session_profit": round(
                     float(STATE.get("profit", 0.0)), 2
                 ),
@@ -342,7 +363,7 @@ def normalize_forex_name(value):
 def add_asset(found, name, active_id=None):
     pair, is_otc = normalize_forex_name(name)
 
-    # This strategy is restricted to Forex OTC.
+    # Strictly Forex OTC only.
     if not pair or not is_otc:
         return
 
@@ -470,17 +491,14 @@ def refresh_assets(force=False):
 
     if not assets:
         logging.warning(
-            "No OTC forex assets found. Check the asset discovery logs."
+            "No OTC forex assets found. Check asset discovery logs."
         )
         return ASSETS
 
     ASSETS = assets
     ASSET_REFRESH_AT = time.time()
 
-    logging.info(
-        "OTC forex assets discovered: %s",
-        len(ASSETS),
-    )
+    logging.info("OTC forex assets discovered: %s", len(ASSETS))
 
     send_telegram(
         "<b>OTC forex assets refreshed</b>\nCount: {}".format(
@@ -548,9 +566,6 @@ def safe_get_candles(self, active, interval, count, endtime):
     return None
 
 
-# Compatibility workaround for the unused digital-market worker.
-# It is specific to this library's private implementation and is
-# deliberately guarded in case a future version changes the API.
 if hasattr(IQ_Option, "_IQ_Option__get_digital_open"):
     IQ_Option._IQ_Option__get_digital_open = disable_digital_open_worker
 
@@ -591,7 +606,8 @@ def connect_iq():
 
             send_telegram(
                 "<b>Scanner connected</b>\n"
-                "Strategy: Forex OTC Breakout + Retest\n"
+                "Strategy: Breakout + Retest + Market Structure\n"
+                "Market: Forex OTC only\n"
                 "Candles: 1 minute\nExpiry: 1 minute\n"
                 "Stake: $1 fixed\nRecovery: disabled"
             )
@@ -676,14 +692,14 @@ def detect_liquidity_sweep(candles, direction):
         return False
 
     if direction == "call":
-        # Sweep below recent lows, then close back above them.
+        # Sell-side liquidity sweep, then close above the swept low.
         return (
             low_price < recent_low
             and close_price > recent_low
         )
 
     if direction == "put":
-        # Sweep above recent highs, then close back below them.
+        # Buy-side liquidity sweep, then close below the swept high.
         return (
             high_price > recent_high
             and close_price < recent_high
@@ -735,36 +751,547 @@ def detect_fvg(candles, direction, level, tolerance):
     return False
 
 
+def update_ipda_evidence(candles, index, setup):
+    history = candles[:index + 1]
+
+    direction = setup["direction"]
+    level = float(setup["level"])
+    breakout_range = float(setup["breakout_range"])
+    tolerance = breakout_range * RETEST_TOLERANCE
+
+    if detect_liquidity_sweep(history, direction):
+        setup["liquidity_sweep_seen"] = True
+
+    if detect_fvg(
+        history,
+        direction,
+        level,
+        tolerance,
+    ):
+        setup["fvg_seen"] = True
+
+
 # ============================================================
-# BREAKOUT + RETEST STRATEGY
+# MARKET STRUCTURE HELPERS
+# ============================================================
+
+def candle_time(candle):
+    try:
+        return int(candle.get("from", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def remove_setup(asset, reason):
+    if asset in PENDING_BREAKOUTS:
+        setup = PENDING_BREAKOUTS.pop(asset, None)
+        save_state()
+
+        if setup:
+            logging.info(
+                "Setup cancelled: %s direction=%s stage=%s reason=%s",
+                asset,
+                setup.get("direction", "unknown").upper(),
+                setup.get("stage", "unknown"),
+                reason,
+            )
+
+
+def structure_timeout(setup, current_time):
+    retest_time = int(setup.get("retest_time", 0))
+
+    if retest_time <= 0:
+        return False
+
+    return (
+        current_time - retest_time
+        > MAX_STRUCTURE_CANDLES * CANDLE_SECONDS
+    )
+
+
+# ============================================================
+# BREAKOUT + RETEST + SECOND-PULLBACK ENTRY
 # ============================================================
 
 def evaluate_breakout_retest(candles, asset):
     """
-    Core entry rules:
-    1. Find the recent 10-candle resistance and support.
-    2. Require a breakout candle with a body/range ratio of at
-       least 0.50.
-    3. Wait for a later candle to retest the broken level.
-    4. Require the retest candle to close back on the breakout side.
+    Required sequence for CALL:
+    1. Strong breakout above 10-candle resistance.
+    2. Retest of the broken resistance.
+    3. Price closes above the breakout candle high, confirming HH.
+    4. A confirmed swing low forms above the retest low, confirming HL.
+    5. A later bullish candle closes above the previous candle high.
+    6. Only then return a CALL signal.
 
-    Liquidity sweep and FVG are detected as extra evidence.
+    Required sequence for PUT:
+    1. Strong breakout below 10-candle support.
+    2. Retest of the broken support.
+    3. Price closes below the breakout candle low, confirming LL.
+    4. A confirmed swing high forms below the retest high, confirming LH.
+    5. A later bearish candle closes below the previous candle low.
+    6. Only then return a PUT signal.
+
+    Liquidity sweep and FVG evidence are recorded throughout the setup.
     """
 
-    minimum = BREAKOUT_LOOKBACK + 2
-
-    if len(candles) < minimum:
+    if len(candles) < BREAKOUT_LOOKBACK + 3:
         return None
 
     try:
-        candles = sorted(
-            candles,
-            key=lambda candle: int(candle.get("from", 0)),
-        )
+        candles = sorted(candles, key=candle_time)
 
-        current = candles[-1]
-        candle_time = int(current.get("from", 0))
+        for candle in candles:
+            float(candle["open"])
+            float(candle["close"])
+            float(candle["max"])
+            float(candle["min"])
 
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    times = [candle_time(candle) for candle in candles]
+
+    if not times or times[-1] <= 0:
+        return None
+
+    latest_time = times[-1]
+    setup = PENDING_BREAKOUTS.get(asset)
+
+    # Clear stale setups before processing the latest candle.
+    if setup:
+        stage = setup.get("stage", "WAIT_RETEST")
+
+        if stage == "WAIT_RETEST":
+            breakout_time = int(setup.get("time", 0))
+
+            elapsed_bars = (
+                latest_time - breakout_time
+            ) // CANDLE_SECONDS
+
+            if elapsed_bars > MAX_RETEST_CANDLES:
+                remove_setup(asset, "Retest window expired")
+                setup = None
+
+        elif structure_timeout(setup, latest_time):
+            remove_setup(asset, "Market structure window expired")
+            setup = None
+
+    # Process each newly closed candle in order.
+    # This avoids counting the same candle repeatedly.
+    if setup:
+        for index, current in enumerate(candles):
+            setup = PENDING_BREAKOUTS.get(asset)
+
+            if not setup:
+                break
+
+            current_time = times[index]
+            last_checked = int(setup.get("last_checked", setup.get("time", 0)))
+
+            if current_time <= last_checked:
+                continue
+
+            try:
+                current_open = float(current["open"])
+                current_close = float(current["close"])
+                current_high = float(current["max"])
+                current_low = float(current["min"])
+            except (KeyError, TypeError, ValueError):
+                setup["last_checked"] = current_time
+                continue
+
+            direction = setup["direction"]
+            stage = setup.get("stage", "WAIT_RETEST")
+            level = float(setup["level"])
+            breakout_range = float(setup["breakout_range"])
+            tolerance = breakout_range * RETEST_TOLERANCE
+
+            if stage == "WAIT_RETEST":
+                breakout_time = int(setup["time"])
+                elapsed_bars = (
+                    current_time - breakout_time
+                ) // CANDLE_SECONDS
+
+                if elapsed_bars > MAX_RETEST_CANDLES:
+                    remove_setup(asset, "Retest window expired")
+                    break
+
+                if direction == "call":
+                    touched = (
+                        current_low >= level - tolerance
+                        and current_low <= level + tolerance
+                    )
+
+                    confirmed = (
+                        touched
+                        and current_close > level
+                        and current_close > current_open
+                    )
+
+                else:
+                    touched = (
+                        current_high >= level - tolerance
+                        and current_high <= level + tolerance
+                    )
+
+                    confirmed = (
+                        touched
+                        and current_close < level
+                        and current_close < current_open
+                    )
+
+                setup["last_checked"] = current_time
+
+                if confirmed:
+                    setup["stage"] = "WAIT_HH" if direction == "call" else "WAIT_LL"
+                    setup["retest_time"] = current_time
+                    setup["first_low"] = current_low
+                    setup["first_high"] = current_high
+                    setup["liquidity_sweep_seen"] = False
+                    setup["fvg_seen"] = False
+
+                    update_ipda_evidence(
+                        candles,
+                        index,
+                        setup,
+                    )
+
+                    PENDING_BREAKOUTS[asset] = setup
+                    save_state()
+
+                    if direction == "call":
+                        logging.info(
+                            "RETEST CONFIRMED %s CALL level=%.6f; "
+                            "waiting for higher high",
+                            asset,
+                            level,
+                        )
+                    else:
+                        logging.info(
+                            "RETEST CONFIRMED %s PUT level=%.6f; "
+                            "waiting for lower low",
+                            asset,
+                            level,
+                        )
+
+                else:
+                    PENDING_BREAKOUTS[asset] = setup
+                    save_state()
+
+                continue
+
+            # Every structure stage collects IPDA evidence.
+            update_ipda_evidence(candles, index, setup)
+
+            if structure_timeout(setup, current_time):
+                remove_setup(asset, "Market structure window expired")
+                break
+
+            # ------------------------------------------------
+            # CALL: wait for a confirmed higher high.
+            # ------------------------------------------------
+            if stage == "WAIT_HH":
+                breakout_high = float(setup["breakout_high"])
+
+                if (
+                    current_high > breakout_high
+                    and current_close > breakout_high
+                ):
+                    setup["hh_price"] = current_high
+                    setup["hh_time"] = current_time
+                    setup["stage"] = "WAIT_SECOND_LOW"
+
+                    logging.info(
+                        "HIGHER HIGH CONFIRMED %s price=%.6f; "
+                        "waiting for second low",
+                        asset,
+                        current_high,
+                    )
+
+                setup["last_checked"] = current_time
+                PENDING_BREAKOUTS[asset] = setup
+                save_state()
+                continue
+
+            # ------------------------------------------------
+            # PUT: wait for a confirmed lower low.
+            # ------------------------------------------------
+            if stage == "WAIT_LL":
+                breakout_low = float(setup["breakout_low"])
+
+                if (
+                    current_low < breakout_low
+                    and current_close < breakout_low
+                ):
+                    setup["ll_price"] = current_low
+                    setup["ll_time"] = current_time
+                    setup["stage"] = "WAIT_SECOND_HIGH"
+
+                    logging.info(
+                        "LOWER LOW CONFIRMED %s price=%.6f; "
+                        "waiting for second high",
+                        asset,
+                        current_low,
+                    )
+
+                setup["last_checked"] = current_time
+                PENDING_BREAKOUTS[asset] = setup
+                save_state()
+                continue
+
+            # ------------------------------------------------
+            # CALL: wait for a second low above the first low.
+            # A three-candle pivot confirms that the low held.
+            # ------------------------------------------------
+            if stage == "WAIT_SECOND_LOW":
+                hh_price = float(setup["hh_price"])
+                hh_time = int(setup["hh_time"])
+
+                # If price makes a fresh confirmed HH first,
+                # reset the pivot search to the new HH.
+                if (
+                    current_high > hh_price
+                    and current_close > hh_price
+                ):
+                    setup["hh_price"] = current_high
+                    setup["hh_time"] = current_time
+                    setup["last_checked"] = current_time
+
+                    logging.info(
+                        "HIGHER HIGH EXTENDED %s price=%.6f",
+                        asset,
+                        current_high,
+                    )
+
+                    PENDING_BREAKOUTS[asset] = setup
+                    save_state()
+                    continue
+
+                if index >= 2:
+                    left = candles[index - 2]
+                    candidate = candles[index - 1]
+
+                    candidate_time = candle_time(candidate)
+
+                    left_low = float(left["min"])
+                    pivot_low = float(candidate["min"])
+                    right_low = current_low
+                    first_low = float(setup["first_low"])
+
+                    valid_pivot = (
+                        candidate_time > hh_time
+                        and pivot_low < left_low
+                        and pivot_low < right_low
+                        and pivot_low > first_low
+                    )
+
+                    if valid_pivot:
+                        setup["second_low"] = pivot_low
+                        setup["pivot_time"] = candidate_time
+                        setup["pivot_confirmed_at"] = current_time
+                        setup["stage"] = "WAIT_ENTRY_CONFIRM"
+
+                        logging.info(
+                            "HIGHER LOW CONFIRMED %s price=%.6f; "
+                            "waiting for bullish continuation",
+                            asset,
+                            pivot_low,
+                        )
+
+                setup["last_checked"] = current_time
+                PENDING_BREAKOUTS[asset] = setup
+                save_state()
+                continue
+
+            # ------------------------------------------------
+            # PUT: wait for a second high below the first high.
+            # ------------------------------------------------
+            if stage == "WAIT_SECOND_HIGH":
+                ll_price = float(setup["ll_price"])
+                ll_time = int(setup["ll_time"])
+
+                # If price makes a fresh confirmed LL first,
+                # reset the pivot search to the new LL.
+                if (
+                    current_low < ll_price
+                    and current_close < ll_price
+                ):
+                    setup["ll_price"] = current_low
+                    setup["ll_time"] = current_time
+                    setup["last_checked"] = current_time
+
+                    logging.info(
+                        "LOWER LOW EXTENDED %s price=%.6f",
+                        asset,
+                        current_low,
+                    )
+
+                    PENDING_BREAKOUTS[asset] = setup
+                    save_state()
+                    continue
+
+                if index >= 2:
+                    left = candles[index - 2]
+                    candidate = candles[index - 1]
+
+                    candidate_time = candle_time(candidate)
+
+                    left_high = float(left["max"])
+                    pivot_high = float(candidate["max"])
+                    right_high = current_high
+                    first_high = float(setup["first_high"])
+
+                    valid_pivot = (
+                        candidate_time > ll_time
+                        and pivot_high > left_high
+                        and pivot_high > right_high
+                        and pivot_high < first_high
+                    )
+
+                    if valid_pivot:
+                        setup["second_high"] = pivot_high
+                        setup["pivot_time"] = candidate_time
+                        setup["pivot_confirmed_at"] = current_time
+                        setup["stage"] = "WAIT_ENTRY_CONFIRM"
+
+                        logging.info(
+                            "LOWER HIGH CONFIRMED %s price=%.6f; "
+                            "waiting for bearish continuation",
+                            asset,
+                            pivot_high,
+                        )
+
+                setup["last_checked"] = current_time
+                PENDING_BREAKOUTS[asset] = setup
+                save_state()
+                continue
+
+            # ------------------------------------------------
+            # FINAL ENTRY: continuation candle after the pivot.
+            # ------------------------------------------------
+            if stage == "WAIT_ENTRY_CONFIRM":
+                pivot_confirmed_at = int(
+                    setup["pivot_confirmed_at"]
+                )
+
+                if current_time <= pivot_confirmed_at:
+                    setup["last_checked"] = current_time
+                    PENDING_BREAKOUTS[asset] = setup
+                    save_state()
+                    continue
+
+                if index < 1:
+                    setup["last_checked"] = current_time
+                    PENDING_BREAKOUTS[asset] = setup
+                    save_state()
+                    continue
+
+                previous = candles[index - 1]
+                previous_high = float(previous["max"])
+                previous_low = float(previous["min"])
+
+                if direction == "call":
+                    second_low = float(setup["second_low"])
+
+                    if current_low < second_low:
+                        remove_setup(
+                            asset,
+                            "Second higher low failed",
+                        )
+                        break
+
+                    continuation = (
+                        current_close > current_open
+                        and current_close > previous_high
+                    )
+
+                    market_structure = "HH+HL"
+                    second_pivot = second_low
+
+                else:
+                    second_high = float(setup["second_high"])
+
+                    if current_high > second_high:
+                        remove_setup(
+                            asset,
+                            "Second lower high failed",
+                        )
+                        break
+
+                    continuation = (
+                        current_close < current_open
+                        and current_close < previous_low
+                    )
+
+                    market_structure = "LL+LH"
+                    second_pivot = second_high
+
+                setup["last_checked"] = current_time
+
+                if not continuation:
+                    PENDING_BREAKOUTS[asset] = setup
+                    save_state()
+                    continue
+
+                sweep = bool(setup.get("liquidity_sweep_seen", False))
+                fvg = bool(setup.get("fvg_seen", False))
+
+                # These optional filters do not replace the
+                # required market-structure confirmation.
+                if REQUIRE_LIQUIDITY_SWEEP and not sweep:
+                    remove_setup(
+                        asset,
+                        "Required liquidity sweep not found",
+                    )
+                    break
+
+                if REQUIRE_FVG_CONFLUENCE and not fvg:
+                    remove_setup(
+                        asset,
+                        "Required FVG confluence not found",
+                    )
+                    break
+
+                signal = {
+                    "direction": direction,
+                    "level": round(level, 6),
+                    "candle_time": current_time,
+                    "liquidity_sweep": sweep,
+                    "fvg_confluence": fvg,
+                    "market_structure": market_structure,
+                    "second_pivot": round(second_pivot, 6),
+                    "confirmation": (
+                        "Breakout + retest + {} + second pullback "
+                        "+ continuation candle"
+                    ).format(market_structure),
+                }
+
+                PENDING_BREAKOUTS.pop(asset, None)
+                save_state()
+
+                logging.info(
+                    "ENTRY CONFIRMED %s %s structure=%s "
+                    "pivot=%.6f sweep=%s fvg=%s",
+                    asset,
+                    direction.upper(),
+                    market_structure,
+                    second_pivot,
+                    sweep,
+                    fvg,
+                )
+
+                return signal
+
+    # --------------------------------------------------------
+    # No active setup: check the latest candle for a breakout.
+    # --------------------------------------------------------
+    if asset in PENDING_BREAKOUTS:
+        return None
+
+    current = candles[-1]
+
+    try:
+        current_time = candle_time(current)
         current_open = float(current["open"])
         current_close = float(current["close"])
         current_high = float(current["max"])
@@ -773,128 +1300,9 @@ def evaluate_breakout_retest(candles, asset):
     except (KeyError, TypeError, ValueError):
         return None
 
-    if candle_time <= 0:
+    if current_time <= 0:
         return None
 
-    pending = PENDING_BREAKOUTS.get(asset)
-
-    # Check an existing breakout before searching for a new one.
-    if pending:
-        breakout_time = int(pending["time"])
-
-        later_candles = [
-            candle
-            for candle in candles
-            if int(candle.get("from", 0)) > breakout_time
-        ]
-
-        elapsed = len(later_candles)
-
-        if elapsed > MAX_RETEST_CANDLES:
-            logging.info(
-                "Retest expired: %s %s",
-                asset,
-                pending["direction"],
-            )
-            PENDING_BREAKOUTS.pop(asset, None)
-            save_state()
-            pending = None
-
-        elif elapsed > 0:
-            if candle_time <= int(pending.get("last_checked", 0)):
-                return None
-
-            pending["last_checked"] = candle_time
-
-            direction = pending["direction"]
-            level = float(pending["level"])
-
-            breakout_range = float(pending["breakout_range"])
-            tolerance = max(
-                breakout_range * RETEST_TOLERANCE,
-                0.0,
-            )
-
-            if direction == "call":
-                touched = (
-                    current_low >= level - tolerance
-                    and current_low <= level + tolerance
-                )
-
-                confirmed = (
-                    touched
-                    and current_close > level
-                    and current_close > current_open
-                )
-
-            else:
-                touched = (
-                    current_high >= level - tolerance
-                    and current_high <= level + tolerance
-                )
-
-                confirmed = (
-                    touched
-                    and current_close < level
-                    and current_close < current_open
-                )
-
-            if not confirmed:
-                save_state()
-                return None
-
-            sweep = detect_liquidity_sweep(candles, direction)
-            fvg = detect_fvg(
-                candles,
-                direction,
-                level,
-                tolerance,
-            )
-
-            if REQUIRE_LIQUIDITY_SWEEP and not sweep:
-                logging.info(
-                    "Retest rejected: no liquidity sweep on %s",
-                    asset,
-                )
-                PENDING_BREAKOUTS.pop(asset, None)
-                save_state()
-                return None
-
-            if REQUIRE_FVG_CONFLUENCE and not fvg:
-                logging.info(
-                    "Retest rejected: no FVG confluence on %s",
-                    asset,
-                )
-                PENDING_BREAKOUTS.pop(asset, None)
-                save_state()
-                return None
-
-            PENDING_BREAKOUTS.pop(asset, None)
-            save_state()
-
-            confirmation = (
-                "Breakout + retest; liquidity sweep={}; FVG={}"
-            ).format(sweep, fvg)
-
-            logging.info(
-                "RETEST CONFIRMED %s %s level=%.6f sweep=%s fvg=%s",
-                asset,
-                direction.upper(),
-                level,
-                sweep,
-                fvg,
-            )
-
-            return {
-                "direction": direction,
-                "level": round(level, 6),
-                "candle_time": candle_time,
-                "liquidity_sweep": sweep,
-                "fvg_confluence": fvg,
-                "confirmation": confirmation,
-            }
-
-    # Search for a fresh breakout.
     history = candles[-(BREAKOUT_LOOKBACK + 1):-1]
 
     if len(history) < BREAKOUT_LOOKBACK:
@@ -922,11 +1330,17 @@ def evaluate_breakout_retest(candles, asset):
     direction = None
     level = None
 
-    if current_close > resistance and current_close > current_open:
+    if (
+        current_close > resistance
+        and current_close > current_open
+    ):
         direction = "call"
         level = resistance
 
-    elif current_close < support and current_close < current_open:
+    elif (
+        current_close < support
+        and current_close < current_open
+    ):
         direction = "put"
         level = support
 
@@ -934,11 +1348,16 @@ def evaluate_breakout_retest(candles, asset):
         return None
 
     PENDING_BREAKOUTS[asset] = {
+        "stage": "WAIT_RETEST",
         "direction": direction,
         "level": float(level),
-        "time": candle_time,
-        "last_checked": candle_time,
+        "time": current_time,
+        "last_checked": current_time,
         "breakout_range": float(breakout_range),
+        "breakout_high": float(current_high),
+        "breakout_low": float(current_low),
+        "liquidity_sweep_seen": False,
+        "fvg_seen": False,
     }
 
     save_state()
@@ -1052,10 +1471,10 @@ def query_order_profit(order_id):
 
 def settle_result(asset, direction, broker_profit, order_id):
     if broker_profit is None:
-        raise ValueError("Cannot settle order without a numeric result")
+        raise ValueError("Cannot settle without a numeric order result")
 
-    # Preserve the requested reporting rule:
-    # a zero API result is counted as a $1 loss.
+    # A zero result is counted as a loss according to the
+    # scanner's existing reporting rule.
     net_change = -STAKE if broker_profit == 0 else float(broker_profit)
     is_win = net_change > 0
 
@@ -1088,8 +1507,8 @@ def settle_result(asset, direction, broker_profit, order_id):
         asset,
         direction,
         label,
-        net_change,
-        order_id,
+        profit=net_change,
+        order_id=order_id,
     )
 
     logging.info(
@@ -1179,7 +1598,9 @@ def place_trade(asset_info, signal):
             return
 
         if STATE.get("pending_order_id"):
-            logging.warning("Pending order exists; skipping new trade")
+            logging.warning(
+                "Pending order exists; skipping new trade"
+            )
             return
 
         try:
@@ -1196,8 +1617,17 @@ def place_trade(asset_info, signal):
                 direction,
                 "ORDER_ERROR",
                 level=signal["level"],
+                liquidity_sweep=signal["liquidity_sweep"],
+                fvg=signal["fvg_confluence"],
+                market_structure=signal["market_structure"],
+                second_pivot=signal["second_pivot"],
             )
-            logging.warning("Order placement error: %s", exc)
+
+            logging.warning(
+                "Order placement error on %s: %s",
+                asset,
+                exc,
+            )
             return
 
         if isinstance(result, tuple):
@@ -1217,6 +1647,10 @@ def place_trade(asset_info, signal):
                 direction,
                 "ORDER_REJECTED",
                 level=signal["level"],
+                liquidity_sweep=signal["liquidity_sweep"],
+                fvg=signal["fvg_confluence"],
+                market_structure=signal["market_structure"],
+                second_pivot=signal["second_pivot"],
             )
 
             logging.warning(
@@ -1242,25 +1676,32 @@ def place_trade(asset_info, signal):
             level=signal["level"],
             liquidity_sweep=signal["liquidity_sweep"],
             fvg=signal["fvg_confluence"],
+            market_structure=signal["market_structure"],
+            second_pivot=signal["second_pivot"],
         )
 
         logging.info(
-            "Trade opened: %s %s order=%s",
+            "Trade opened: %s %s order=%s structure=%s",
             asset,
             direction.upper(),
             order_id,
+            signal["market_structure"],
         )
 
         send_telegram(
             "<b>Practice trade opened</b>\n"
-            "Strategy: Breakout + Retest\n"
+            "Strategy: Breakout + Retest + Structure\n"
             "Asset: {}\nDirection: {}\n"
             "Stake: $1\nExpiry: 1 minute\n"
             "Breakout level: {}\n"
+            "Market structure: {}\n"
+            "Second pullback: {}\n"
             "Liquidity sweep: {}\nFVG confluence: {}".format(
                 asset,
                 direction.upper(),
                 signal["level"],
+                signal["market_structure"],
+                signal["second_pivot"],
                 signal["liquidity_sweep"],
                 signal["fvg_confluence"],
             )
@@ -1296,9 +1737,12 @@ def main():
         return
 
     send_telegram(
-        "<b>Breakout + Retest scanner started</b>\n"
+        "<b>Structure-confirmation scanner started</b>\n"
         "Mode: PRACTICE\n"
         "Market: Forex OTC only\n"
+        "Strategy: Breakout + Retest + Market Structure\n"
+        "BUY: HH then second HL then bullish confirmation\n"
+        "SELL: LL then second LH then bearish confirmation\n"
         "Candles: 1 minute\nExpiry: 1 minute\n"
         "Stake: fixed $1\n"
         "Profit target: +$5\nLoss limit: -$3\n"
@@ -1401,29 +1845,40 @@ def main():
                 log_trade(
                     asset,
                     signal["direction"],
-                    "SIGNAL",
+                    "STRUCTURE_CONFIRMED_SIGNAL",
                     level=signal["level"],
                     liquidity_sweep=signal["liquidity_sweep"],
                     fvg=signal["fvg_confluence"],
+                    market_structure=signal["market_structure"],
+                    second_pivot=signal["second_pivot"],
                 )
 
                 logging.info(
-                    "CONFIRMED %s %s level=%s sweep=%s fvg=%s",
+                    "FINAL SIGNAL %s %s level=%s structure=%s "
+                    "second_pivot=%s sweep=%s fvg=%s",
                     asset,
                     signal["direction"].upper(),
                     signal["level"],
+                    signal["market_structure"],
+                    signal["second_pivot"],
                     signal["liquidity_sweep"],
                     signal["fvg_confluence"],
                 )
 
                 send_telegram(
-                    "<b>Breakout + Retest confirmed</b>\n"
+                    "<b>Market structure confirmed</b>\n"
                     "Asset: {}\nDirection: {}\n"
-                    "Level: {}\nLiquidity sweep: {}\n"
-                    "FVG confluence: {}".format(
+                    "Breakout level: {}\n"
+                    "Structure: {}\n"
+                    "Second pullback: {}\n"
+                    "Liquidity sweep: {}\n"
+                    "FVG confluence: {}\n"
+                    "Trigger: closed-candle continuation".format(
                         asset,
                         signal["direction"].upper(),
                         signal["level"],
+                        signal["market_structure"],
+                        signal["second_pivot"],
                         signal["liquidity_sweep"],
                         signal["fvg_confluence"],
                     )
