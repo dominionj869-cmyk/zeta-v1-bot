@@ -14,8 +14,11 @@ import requests
 import iqoptionapi.constants as OP_code
 from iqoptionapi.stable_api import IQ_Option
 
-# MOMENTUM 10 + MOMENTUM 20 + ENGULFING
-# PRACTICE MODE ONLY
+
+# ============================================================
+# FOREX OTC BREAKOUT + RETEST WITH IPDA DETECTION
+# PRACTICE ACCOUNT ONLY
+# ============================================================
 
 IQ_EMAIL = os.getenv("IQ_EMAIL", "").strip()
 IQ_PASSWORD = os.getenv("IQ_PASSWORD", "").strip()
@@ -24,19 +27,29 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 BALANCE_MODE = "PRACTICE"
 AUTO_TRADE = True
+
 STAKE = 1.0
 EXPIRY_MINUTES = 1
 CANDLE_SECONDS = 60
 
-MOMENTUM_PERIOD = 10
-MOMENTUM_CONFIRM_PERIOD = 20
-MOMENTUM_LOOKBACK = 50
-EXTREME_PERCENTILE = 0.08
-MIN_TURN_DISTANCE = 0.06
+# Original breakout + retest rules.
+BREAKOUT_LOOKBACK = 10
+RETEST_TOLERANCE = 0.20
+MIN_BREAKOUT_BODY_RATIO = 0.50
+MAX_RETEST_CANDLES = 6
 
+# IPDA-inspired additional analysis.
+REQUIRE_LIQUIDITY_SWEEP = False
+REQUIRE_FVG_CONFLUENCE = False
+LIQUIDITY_LOOKBACK = 5
+
+# Risk management.
 SESSION_PROFIT_TARGET = 5.0
 SESSION_LOSS_LIMIT = 3.0
+MAX_CONSECUTIVE_LOSSES = 3
+MAX_RESOLVED_TRADES = 20
 
+# Runtime settings.
 SCAN_INTERVAL = 5
 ASSET_REFRESH_SECONDS = 900
 HEARTBEAT_SECONDS = 300
@@ -45,12 +58,13 @@ CANDLE_REQUEST_TIMEOUT = 10
 ORDER_RESULT_RETRY_SECONDS = 5
 REJECTED_ASSET_COOLDOWN_SECONDS = 600
 
-CANDLE_REQUEST_COUNT = (
-    MOMENTUM_LOOKBACK + MOMENTUM_CONFIRM_PERIOD + 15
+CANDLE_REQUEST_COUNT = max(
+    BREAKOUT_LOOKBACK + MAX_RETEST_CANDLES + 10,
+    LIQUIDITY_LOOKBACK + 10,
 )
 
-LOG_FILE = "momentum_signal_log.csv"
-STATE_FILE = "momentum_state.json"
+LOG_FILE = "breakout_retest_log.csv"
+STATE_FILE = "breakout_state.json"
 LAGOS = ZoneInfo("Africa/Lagos")
 
 CURRENCIES = {
@@ -58,16 +72,12 @@ CURRENCIES = {
     "CNY", "HKD", "SGD", "SEK", "NOK", "DKK", "PLN", "CZK",
     "HUF", "TRY", "ZAR", "MXN", "BRL", "INR", "THB", "AED",
     "SAR", "ILS", "KRW", "TWD", "RUB", "RON", "BGN", "ISK",
-    "PHP", "IDR", "MYR"
+    "PHP", "IDR", "MYR",
 }
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s"
-)
-
-SESSION_ID = now_session = (
-    datetime.now(LAGOS).strftime("%Y-%m-%d")
+    format="%(asctime)s %(levelname)s %(message)s",
 )
 
 IQ = None
@@ -77,6 +87,7 @@ REJECTED_ASSETS = {}
 STOP_EVENT = threading.Event()
 TRADE_LOCK = threading.Lock()
 STATE_LOCK = threading.RLock()
+PENDING_BREAKOUTS = {}
 
 
 def now_lagos():
@@ -104,7 +115,7 @@ def send_telegram(message):
         )
         response.raise_for_status()
     except Exception as exc:
-        logging.warning("Telegram send failed: %s", exc)
+        logging.warning("Telegram error: %s", exc)
 
 
 def fresh_state():
@@ -113,12 +124,14 @@ def fresh_state():
         "profit": 0.0,
         "wins": 0,
         "losses": 0,
+        "consecutive_losses": 0,
         "resolved": 0,
         "pending_order_id": None,
         "pending_asset": None,
         "pending_direction": None,
         "pending_started": None,
         "last_signals": {},
+        "pending_breakouts": {},
         "stop_reason": "",
     }
 
@@ -137,9 +150,8 @@ def load_state():
 
     if saved.get("date") == current["date"]:
         current.update(saved)
-
-    # Preserve an unresolved order even if the date changes.
     else:
+        # Reset daily statistics but preserve an unresolved order.
         for key in (
             "pending_order_id",
             "pending_asset",
@@ -151,74 +163,65 @@ def load_state():
     if not isinstance(current.get("last_signals"), dict):
         current["last_signals"] = {}
 
+    if not isinstance(current.get("pending_breakouts"), dict):
+        current["pending_breakouts"] = {}
+
     return current
 
 
 STATE = load_state()
+PENDING_BREAKOUTS = STATE.get("pending_breakouts", {})
 
 
 def save_state():
     try:
         with STATE_LOCK:
-            with open(STATE_FILE + ".tmp", "w", encoding="utf-8") as handle:
+            STATE["pending_breakouts"] = PENDING_BREAKOUTS
+
+            with open(
+                STATE_FILE + ".tmp",
+                "w",
+                encoding="utf-8",
+            ) as handle:
                 json.dump(STATE, handle, indent=2)
+
             os.replace(STATE_FILE + ".tmp", STATE_FILE)
+
     except OSError as exc:
-        logging.warning("Could not save state: %s", exc)
+        logging.warning("State save failed: %s", exc)
 
 
 def format_stats():
     return (
         "Session P/L: ${:+.2f}\n"
-        "Wins: {}\nLosses: {}\nResolved trades: {}"
+        "Wins: {}\n"
+        "Losses: {}\n"
+        "Consecutive losses: {}\n"
+        "Resolved trades: {}/{}"
     ).format(
         float(STATE.get("profit", 0.0)),
         int(STATE.get("wins", 0)),
         int(STATE.get("losses", 0)),
+        int(STATE.get("consecutive_losses", 0)),
         int(STATE.get("resolved", 0)),
+        MAX_RESOLVED_TRADES,
     )
-
-
-def log_trade(asset, direction, momentum, status, profit="", order_id=""):
-    fields = [
-        "timestamp_lagos", "session_id", "asset", "direction",
-        "momentum10", "status", "profit", "order_id", "session_profit"
-    ]
-
-    try:
-        exists = os.path.exists(LOG_FILE)
-
-        with open(LOG_FILE, "a", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fields)
-
-            if not exists or os.path.getsize(LOG_FILE) == 0:
-                writer.writeheader()
-
-            writer.writerow({
-                "timestamp_lagos": now_lagos().isoformat(timespec="seconds"),
-                "session_id": SESSION_ID,
-                "asset": asset,
-                "direction": direction,
-                "momentum10": (
-                    "" if momentum is None else round(float(momentum), 5)
-                ),
-                "status": status,
-                "profit": profit,
-                "order_id": order_id,
-                "session_profit": round(float(STATE["profit"]), 2),
-            })
-    except Exception as exc:
-        logging.warning("CSV logging error: %s", exc)
 
 
 def risk_stop_reason():
     profit = round(float(STATE.get("profit", 0.0)), 2)
 
     if profit >= SESSION_PROFIT_TARGET:
-        return "Profit target reached"
+        return "Session profit target reached"
 
     if profit <= -SESSION_LOSS_LIMIT:
-        return "Loss limit reached"
+        return "Session loss limit reached"
+
+    if int(STATE.get("consecutive_losses", 0)) >= MAX_CONSECUTIVE_LOSSES:
+        return "Maximum consecutive losses reached"
+
+    if int(STATE.get("resolved", 0)) >= MAX_RESOLVED_TRADES:
+        return "Maximum resolved trades reached"
 
     return None
 
@@ -231,21 +234,87 @@ def stop_if_limit_reached():
         STATE["stop_reason"] = reason
         save_state()
 
-        message = (
-            "<b>SCANNER STOPPED</b>\n{}\n{}"
-        ).format(reason, format_stats())
-
-        logging.warning(message.replace("<b>", "").replace("</b>", ""))
-        send_telegram(message)
+        logging.warning("%s", reason)
+        send_telegram(
+            "<b>SCANNER STOPPED</b>\n{}\n{}".format(
+                reason,
+                format_stats(),
+            )
+        )
 
     return bool(reason)
 
+
+def log_trade(
+    asset,
+    direction,
+    status,
+    profit="",
+    order_id="",
+    level="",
+    liquidity_sweep="",
+    fvg="",
+):
+    fields = [
+        "timestamp_lagos",
+        "session_id",
+        "asset",
+        "direction",
+        "status",
+        "profit",
+        "order_id",
+        "breakout_level",
+        "liquidity_sweep",
+        "fvg_confluence",
+        "session_profit",
+    ]
+
+    try:
+        exists = os.path.exists(LOG_FILE)
+
+        with open(
+            LOG_FILE,
+            "a",
+            newline="",
+            encoding="utf-8",
+        ) as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+
+            if not exists or os.path.getsize(LOG_FILE) == 0:
+                writer.writeheader()
+
+            writer.writerow({
+                "timestamp_lagos": now_lagos().isoformat(
+                    timespec="seconds"
+                ),
+                "session_id": now_lagos().date().isoformat(),
+                "asset": asset,
+                "direction": direction,
+                "status": status,
+                "profit": profit,
+                "order_id": order_id,
+                "breakout_level": level,
+                "liquidity_sweep": liquidity_sweep,
+                "fvg_confluence": fvg,
+                "session_profit": round(
+                    float(STATE.get("profit", 0.0)), 2
+                ),
+            })
+
+    except Exception as exc:
+        logging.warning("CSV logging error: %s", exc)
+
+
+# ============================================================
+# FOREX OTC ASSET DISCOVERY
+# ============================================================
 
 def normalize_forex_name(value):
     if not isinstance(value, str):
         return None, False
 
     raw = value.strip().upper().split(".")[-1]
+
     if not raw:
         return None, False
 
@@ -273,10 +342,11 @@ def normalize_forex_name(value):
 def add_asset(found, name, active_id=None):
     pair, is_otc = normalize_forex_name(name)
 
-    if not pair:
+    # This strategy is restricted to Forex OTC.
+    if not pair or not is_otc:
         return
 
-    clean_name = pair + ("-OTC" if is_otc else "")
+    clean_name = pair + "-OTC"
     resolved_id = None
 
     candidates = [
@@ -299,8 +369,8 @@ def add_asset(found, name, active_id=None):
     found[clean_name] = {
         "name": clean_name,
         "pair": pair,
-        "otc": is_otc,
         "id": resolved_id,
+        "otc": True,
     }
 
     try:
@@ -330,7 +400,6 @@ def walk_asset_tree(node, found, parent_key=None):
         if isinstance(name, str):
             add_asset(found, name, active_id)
 
-        # Some API responses wrap data inside "result".
         for key, value in node.items():
             walk_asset_tree(value, found, key)
 
@@ -397,39 +466,37 @@ def refresh_assets(force=False):
             )
 
     assets = list(found.values())
-    assets.sort(key=lambda item: (item["otc"], item["name"]))
+    assets.sort(key=lambda item: item["name"])
 
-    if assets:
-        ASSETS = assets
-        ASSET_REFRESH_AT = time.time()
-
-        normal_count = sum(1 for item in assets if not item["otc"])
-        otc_count = sum(1 for item in assets if item["otc"])
-
-        logging.info(
-            "Forex assets: %s total; %s normal; %s OTC",
-            len(assets),
-            normal_count,
-            otc_count,
-        )
-
-        send_telegram(
-            "<b>Forex assets refreshed</b>\n"
-            "Total: {}\nNormal: {}\nOTC: {}".format(
-                len(assets), normal_count, otc_count
-            )
-        )
-    else:
+    if not assets:
         logging.warning(
-            "No eligible forex assets found. "
-            "Check the discovery logs above."
+            "No OTC forex assets found. Check the asset discovery logs."
         )
+        return ASSETS
+
+    ASSETS = assets
+    ASSET_REFRESH_AT = time.time()
+
+    logging.info(
+        "OTC forex assets discovered: %s",
+        len(ASSETS),
+    )
+
+    send_telegram(
+        "<b>OTC forex assets refreshed</b>\nCount: {}".format(
+            len(ASSETS)
+        )
+    )
 
     return ASSETS
 
 
+# ============================================================
+# IQ OPTION CONNECTION AND CANDLE FETCHING
+# ============================================================
+
 def disable_digital_open_worker(self):
-    logging.info("Disabled digital-market watcher")
+    logging.info("Unused digital-market watcher disabled")
 
 
 def safe_get_candles(self, active, interval, count, endtime):
@@ -452,7 +519,11 @@ def safe_get_candles(self, active, interval, count, endtime):
         deadline = time.time() + CANDLE_REQUEST_TIMEOUT
 
         while time.time() < deadline:
-            data = getattr(self.api.candles, "candles_data", None)
+            data = getattr(
+                self.api.candles,
+                "candles_data",
+                None,
+            )
 
             if data is not None:
                 return data
@@ -468,11 +539,18 @@ def safe_get_candles(self, active, interval, count, endtime):
         logging.warning("Candle request timed out: %s", active)
 
     except Exception as exc:
-        logging.warning("Candle request failed for %s: %s", active, exc)
+        logging.warning(
+            "Candle request failed for %s: %s",
+            active,
+            exc,
+        )
 
     return None
 
 
+# Compatibility workaround for the unused digital-market worker.
+# It is specific to this library's private implementation and is
+# deliberately guarded in case a future version changes the API.
 if hasattr(IQ_Option, "_IQ_Option__get_digital_open"):
     IQ_Option._IQ_Option__get_digital_open = disable_digital_open_worker
 
@@ -493,7 +571,9 @@ def connect_iq():
             result = client.connect()
 
             connected = (
-                result[0] if isinstance(result, tuple) else bool(result)
+                result[0]
+                if isinstance(result, tuple)
+                else bool(result)
             )
 
             if not connected:
@@ -511,15 +591,16 @@ def connect_iq():
 
             send_telegram(
                 "<b>Scanner connected</b>\n"
-                "Mode: PRACTICE\nStake: $1\n"
-                "Expiry: 1 minute\n"
-                "Strategy: M10 + M20 + engulfing"
+                "Strategy: Forex OTC Breakout + Retest\n"
+                "Candles: 1 minute\nExpiry: 1 minute\n"
+                "Stake: $1 fixed\nRecovery: disabled"
             )
 
             return
 
         except Exception as exc:
             last_error = str(exc)
+
             logging.warning(
                 "Connection attempt %s/5 failed: %s",
                 attempt,
@@ -529,37 +610,7 @@ def connect_iq():
             if attempt < 5:
                 time.sleep(RECONNECT_SECONDS)
 
-    raise RuntimeError("Could not connect: " + last_error)
-
-
-def momentum_series(closes, period):
-    values = []
-
-    for index in range(period, len(closes)):
-        old = closes[index]
-        current = closes[index]
-
-        # Use the close from 'period' candles earlier.
-        old = closes[index - period]
-
-        if old <= 0:
-            values.append(0.0)
-        else:
-            values.append(((current / old) - 1.0) * 100.0)
-
-    return values
-
-
-def percentile_value(values, fraction):
-    ordered = sorted(values)
-
-    if not ordered:
-        return 0.0
-
-    index = int((len(ordered) - 1) * fraction)
-    index = max(0, min(len(ordered) - 1, index))
-
-    return ordered[index]
+    raise RuntimeError("IQ Option connection failed: " + last_error)
 
 
 def get_closed_candles(asset):
@@ -571,7 +622,11 @@ def get_closed_candles(asset):
             int(time.time()),
         )
     except Exception as exc:
-        logging.debug("Candle fetch failed for %s: %s", asset, exc)
+        logging.debug(
+            "Candle fetch failed for %s: %s",
+            asset,
+            exc,
+        )
         return []
 
     if not isinstance(raw, list):
@@ -582,14 +637,14 @@ def get_closed_candles(asset):
     except Exception:
         return []
 
-    now = int(time.time())
+    current_time = int(time.time())
     closed = []
 
     for candle in raw:
         try:
             start = int(candle.get("from", 0))
 
-            if start > 0 and start + CANDLE_SECONDS <= now:
+            if start > 0 and start + CANDLE_SECONDS <= current_time:
                 closed.append(candle)
 
         except (TypeError, ValueError):
@@ -598,115 +653,309 @@ def get_closed_candles(asset):
     return closed
 
 
-def bullish_engulfing(previous, current):
+# ============================================================
+# IPDA-INSPIRED LIQUIDITY SWEEP AND FVG DETECTION
+# ============================================================
+
+def detect_liquidity_sweep(candles, direction):
+    if len(candles) < LIQUIDITY_LOOKBACK + 1:
+        return False
+
+    current = candles[-1]
+    previous = candles[-(LIQUIDITY_LOOKBACK + 1):-1]
+
     try:
-        po = float(previous["open"])
-        pc = float(previous["close"])
-        co = float(current["open"])
-        cc = float(current["close"])
+        high_price = float(current["max"])
+        low_price = float(current["min"])
+        close_price = float(current["close"])
+
+        recent_high = max(float(c["max"]) for c in previous)
+        recent_low = min(float(c["min"]) for c in previous)
+
     except (KeyError, TypeError, ValueError):
         return False
 
-    return pc < po and cc > co and co <= pc and cc >= po
+    if direction == "call":
+        # Sweep below recent lows, then close back above them.
+        return (
+            low_price < recent_low
+            and close_price > recent_low
+        )
+
+    if direction == "put":
+        # Sweep above recent highs, then close back below them.
+        return (
+            high_price > recent_high
+            and close_price < recent_high
+        )
+
+    return False
 
 
-def bearish_engulfing(previous, current):
+def detect_fvg(candles, direction, level, tolerance):
+    if len(candles) < 3:
+        return False
+
+    first = candles[-3]
+    third = candles[-1]
+
     try:
-        po = float(previous["open"])
-        pc = float(previous["close"])
-        co = float(current["open"])
-        cc = float(current["close"])
+        first_high = float(first["max"])
+        first_low = float(first["min"])
+        third_high = float(third["max"])
+        third_low = float(third["min"])
+
     except (KeyError, TypeError, ValueError):
         return False
 
-    return pc > po and cc < co and co >= pc and cc <= po
+    if direction == "call":
+        # Bullish FVG: third candle low is above first candle high.
+        if third_low > first_high:
+            gap_low = first_high
+            gap_high = third_low
+
+            return (
+                gap_low - tolerance
+                <= level
+                <= gap_high + tolerance
+            )
+
+    if direction == "put":
+        # Bearish FVG: third candle high is below first candle low.
+        if third_high < first_low:
+            gap_low = third_high
+            gap_high = first_low
+
+            return (
+                gap_low - tolerance
+                <= level
+                <= gap_high + tolerance
+            )
+
+    return False
 
 
-def evaluate_signal(candles):
-    minimum = MOMENTUM_LOOKBACK + MOMENTUM_CONFIRM_PERIOD + 2
+# ============================================================
+# BREAKOUT + RETEST STRATEGY
+# ============================================================
+
+def evaluate_breakout_retest(candles, asset):
+    """
+    Core entry rules:
+    1. Find the recent 10-candle resistance and support.
+    2. Require a breakout candle with a body/range ratio of at
+       least 0.50.
+    3. Wait for a later candle to retest the broken level.
+    4. Require the retest candle to close back on the breakout side.
+
+    Liquidity sweep and FVG are detected as extra evidence.
+    """
+
+    minimum = BREAKOUT_LOOKBACK + 2
 
     if len(candles) < minimum:
         return None
 
     try:
-        closes = [float(row["close"]) for row in candles]
-        candle_time = int(candles[-1].get("from", 0))
+        candles = sorted(
+            candles,
+            key=lambda candle: int(candle.get("from", 0)),
+        )
+
+        current = candles[-1]
+        candle_time = int(current.get("from", 0))
+
+        current_open = float(current["open"])
+        current_close = float(current["close"])
+        current_high = float(current["max"])
+        current_low = float(current["min"])
+
     except (KeyError, TypeError, ValueError):
         return None
 
-    values10 = momentum_series(closes, MOMENTUM_PERIOD)
-    values20 = momentum_series(closes, MOMENTUM_CONFIRM_PERIOD)
-
-    if len(values10) < MOMENTUM_LOOKBACK + 3:
+    if candle_time <= 0:
         return None
 
-    if len(values20) < 3:
+    pending = PENDING_BREAKOUTS.get(asset)
+
+    # Check an existing breakout before searching for a new one.
+    if pending:
+        breakout_time = int(pending["time"])
+
+        later_candles = [
+            candle
+            for candle in candles
+            if int(candle.get("from", 0)) > breakout_time
+        ]
+
+        elapsed = len(later_candles)
+
+        if elapsed > MAX_RETEST_CANDLES:
+            logging.info(
+                "Retest expired: %s %s",
+                asset,
+                pending["direction"],
+            )
+            PENDING_BREAKOUTS.pop(asset, None)
+            save_state()
+            pending = None
+
+        elif elapsed > 0:
+            if candle_time <= int(pending.get("last_checked", 0)):
+                return None
+
+            pending["last_checked"] = candle_time
+
+            direction = pending["direction"]
+            level = float(pending["level"])
+
+            breakout_range = float(pending["breakout_range"])
+            tolerance = max(
+                breakout_range * RETEST_TOLERANCE,
+                0.0,
+            )
+
+            if direction == "call":
+                touched = (
+                    current_low >= level - tolerance
+                    and current_low <= level + tolerance
+                )
+
+                confirmed = (
+                    touched
+                    and current_close > level
+                    and current_close > current_open
+                )
+
+            else:
+                touched = (
+                    current_high >= level - tolerance
+                    and current_high <= level + tolerance
+                )
+
+                confirmed = (
+                    touched
+                    and current_close < level
+                    and current_close < current_open
+                )
+
+            if not confirmed:
+                save_state()
+                return None
+
+            sweep = detect_liquidity_sweep(candles, direction)
+            fvg = detect_fvg(
+                candles,
+                direction,
+                level,
+                tolerance,
+            )
+
+            if REQUIRE_LIQUIDITY_SWEEP and not sweep:
+                logging.info(
+                    "Retest rejected: no liquidity sweep on %s",
+                    asset,
+                )
+                PENDING_BREAKOUTS.pop(asset, None)
+                save_state()
+                return None
+
+            if REQUIRE_FVG_CONFLUENCE and not fvg:
+                logging.info(
+                    "Retest rejected: no FVG confluence on %s",
+                    asset,
+                )
+                PENDING_BREAKOUTS.pop(asset, None)
+                save_state()
+                return None
+
+            PENDING_BREAKOUTS.pop(asset, None)
+            save_state()
+
+            confirmation = (
+                "Breakout + retest; liquidity sweep={}; FVG={}"
+            ).format(sweep, fvg)
+
+            logging.info(
+                "RETEST CONFIRMED %s %s level=%.6f sweep=%s fvg=%s",
+                asset,
+                direction.upper(),
+                level,
+                sweep,
+                fvg,
+            )
+
+            return {
+                "direction": direction,
+                "level": round(level, 6),
+                "candle_time": candle_time,
+                "liquidity_sweep": sweep,
+                "fvg_confluence": fvg,
+                "confirmation": confirmation,
+            }
+
+    # Search for a fresh breakout.
+    history = candles[-(BREAKOUT_LOOKBACK + 1):-1]
+
+    if len(history) < BREAKOUT_LOOKBACK:
         return None
 
-    current10 = values10[-1]
-    previous10 = values10[-2]
-    before_previous10 = values10[-3]
+    try:
+        resistance = max(float(c["max"]) for c in history)
+        support = min(float(c["min"]) for c in history)
 
-    history10 = values10[-(MOMENTUM_LOOKBACK + 1):-1]
+        breakout_range = current_high - current_low
 
-    low_extreme = percentile_value(history10, EXTREME_PERCENTILE)
-    high_extreme = percentile_value(
-        history10,
-        1.0 - EXTREME_PERCENTILE,
-    )
+        if breakout_range <= 0:
+            return None
 
-    if abs(current10 - previous10) < MIN_TURN_DISTANCE:
+        body_ratio = (
+            abs(current_close - current_open) / breakout_range
+        )
+
+    except (KeyError, TypeError, ValueError):
         return None
 
-    current20 = values20[-1]
-    previous20 = values20[-2]
+    if body_ratio < MIN_BREAKOUT_BODY_RATIO:
+        return None
 
-    m20_rising = current20 > previous20
-    m20_falling = current20 < previous20
+    direction = None
+    level = None
 
-    previous_candle = candles[-2]
-    current_candle = candles[-1]
+    if current_close > resistance and current_close > current_open:
+        direction = "call"
+        level = resistance
 
-    turning_up = (
-        current10 > previous10
-        and previous10 <= before_previous10
+    elif current_close < support and current_close < current_open:
+        direction = "put"
+        level = support
+
+    if direction is None:
+        return None
+
+    PENDING_BREAKOUTS[asset] = {
+        "direction": direction,
+        "level": float(level),
+        "time": candle_time,
+        "last_checked": candle_time,
+        "breakout_range": float(breakout_range),
+    }
+
+    save_state()
+
+    logging.info(
+        "BREAKOUT DETECTED %s %s level=%.6f; waiting for retest",
+        asset,
+        direction.upper(),
+        level,
     )
-
-    turning_down = (
-        current10 < previous10
-        and previous10 >= before_previous10
-    )
-
-    if (
-        current10 <= low_extreme
-        and turning_up
-        and m20_rising
-        and bullish_engulfing(previous_candle, current_candle)
-    ):
-        return {
-            "direction": "call",
-            "momentum": round(current10, 5),
-            "momentum20": round(current20, 5),
-            "candle_time": candle_time,
-            "confirmation": "M20 rising + bullish engulfing",
-        }
-
-    if (
-        current10 >= high_extreme
-        and turning_down
-        and m20_falling
-        and bearish_engulfing(previous_candle, current_candle)
-    ):
-        return {
-            "direction": "put",
-            "momentum": round(current10, 5),
-            "momentum20": round(current20, 5),
-            "candle_time": candle_time,
-            "confirmation": "M20 falling + bearish engulfing",
-        }
 
     return None
 
+
+# ============================================================
+# ORDER RESULT HANDLING
+# ============================================================
 
 def extract_numeric_profit(value):
     if value is None or isinstance(value, bool):
@@ -733,27 +982,32 @@ def extract_numeric_profit(value):
             return None
 
     if isinstance(value, dict):
-        keys = (
+        for key in (
             "profit", "profit_amount", "profitAmount",
             "close_profit", "closeProfit", "net_profit",
             "netProfit", "win_amount", "winAmount",
-        )
-
-        for key in keys:
+        ):
             if key in value:
                 result = extract_numeric_profit(value[key])
+
                 if result is not None:
                     return result
 
-        for key in ("result", "data", "betinfo", "bet_info", "option"):
-            if key in value:
-                result = extract_numeric_profit(value[key])
+        for key in (
+            "result", "data", "betinfo", "bet_info", "option",
+        ):
+            nested = value.get(key)
+
+            if isinstance(nested, (dict, list, tuple)):
+                result = extract_numeric_profit(nested)
+
                 if result is not None:
                     return result
 
     if isinstance(value, (list, tuple)):
         for item in value:
             result = extract_numeric_profit(item)
+
             if result is not None:
                 return result
 
@@ -761,8 +1015,12 @@ def extract_numeric_profit(value):
 
 
 def query_order_profit(order_id):
-    for name in ("check_win_v4", "check_win", "get_betinfo"):
-        method = getattr(IQ, name, None)
+    for method_name in (
+        "check_win_v4",
+        "check_win",
+        "get_betinfo",
+    ):
+        method = getattr(IQ, method_name, None)
 
         if not callable(method):
             continue
@@ -770,35 +1028,52 @@ def query_order_profit(order_id):
         try:
             raw = method(order_id)
         except Exception as exc:
-            logging.debug("%s failed: %s", name, exc)
+            logging.debug(
+                "%s failed for order %s: %s",
+                method_name,
+                order_id,
+                exc,
+            )
             continue
 
         value = extract_numeric_profit(raw)
 
         if value is not None:
+            logging.info(
+                "Order %s result via %s: %+.2f",
+                order_id,
+                method_name,
+                value,
+            )
             return value
 
     return None
 
 
-def settle_result(asset, direction, broker_profit, momentum, order_id):
+def settle_result(asset, direction, broker_profit, order_id):
     if broker_profit is None:
-        raise ValueError("Missing numeric broker result")
+        raise ValueError("Cannot settle order without a numeric result")
 
-    # A zero result is counted as a full $1 loss by your chosen rule.
+    # Preserve the requested reporting rule:
+    # a zero API result is counted as a $1 loss.
     net_change = -STAKE if broker_profit == 0 else float(broker_profit)
     is_win = net_change > 0
 
     with STATE_LOCK:
         STATE["profit"] = round(
-            float(STATE.get("profit", 0.0)) + net_change, 2
+            float(STATE.get("profit", 0.0)) + net_change,
+            2,
         )
         STATE["resolved"] = int(STATE.get("resolved", 0)) + 1
 
         if is_win:
             STATE["wins"] = int(STATE.get("wins", 0)) + 1
+            STATE["consecutive_losses"] = 0
         else:
             STATE["losses"] = int(STATE.get("losses", 0)) + 1
+            STATE["consecutive_losses"] = (
+                int(STATE.get("consecutive_losses", 0)) + 1
+            )
 
         STATE["pending_order_id"] = None
         STATE["pending_asset"] = None
@@ -808,25 +1083,42 @@ def settle_result(asset, direction, broker_profit, momentum, order_id):
     save_state()
 
     label = "WIN" if is_win else "LOSS"
-    log_trade(asset, direction, momentum, label, net_change, order_id)
+
+    log_trade(
+        asset,
+        direction,
+        label,
+        net_change,
+        order_id,
+    )
 
     logging.info(
         "%s | %s %s | %+.2f | %s",
-        label, asset, direction, net_change, format_stats()
+        label,
+        asset,
+        direction.upper(),
+        net_change,
+        format_stats(),
     )
 
     send_telegram(
-        "<b>{}</b>\nAsset: {}\nDirection: {}\n"
-        "Broker result: ${:+.2f}\nAccounted result: ${:+.2f}\n{}".format(
-            label, asset, direction.upper(),
-            broker_profit, net_change, format_stats()
+        "<b>Trade result: {}</b>\n"
+        "Asset: {}\nDirection: {}\n"
+        "Broker result: ${:+.2f}\n"
+        "Accounted result: ${:+.2f}\n{}".format(
+            label,
+            asset,
+            direction.upper(),
+            broker_profit,
+            net_change,
+            format_stats(),
         )
     )
 
     stop_if_limit_reached()
 
 
-def wait_for_order_result(order_id, asset, direction, momentum):
+def wait_for_order_result(order_id, asset, direction):
     last_notice = 0.0
 
     while True:
@@ -834,13 +1126,16 @@ def wait_for_order_result(order_id, asset, direction, momentum):
 
         if value is not None:
             settle_result(
-                asset, direction, value, momentum, order_id
+                asset,
+                direction,
+                value,
+                order_id,
             )
             return
 
         if time.time() - last_notice >= 60:
             logging.warning(
-                "Order %s is still unresolved. No new order will be placed.",
+                "Order %s unresolved; no new order will be placed",
                 order_id,
             )
             last_notice = time.time()
@@ -857,13 +1152,21 @@ def recover_pending_order():
     asset = STATE.get("pending_asset") or "UNKNOWN"
     direction = STATE.get("pending_direction") or "unknown"
 
-    logging.warning("Recovering pending order %s", order_id)
+    logging.warning("Recovering unresolved order %s", order_id)
+
+    send_telegram(
+        "<b>Recovering unresolved order</b>\n"
+        "Order: {}\nAsset: {}\n"
+        "No new order until it is resolved.".format(
+            order_id,
+            asset,
+        )
+    )
 
     wait_for_order_result(
         order_id,
         asset,
         direction,
-        None,
     )
 
 
@@ -876,7 +1179,7 @@ def place_trade(asset_info, signal):
             return
 
         if STATE.get("pending_order_id"):
-            logging.warning("Pending order exists; refusing another trade")
+            logging.warning("Pending order exists; skipping new trade")
             return
 
         try:
@@ -886,9 +1189,13 @@ def place_trade(asset_info, signal):
                 direction,
                 EXPIRY_MINUTES,
             )
+
         except Exception as exc:
             log_trade(
-                asset, direction, signal["momentum"], "ORDER_ERROR"
+                asset,
+                direction,
+                "ORDER_ERROR",
+                level=signal["level"],
             )
             logging.warning("Order placement error: %s", exc)
             return
@@ -898,16 +1205,25 @@ def place_trade(asset_info, signal):
             order_id = result[1] if len(result) > 1 else None
         else:
             success = bool(result)
-            order_id = result
+            order_id = None
 
-        if not success or order_id is None or order_id is False:
+        if not success or order_id is None:
             REJECTED_ASSETS[asset] = (
                 time.time() + REJECTED_ASSET_COOLDOWN_SECONDS
             )
+
             log_trade(
-                asset, direction, signal["momentum"], "ORDER_REJECTED"
+                asset,
+                direction,
+                "ORDER_REJECTED",
+                level=signal["level"],
             )
-            logging.warning("Order rejected on %s: %r", asset, result)
+
+            logging.warning(
+                "Order rejected on %s: %r",
+                asset,
+                result,
+            )
             return
 
         STATE["pending_order_id"] = order_id
@@ -921,21 +1237,32 @@ def place_trade(asset_info, signal):
         log_trade(
             asset,
             direction,
-            signal["momentum"],
             "OPENED",
-            "",
+            order_id=order_id,
+            level=signal["level"],
+            liquidity_sweep=signal["liquidity_sweep"],
+            fvg=signal["fvg_confluence"],
+        )
+
+        logging.info(
+            "Trade opened: %s %s order=%s",
+            asset,
+            direction.upper(),
             order_id,
         )
 
         send_telegram(
             "<b>Practice trade opened</b>\n"
-            "Asset: {}\nDirection: {}\nStake: $1\n"
-            "Expiry: 1 minute\nM10: {:.5f}\nM20: {:.5f}\n{}".format(
+            "Strategy: Breakout + Retest\n"
+            "Asset: {}\nDirection: {}\n"
+            "Stake: $1\nExpiry: 1 minute\n"
+            "Breakout level: {}\n"
+            "Liquidity sweep: {}\nFVG confluence: {}".format(
                 asset,
                 direction.upper(),
-                signal["momentum"],
-                signal["momentum20"],
-                signal["confirmation"],
+                signal["level"],
+                signal["liquidity_sweep"],
+                signal["fvg_confluence"],
             )
         )
 
@@ -943,9 +1270,12 @@ def place_trade(asset_info, signal):
         order_id,
         asset,
         direction,
-        signal["momentum"],
     )
 
+
+# ============================================================
+# MAIN SCANNER LOOP
+# ============================================================
 
 def main():
     connect_iq()
@@ -953,7 +1283,7 @@ def main():
 
     if not ASSETS:
         raise RuntimeError(
-            "No forex assets discovered. Check asset discovery logs."
+            "No OTC forex assets discovered. Check discovery logs."
         )
 
     if stop_if_limit_reached():
@@ -966,11 +1296,15 @@ def main():
         return
 
     send_telegram(
-        "<b>Momentum scanner started</b>\n"
+        "<b>Breakout + Retest scanner started</b>\n"
         "Mode: PRACTICE\n"
-        "Entry: M10 extreme and turn\n"
-        "Confirmations: M20 trend + engulfing\n"
-        "Target: +$5 | Stop loss: -$3\n{}".format(format_stats())
+        "Market: Forex OTC only\n"
+        "Candles: 1 minute\nExpiry: 1 minute\n"
+        "Stake: fixed $1\n"
+        "Profit target: +$5\nLoss limit: -$3\n"
+        "Max consecutive losses: 3\n"
+        "Max resolved trades: 20\n"
+        "Recovery staking: disabled\n{}".format(format_stats())
     )
 
     last_heartbeat = time.time()
@@ -982,13 +1316,17 @@ def main():
         try:
             if not IQ.check_connect():
                 raise ConnectionError("Connection lost")
+
         except Exception:
             logging.warning("Connection lost; reconnecting")
 
             try:
                 result = IQ.connect()
+
                 connected = (
-                    result[0] if isinstance(result, tuple) else bool(result)
+                    result[0]
+                    if isinstance(result, tuple)
+                    else bool(result)
                 )
 
                 if not connected:
@@ -1012,13 +1350,19 @@ def main():
 
         if time.time() - last_heartbeat >= HEARTBEAT_SECONDS:
             logging.info(
-                "Heartbeat | Assets: %s | %s",
-                len(ASSETS), format_stats()
+                "Heartbeat | OTC assets: %s | %s",
+                len(ASSETS),
+                format_stats(),
             )
+
             send_telegram(
                 "<b>Scanner heartbeat</b>\n"
-                "Assets: {}\n{}".format(len(ASSETS), format_stats())
+                "OTC assets: {}\n{}".format(
+                    len(ASSETS),
+                    format_stats(),
+                )
             )
+
             last_heartbeat = time.time()
 
         for item in list(ASSETS):
@@ -1036,7 +1380,11 @@ def main():
 
             try:
                 candles = get_closed_candles(asset)
-                signal = evaluate_signal(candles)
+
+                signal = evaluate_breakout_retest(
+                    candles,
+                    asset,
+                )
 
                 if signal is None:
                     continue
@@ -1053,28 +1401,31 @@ def main():
                 log_trade(
                     asset,
                     signal["direction"],
-                    signal["momentum"],
                     "SIGNAL",
+                    level=signal["level"],
+                    liquidity_sweep=signal["liquidity_sweep"],
+                    fvg=signal["fvg_confluence"],
                 )
 
                 logging.info(
-                    "CONFIRMED SIGNAL %s %s | M10 %.5f | M20 %.5f | %s",
+                    "CONFIRMED %s %s level=%s sweep=%s fvg=%s",
                     asset,
                     signal["direction"].upper(),
-                    signal["momentum"],
-                    signal["momentum20"],
-                    signal["confirmation"],
+                    signal["level"],
+                    signal["liquidity_sweep"],
+                    signal["fvg_confluence"],
                 )
 
                 send_telegram(
-                    "<b>Confirmed setup</b>\n"
+                    "<b>Breakout + Retest confirmed</b>\n"
                     "Asset: {}\nDirection: {}\n"
-                    "M10: {:.5f}\nM20: {:.5f}\n{}".format(
+                    "Level: {}\nLiquidity sweep: {}\n"
+                    "FVG confluence: {}".format(
                         asset,
                         signal["direction"].upper(),
-                        signal["momentum"],
-                        signal["momentum20"],
-                        signal["confirmation"],
+                        signal["level"],
+                        signal["liquidity_sweep"],
+                        signal["fvg_confluence"],
                     )
                 )
 
@@ -1082,24 +1433,30 @@ def main():
                     place_trade(item, signal)
 
             except Exception as exc:
-                logging.warning("Scan error for %s: %s", asset, exc)
+                logging.warning(
+                    "Scan error for %s: %s",
+                    asset,
+                    exc,
+                )
 
             time.sleep(0.15)
 
         time.sleep(SCAN_INTERVAL)
 
-    logging.info("Scanner stopped | %s", format_stats())
-
 
 if __name__ == "__main__":
     try:
         main()
+
     except KeyboardInterrupt:
         STOP_EVENT.set()
         save_state()
-        logging.info("Scanner stopped by keyboard interrupt")
+        logging.info("Scanner stopped manually")
+
     except Exception as exc:
         logging.exception("Fatal scanner error")
-        send_telegram("<b>Scanner error</b>\n{}".format(exc))
+        send_telegram(
+            "<b>Scanner error</b>\n{}".format(exc)
+        )
         save_state()
         raise
