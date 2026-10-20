@@ -1,473 +1,567 @@
 
 import os
 import time
+import json
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import requests
 from iqoptionapi.stable_api import IQ_Option
 
-# =========================================================
-# BREAKOUT + RETEST CRYPTO SCANNER
-# IQ OPTION PRACTICE ACCOUNT ONLY
-# No Momentum 10/20. No martingale. No recovery staking.
-# =========================================================
+# ==========================================
+# FOREX OTC BREAKOUT + RETEST SCANNER
+# ==========================================
 
-BALANCE_MODE = "PRACTICE"
+IQ_EMAIL = os.getenv("IQ_EMAIL", "")
+IQ_PASSWORD = os.getenv("IQ_PASSWORD", "")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
+STAKE = 1.0
 CANDLE_SECONDS = 60
 EXPIRY_MINUTES = 1
-STAKE = 1.0
-
 LOOKBACK = 20
-ATR_PERIOD = 14
-BREAKOUT_ATR_BUFFER = 0.05
-RETEST_ATR_TOLERANCE = 0.15
-MAX_RETEST_CANDLES = 5
 
 DAILY_LOSS_LIMIT = 3.0
-MAX_TRADES_PER_DAY = 20
 MAX_CONSECUTIVE_LOSSES = 3
+MAX_TRADES_PER_DAY = 20
 
-SCAN_DELAY_SECONDS = 3
-CANDLE_COUNT = 60
+RETEST_CANDLES = 6
+SCAN_DELAY = 5
 TIMEZONE = ZoneInfo("Africa/Lagos")
 
-# Only these crypto symbols are considered.
-# Actual availability depends on your IQ Option account.
-CRYPTO_ACTIVES = [
-    "BTCUSD",
-    "ETHUSD",
-    "LTCUSD",
-    "XRPUSD",
-    "BCHUSD",
-    "EOSUSD",
-    "ADAUSD",
-    "DOTUSD",
-    "SOLUSD",
-    "DOGEUSD",
-    "TRXUSD",
-    "BNBUSD",
-    "AVAXUSD",
-]
+CURRENCIES = {
+    "USD", "EUR", "GBP", "JPY", "CHF",
+    "CAD", "AUD", "NZD"
+}
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-logger = logging.getLogger("breakout_retest")
+log = logging.getLogger("forex_otc_scanner")
+
+setups = {}
+last_seen = {}
+last_trade_time = {}
+
+daily_pnl = 0.0
+daily_trades = 0
+consecutive_losses = 0
+session_date = None
+api = None
 
 
-def local_day():
+def notify(message):
+    log.info(message)
+
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+
+    url = (
+        "https://api.telegram.org/bot"
+        + TELEGRAM_TOKEN
+        + "/sendMessage"
+    )
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message
+    }
+
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as exc:
+        log.warning("Telegram error: %s", exc)
+
+
+def today_string():
     return datetime.now(TIMEZONE).strftime("%Y-%m-%d")
 
 
-def connect_iq():
-    email = os.getenv("IQ_EMAIL")
-    password = os.getenv("IQ_PASSWORD")
+def reset_daily_stats():
+    global daily_pnl
+    global daily_trades
+    global consecutive_losses
+    global session_date
 
-    if not email or not password:
+    daily_pnl = 0.0
+    daily_trades = 0
+    consecutive_losses = 0
+    session_date = today_string()
+
+    setups.clear()
+    last_seen.clear()
+    last_trade_time.clear()
+
+    notify(
+        "NEW DAILY SESSION\n"
+        "Strategy: Forex OTC Breakout + Retest\n"
+        "Stake: $1 fixed\n"
+        "Daily loss limit: $3\n"
+        "Max trades: 20"
+    )
+
+
+def connect_iq():
+    global api
+
+    if not IQ_EMAIL or not IQ_PASSWORD:
         raise RuntimeError(
             "Set IQ_EMAIL and IQ_PASSWORD in GitHub Secrets."
         )
 
-    api = IQ_Option(email, password)
-    result = api.connect()
+    api = IQ_Option(IQ_EMAIL, IQ_PASSWORD)
 
-    if not result or not api.check_connect():
-        raise RuntimeError("IQ Option connection failed.")
+    connected, reason = api.connect()
 
-    api.change_balance(BALANCE_MODE)
+    if not connected:
+        raise RuntimeError(
+            "IQ Option connection failed: " + str(reason)
+        )
 
-    if hasattr(api, "get_balance_mode"):
-        mode = api.get_balance_mode()
-        if str(mode).upper() != "PRACTICE":
-            raise RuntimeError(
-                "Practice account verification failed. "
-                "Current mode: " + str(mode)
-            )
+    api.change_balance("PRACTICE")
 
-    logger.info("Connected. Practice mode requested.")
-    return api
+    notify(
+        "Connected to IQ Option.\n"
+        "PRACTICE mode requested.\n"
+        "Only Forex OTC pairs will be scanned."
+    )
 
 
-def get_candles(api, active):
+def is_forex_otc(name):
+    name = str(name).upper()
+
+    if not name.endswith("-OTC"):
+        return False
+
+    pair = name[:-4]
+
+    if len(pair) != 6:
+        return False
+
+    base = pair[:3]
+    quote = pair[3:]
+
+    if base not in CURRENCIES:
+        return False
+
+    if quote not in CURRENCIES:
+        return False
+
+    if base == quote:
+        return False
+
+    return True
+
+
+def discover_otc_pairs():
     try:
-        candles = api.get_candles(
-            active,
-            CANDLE_SECONDS,
-            CANDLE_COUNT,
-            time.time()
+        open_times = api.get_all_open_time()
+    except Exception as exc:
+        log.warning("Could not load market list: %s", exc)
+        return []
+
+    found = set()
+
+    for market_type in ("binary", "turbo"):
+        market_data = open_times.get(market_type, {})
+
+        for name, details in market_data.items():
+            if not is_forex_otc(name):
+                continue
+
+            if not isinstance(details, dict):
+                continue
+
+            if details.get("open") is True:
+                found.add(name)
+
+    pairs = sorted(found)
+
+    if pairs:
+        notify(
+            "Available Forex OTC pairs: "
+            + ", ".join(pairs)
+        )
+    else:
+        log.warning(
+            "No open Forex OTC pairs found. "
+            "The scanner will retry."
         )
 
-        if not candles or len(candles) < LOOKBACK + ATR_PERIOD + 3:
-            return None
+    return pairs
 
-        candles.sort(key=lambda item: item["from"])
 
-        # The newest candle may still be forming.
-        # Only completed candles are used for signals.
-        completed = candles[:-1]
+def get_closed_candles(pair):
+    candles = api.get_candles(
+        pair,
+        CANDLE_SECONDS,
+        60,
+        time.time()
+    )
 
-        if len(completed) < LOOKBACK + ATR_PERIOD + 2:
-            return None
+    if not candles:
+        return []
 
-        return completed
+    candles = sorted(
+        candles,
+        key=lambda candle: candle.get("from", 0)
+    )
 
-    except Exception as error:
-        logger.warning(
-            "Candle fetch failed for %s: %s",
-            active,
-            error
-        )
+    now = time.time()
+    closed = []
+
+    for candle in candles:
+        start = candle.get("from", 0)
+
+        if start + CANDLE_SECONDS <= now:
+            closed.append(candle)
+
+    return closed
+
+
+def candle_values(candle):
+    opening = float(candle["open"])
+    closing = float(candle["close"])
+    high = float(candle["max"])
+    low = float(candle["min"])
+
+    return opening, closing, high, low
+
+
+def calculate_tolerance(candles, level):
+    recent = candles[-10:]
+    total_range = 0.0
+    count = 0
+
+    for candle in recent:
+        try:
+            high = float(candle["max"])
+            low = float(candle["min"])
+            total_range += high - low
+            count += 1
+        except Exception:
+            continue
+
+    if count == 0:
+        return abs(level) * 0.00015
+
+    average_range = total_range / count
+
+    return max(
+        average_range * 0.25,
+        abs(level) * 0.00005
+    )
+
+
+def inspect_pair(pair):
+    global setups
+
+    candles = get_closed_candles(pair)
+
+    if len(candles) < LOOKBACK + 2:
         return None
 
+    current = candles[-1]
+    candle_time = int(current.get("from", 0))
 
-def calculate_atr(candles):
-    if len(candles) < ATR_PERIOD + 1:
+    if last_seen.get(pair) == candle_time:
         return None
 
-    ranges = []
+    last_seen[pair] = candle_time
 
-    start = len(candles) - ATR_PERIOD
+    opening, closing, high, low = candle_values(current)
 
-    for index in range(start, len(candles)):
-        current = candles[index]
-        previous_close = candles[index - 1]["close"]
-
-        true_range = max(
-            current["max"] - current["min"],
-            abs(current["max"] - previous_close),
-            abs(current["min"] - previous_close)
-        )
-
-        ranges.append(true_range)
-
-    if not ranges:
-        return None
-
-    return sum(ranges) / len(ranges)
-
-
-def get_levels(candles):
     previous = candles[-LOOKBACK - 1:-1]
 
-    if len(previous) < LOOKBACK:
-        return None, None
+    resistance = max(
+        float(candle["max"]) for candle in previous
+    )
 
-    resistance = max(item["max"] for item in previous)
-    support = min(item["min"] for item in previous)
+    support = min(
+        float(candle["min"]) for candle in previous
+    )
 
-    return support, resistance
+    tolerance = calculate_tolerance(previous, resistance)
 
+    setup = setups.get(pair)
 
-def new_setup(direction, level, atr, candle_time):
-    return {
-        "direction": direction,
-        "level": level,
-        "atr": atr,
-        "breakout_time": candle_time,
-        "waited": 0
-    }
-
-
-def inspect_candle(candles, state):
-    candle = candles[-1]
-    candle_time = candle["from"]
-
-    atr = calculate_atr(candles)
-    if atr is None or atr <= 0:
-        return None
-
-    support, resistance = get_levels(candles)
-    if support is None or resistance is None:
-        return None
-
-    # Do not reuse the candle that was already processed.
-    if state.get("last_candle") == candle_time:
-        return None
-
-    state["last_candle"] = candle_time
-
-    setup = state.get("setup")
-
-    if setup is None:
-        bullish_breakout = (
-            candle["close"]
-            > resistance + atr * BREAKOUT_ATR_BUFFER
+    if setup:
+        age = int(
+            (candle_time - setup["time"]) / CANDLE_SECONDS
         )
 
-        bearish_breakout = (
-            candle["close"]
-            < support - atr * BREAKOUT_ATR_BUFFER
-        )
+        if age > RETEST_CANDLES:
+            log.info("Setup expired for %s", pair)
+            setups.pop(pair, None)
+            setup = None
 
-        if bullish_breakout:
-            state["setup"] = new_setup(
-                "call",
-                resistance,
-                atr,
-                candle_time
-            )
+    if setup:
+        level = setup["level"]
+        direction = setup["direction"]
 
-            logger.info(
-                "BREAKOUT UP %s | level=%.8f",
-                state["active"],
-                resistance
-            )
+        if direction == "call":
+            touched = low <= level + tolerance
+            held = closing >= level
+            bullish = closing > opening
 
-        elif bearish_breakout:
-            state["setup"] = new_setup(
-                "put",
-                support,
-                atr,
-                candle_time
-            )
+            if touched and held and bullish:
+                setups.pop(pair, None)
+                return {
+                    "direction": "call",
+                    "level": level,
+                    "pair": pair
+                }
 
-            logger.info(
-                "BREAKOUT DOWN %s | level=%.8f",
-                state["active"],
-                support
-            )
+            if closing < level - tolerance:
+                log.info("Retest failed for %s", pair)
+                setups.pop(pair, None)
+
+        elif direction == "put":
+            touched = high >= level - tolerance
+            held = closing <= level
+            bearish = closing < opening
+
+            if touched and held and bearish:
+                setups.pop(pair, None)
+                return {
+                    "direction": "put",
+                    "level": level,
+                    "pair": pair
+                }
+
+            if closing > level + tolerance:
+                log.info("Retest failed for %s", pair)
+                setups.pop(pair, None)
 
         return None
 
-    # Only candles after the breakout can confirm a retest.
-    if candle_time <= setup["breakout_time"]:
-        return None
-
-    setup["waited"] += 1
-
-    if setup["waited"] > MAX_RETEST_CANDLES:
-        logger.info("Retest expired for %s", state["active"])
-        state["setup"] = None
-        return None
-
-    level = setup["level"]
-    tolerance = setup["atr"] * RETEST_ATR_TOLERANCE
-
-    if setup["direction"] == "call":
-        invalidated = candle["close"] < level - tolerance
-
-        retest = (
-            candle["min"] <= level + tolerance
-            and candle["min"] >= level - tolerance
-        )
-
-        confirmation = (
-            candle["close"] > level
-            and candle["close"] > candle["open"]
-        )
-
-    else:
-        invalidated = candle["close"] > level + tolerance
-
-        retest = (
-            candle["max"] >= level - tolerance
-            and candle["max"] <= level + tolerance
-        )
-
-        confirmation = (
-            candle["close"] < level
-            and candle["close"] < candle["open"]
-        )
-
-    if invalidated:
-        logger.info("Setup invalidated for %s", state["active"])
-        state["setup"] = None
-        return None
-
-    if retest and confirmation:
-        signal = {
-            "active": state["active"],
-            "direction": setup["direction"],
-            "level": level,
-            "candle_time": candle_time
+    if closing > resistance and closing > opening:
+        setups[pair] = {
+            "direction": "call",
+            "level": resistance,
+            "time": candle_time
         }
 
-        state["setup"] = None
-        return signal
+        notify(
+            "BREAKOUT UP: " + pair
+            + "\nResistance: " + str(round(resistance, 6))
+            + "\nWaiting for retest and bullish confirmation."
+        )
+
+        return None
+
+    if closing < support and closing < opening:
+        setups[pair] = {
+            "direction": "put",
+            "level": support,
+            "time": candle_time
+        }
+
+        notify(
+            "BREAKOUT DOWN: " + pair
+            + "\nSupport: " + str(round(support, 6))
+            + "\nWaiting for retest and bearish confirmation."
+        )
 
     return None
 
 
-def place_practice_trade(api, signal):
-    active = signal["active"]
-    direction = signal["direction"]
-
-    logger.info(
-        "ENTRY SIGNAL | %s | %s | level=%.8f",
-        active,
-        direction.upper(),
-        signal["level"]
-    )
-
-    try:
-        success, order_id = api.buy(
-            STAKE,
-            active,
-            direction,
-            EXPIRY_MINUTES
-        )
-
-        if not success or order_id is None:
-            logger.warning("Order rejected for %s", active)
-            return None
-
-        logger.info(
-            "ORDER ACCEPTED | %s | id=%s | stake=$%.2f",
-            active,
-            str(order_id),
-            STAKE
-        )
-
-        return order_id
-
-    except Exception as error:
-        logger.error(
-            "Order submission error for %s: %s",
-            active,
-            error
-        )
-        return None
-
-
-def get_trade_profit(api, order_id):
-    # Do not retry the trade or increase the stake if result
-    # retrieval fails. Stop the session if the result is unclear.
+def get_profit(order_id):
     result = api.check_win_v4(order_id)
 
     if isinstance(result, (int, float)):
         return float(result)
 
+    if isinstance(result, (list, tuple)):
+        for item in result:
+            if isinstance(item, (int, float)):
+                return float(item)
+
     raise RuntimeError(
-        "Unrecognized trade result for order " + str(order_id)
-        + ". Stop and verify the order in IQ Option."
+        "Could not read trade result: " + str(result)
     )
+
+
+def place_trade(signal):
+    global daily_pnl
+    global daily_trades
+    global consecutive_losses
+
+    pair = signal["pair"]
+    direction = signal["direction"]
+
+    if daily_trades >= MAX_TRADES_PER_DAY:
+        return
+
+    if daily_pnl <= -DAILY_LOSS_LIMIT:
+        return
+
+    if consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+        return
+
+    now = time.time()
+    previous_trade = last_trade_time.get(pair, 0)
+
+    if now - previous_trade < 60:
+        return
+
+    action = "BUY" if direction == "call" else "SELL"
+
+    notify(
+        "ENTRY SIGNAL\n"
+        + "Pair: " + pair + "\n"
+        + "Direction: " + action + "\n"
+        + "Stake: $1.00\n"
+        + "Expiry: 1 minute\n"
+        + "Level: " + str(round(signal["level"], 6))
+    )
+
+    try:
+        accepted, order_id = api.buy(
+            STAKE,
+            pair,
+            direction,
+            EXPIRY_MINUTES
+        )
+    except Exception as exc:
+        notify("ORDER ERROR: " + pair + "\n" + str(exc))
+        return
+
+    if not accepted:
+        notify("ORDER REJECTED: " + pair)
+        return
+
+    daily_trades += 1
+    last_trade_time[pair] = now
+
+    notify(
+        "ORDER ACCEPTED\n"
+        + pair + " " + action
+        + "\nOrder ID: " + str(order_id)
+    )
+
+    try:
+        profit = get_profit(order_id)
+    except Exception as exc:
+        notify(
+            "RESULT ERROR\n"
+            + pair + "\n"
+            + str(exc)
+            + "\nCheck the order in IQ Option manually."
+        )
+        return
+
+    daily_pnl += profit
+
+    # A zero result is counted as a loss for the streak.
+    if profit > 0:
+        consecutive_losses = 0
+        outcome = "WIN"
+    else:
+        consecutive_losses += 1
+        outcome = "LOSS"
+
+    notify(
+        "TRADE RESULT: " + outcome
+        + "\nPair: " + pair
+        + "\nProfit: $" + format(profit, ".2f")
+        + "\nDaily P/L: $" + format(daily_pnl, ".2f")
+        + "\nTrades: " + str(daily_trades)
+        + "\nConsecutive losses: "
+        + str(consecutive_losses)
+    )
+
+
+def trading_stopped():
+    if daily_pnl <= -DAILY_LOSS_LIMIT:
+        notify("STOP: Daily loss limit reached.")
+        return True
+
+    if consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+        notify("STOP: Three consecutive losses.")
+        return True
+
+    if daily_trades >= MAX_TRADES_PER_DAY:
+        notify("STOP: Daily trade limit reached.")
+        return True
+
+    return False
 
 
 def main():
-    api = connect_iq()
+    reset_daily_stats()
+    connect_iq()
 
-    states = {}
-    for active in CRYPTO_ACTIVES:
-        states[active] = {
-            "active": active,
-            "setup": None,
-            "last_candle": None
-        }
+    pairs = []
+    last_discovery = 0
 
-    current_day = local_day()
-    daily_profit = 0.0
-    trades_today = 0
-    consecutive_losses = 0
-
-    logger.info("Strategy: Breakout + Retest")
-    logger.info("Timeframe: 1 minute")
-    logger.info("Stake: fixed $%.2f", STAKE)
-    logger.info("Recovery staking: disabled")
-    logger.info("Daily loss limit: $%.2f", DAILY_LOSS_LIMIT)
+    notify(
+        "SCANNER STARTED\n"
+        "Strategy: Breakout + Retest\n"
+        "Market: Forex OTC only\n"
+        "Candles: 1 minute\n"
+        "Expiry: 1 minute\n"
+        "Stake: Fixed $1\n"
+        "Recovery staking: Disabled"
+    )
 
     while True:
-        try:
-            today = local_day()
+        if today_string() != session_date:
+            reset_daily_stats()
 
-            if today != current_day:
-                current_day = today
-                daily_profit = 0.0
-                trades_today = 0
-                consecutive_losses = 0
+        if trading_stopped():
+            time.sleep(60)
+            continue
 
-                for state in states.values():
-                    state["setup"] = None
+        if not api.check_connect():
+            notify("Connection lost. Reconnecting...")
 
-                logger.info("New daily session started.")
+            try:
+                connect_iq()
+            except Exception as exc:
+                log.error("Reconnect failed: %s", exc)
+                time.sleep(15)
+                continue
 
-            if daily_profit <= -DAILY_LOSS_LIMIT:
-                logger.warning("Daily loss limit reached. Trading stopped.")
+            pairs = []
+            last_discovery = 0
+
+        if time.time() - last_discovery >= 300:
+            pairs = discover_otc_pairs()
+            last_discovery = time.time()
+
+        for pair in pairs:
+            if trading_stopped():
                 break
 
-            if trades_today >= MAX_TRADES_PER_DAY:
-                logger.warning("Daily trade limit reached. Trading stopped.")
-                break
+            try:
+                signal = inspect_pair(pair)
 
-            if consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
-                logger.warning(
-                    "Consecutive loss limit reached. Trading stopped."
+                if signal:
+                    place_trade(signal)
+
+            except Exception as exc:
+                log.warning(
+                    "Scan error for %s: %s",
+                    pair,
+                    exc
                 )
-                break
 
-            signal = None
+            time.sleep(0.2)
 
-            for active in CRYPTO_ACTIVES:
-                state = states[active]
-                candles = get_candles(api, active)
-
-                if candles is None:
-                    continue
-
-                candidate = inspect_candle(candles, state)
-
-                if candidate is not None:
-                    signal = candidate
-                    break
-
-            if signal is None:
-                time.sleep(SCAN_DELAY_SECONDS)
-                continue
-
-            order_id = place_practice_trade(api, signal)
-
-            if order_id is None:
-                time.sleep(SCAN_DELAY_SECONDS)
-                continue
-
-            # One trade at a time. Wait for the result before
-            # evaluating another entry, preventing overlapping trades.
-            profit = get_trade_profit(api, order_id)
-
-            daily_profit += profit
-            trades_today += 1
-
-            if profit > 0:
-                consecutive_losses = 0
-                outcome = "WIN"
-            else:
-                # Zero-profit outcomes count as a loss for the
-                # consecutive-loss safety rule.
-                consecutive_losses += 1
-                outcome = "LOSS/TIE"
-
-            logger.info(
-                "TRADE RESULT | %s | profit=$%.2f | "
-                "daily=$%.2f | trades=%d | consecutive_losses=%d",
-                outcome,
-                profit,
-                daily_profit,
-                trades_today,
-                consecutive_losses
-            )
-
-            time.sleep(SCAN_DELAY_SECONDS)
-
-        except KeyboardInterrupt:
-            logger.info("Stopped by user.")
-            break
-
-        except Exception as error:
-            logger.exception("Critical error: %s", error)
-            logger.error(
-                "Trading halted for safety. Verify account and open orders."
-            )
-            break
-
-    logger.info(
-        "SESSION SUMMARY | trades=%d | net=$%.2f",
-        trades_today,
-        daily_profit
-    )
+        time.sleep(SCAN_DELAY)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        notify("Scanner stopped manually.")
+    except Exception as exc:
+        log.exception("Scanner stopped: %s", exc)
+        notify("SCANNER ERROR: " + str(exc))
+        raise
