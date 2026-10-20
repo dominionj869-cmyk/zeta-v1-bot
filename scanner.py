@@ -30,10 +30,11 @@ MAX_TRADES_PER_DAY = 20
 RETEST_CANDLES = 6
 SCAN_DELAY = 5
 TIMEZONE = ZoneInfo("Africa/Lagos")
+STATE_FILE = "scanner_state.json"
 
 CURRENCIES = {
-    "USD", "EUR", "GBP", "JPY", "CHF",
-    "CAD", "AUD", "NZD"
+    "USD", "EUR", "GBP", "JPY",
+    "CHF", "CAD", "AUD", "NZD"
 }
 
 logging.basicConfig(
@@ -52,6 +53,8 @@ daily_trades = 0
 consecutive_losses = 0
 session_date = None
 api = None
+halted_uncertain = False
+stop_notice_sent = False
 
 
 def notify(message):
@@ -66,13 +69,15 @@ def notify(message):
         + "/sendMessage"
     )
 
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message
-    }
-
     try:
-        requests.post(url, json=payload, timeout=10)
+        requests.post(
+            url,
+            json={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": message
+            },
+            timeout=10
+        )
     except Exception as exc:
         log.warning("Telegram error: %s", exc)
 
@@ -81,28 +86,144 @@ def today_string():
     return datetime.now(TIMEZONE).strftime("%Y-%m-%d")
 
 
-def reset_daily_stats():
+def save_state():
+    data = {
+        "date": session_date,
+        "daily_pnl": daily_pnl,
+        "daily_trades": daily_trades,
+        "consecutive_losses": consecutive_losses,
+        "halted_uncertain": halted_uncertain
+    }
+
+    temp_file = STATE_FILE + ".tmp"
+
+    try:
+        with open(temp_file, "w", encoding="utf-8") as file:
+            json.dump(data, file)
+
+        os.replace(temp_file, STATE_FILE)
+    except Exception as exc:
+        log.error("Could not save risk state: %s", exc)
+
+
+def load_state():
     global daily_pnl
     global daily_trades
     global consecutive_losses
     global session_date
+    global halted_uncertain
+
+    current_date = today_string()
+
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as file:
+            data = json.load(file)
+
+        if data.get("date") == current_date:
+            daily_pnl = float(data.get("daily_pnl", 0.0))
+            daily_trades = int(data.get("daily_trades", 0))
+            consecutive_losses = int(
+                data.get("consecutive_losses", 0)
+            )
+            halted_uncertain = bool(
+                data.get("halted_uncertain", False)
+            )
+            session_date = current_date
+
+            notify(
+                "DAILY STATE RESTORED\n"
+                + "P/L: $" + format(daily_pnl, ".2f")
+                + "\nTrades: " + str(daily_trades)
+                + "\nLoss streak: "
+                + str(consecutive_losses)
+            )
+            return
+
+    except FileNotFoundError:
+        log.info("No saved state. Starting fresh.")
+    except Exception as exc:
+        log.error("State file could not be read: %s", exc)
+        halted_uncertain = True
+        session_date = current_date
+        notify(
+            "SAFETY STOP: Risk state could not be read. "
+            "Check scanner_state.json before trading."
+        )
+        return
 
     daily_pnl = 0.0
     daily_trades = 0
     consecutive_losses = 0
-    session_date = today_string()
-
-    setups.clear()
-    last_seen.clear()
-    last_trade_time.clear()
+    halted_uncertain = False
+    session_date = current_date
+    save_state()
 
     notify(
         "NEW DAILY SESSION\n"
         "Strategy: Forex OTC Breakout + Retest\n"
         "Stake: $1 fixed\n"
         "Daily loss limit: $3\n"
-        "Max trades: 20"
+        "Maximum trades: 20"
     )
+
+
+def reset_daily_stats():
+    global daily_pnl
+    global daily_trades
+    global consecutive_losses
+    global session_date
+    global halted_uncertain
+    global stop_notice_sent
+
+    daily_pnl = 0.0
+    daily_trades = 0
+    consecutive_losses = 0
+    halted_uncertain = False
+    stop_notice_sent = False
+    session_date = today_string()
+
+    setups.clear()
+    last_seen.clear()
+    last_trade_time.clear()
+
+    save_state()
+
+    notify(
+        "NEW DAILY SESSION\n"
+        "Strategy: Forex OTC Breakout + Retest\n"
+        "Stake: $1 fixed\n"
+        "Daily loss limit: $3\n"
+        "Maximum trades: 20"
+    )
+
+
+def safe_digital_data(api_object):
+    original = api_object.get_digital_underlying_list_data
+
+    def safe_request(*args, **kwargs):
+        for attempt in range(3):
+            try:
+                result = original(*args, **kwargs)
+
+                if isinstance(result, dict):
+                    if "underlying" in result:
+                        return result
+
+                log.warning(
+                    "Digital data missing, attempt %s/3",
+                    attempt + 1
+                )
+            except Exception as exc:
+                log.warning(
+                    "Digital data request failed: %s",
+                    exc
+                )
+
+            time.sleep(2)
+
+        return {"underlying": []}
+
+    api_object.get_digital_underlying_list_data = safe_request
 
 
 def connect_iq():
@@ -113,21 +234,31 @@ def connect_iq():
             "Set IQ_EMAIL and IQ_PASSWORD in GitHub Secrets."
         )
 
-    api = IQ_Option(IQ_EMAIL, IQ_PASSWORD)
+    candidate = IQ_Option(IQ_EMAIL, IQ_PASSWORD)
 
-    connected, reason = api.connect()
+    # Install the wrapper before connect starts API threads.
+    safe_digital_data(candidate)
+
+    connected, reason = candidate.connect()
 
     if not connected:
         raise RuntimeError(
             "IQ Option connection failed: " + str(reason)
         )
 
-    api.change_balance("PRACTICE")
+    candidate.change_balance("PRACTICE")
+
+    if not candidate.check_connect():
+        raise RuntimeError(
+            "Connection failed after selecting PRACTICE."
+        )
+
+    api = candidate
 
     notify(
         "Connected to IQ Option.\n"
-        "PRACTICE mode requested.\n"
-        "Only Forex OTC pairs will be scanned."
+        "PRACTICE mode selected.\n"
+        "Forex OTC scanner only."
     )
 
 
@@ -145,21 +276,20 @@ def is_forex_otc(name):
     base = pair[:3]
     quote = pair[3:]
 
-    if base not in CURRENCIES:
-        return False
-
-    if quote not in CURRENCIES:
-        return False
-
-    if base == quote:
-        return False
-
-    return True
+    return (
+        base in CURRENCIES
+        and quote in CURRENCIES
+        and base != quote
+    )
 
 
 def discover_otc_pairs():
     try:
         open_times = api.get_all_open_time()
+
+        if not isinstance(open_times, dict):
+            return []
+
     except Exception as exc:
         log.warning("Could not load market list: %s", exc)
         return []
@@ -168,6 +298,9 @@ def discover_otc_pairs():
 
     for market_type in ("binary", "turbo"):
         market_data = open_times.get(market_type, {})
+
+        if not isinstance(market_data, dict):
+            continue
 
         for name, details in market_data.items():
             if not is_forex_otc(name):
@@ -183,27 +316,28 @@ def discover_otc_pairs():
 
     if pairs:
         notify(
-            "Available Forex OTC pairs: "
+            "Forex OTC pairs discovered: "
             + ", ".join(pairs)
         )
     else:
-        log.warning(
-            "No open Forex OTC pairs found. "
-            "The scanner will retry."
-        )
+        log.warning("No eligible Forex OTC pairs are open.")
 
     return pairs
 
 
 def get_closed_candles(pair):
-    candles = api.get_candles(
-        pair,
-        CANDLE_SECONDS,
-        60,
-        time.time()
-    )
+    try:
+        candles = api.get_candles(
+            pair,
+            CANDLE_SECONDS,
+            LOOKBACK + 3,
+            time.time()
+        )
+    except Exception as exc:
+        log.warning("Candle request failed for %s: %s", pair, exc)
+        return []
 
-    if not candles:
+    if not isinstance(candles, list) or not candles:
         return []
 
     candles = sorted(
@@ -215,21 +349,24 @@ def get_closed_candles(pair):
     closed = []
 
     for candle in candles:
-        start = candle.get("from", 0)
+        try:
+            start = float(candle["from"])
 
-        if start + CANDLE_SECONDS <= now:
-            closed.append(candle)
+            if start + CANDLE_SECONDS <= now:
+                closed.append(candle)
+        except (KeyError, TypeError, ValueError):
+            continue
 
     return closed
 
 
 def candle_values(candle):
-    opening = float(candle["open"])
-    closing = float(candle["close"])
-    high = float(candle["max"])
-    low = float(candle["min"])
-
-    return opening, closing, high, low
+    return (
+        float(candle["open"]),
+        float(candle["close"]),
+        float(candle["max"]),
+        float(candle["min"])
+    )
 
 
 def calculate_tolerance(candles, level):
@@ -239,11 +376,11 @@ def calculate_tolerance(candles, level):
 
     for candle in recent:
         try:
-            high = float(candle["max"])
-            low = float(candle["min"])
-            total_range += high - low
+            total_range += (
+                float(candle["max"]) - float(candle["min"])
+            )
             count += 1
-        except Exception:
+        except (KeyError, TypeError, ValueError):
             continue
 
     if count == 0:
@@ -258,11 +395,9 @@ def calculate_tolerance(candles, level):
 
 
 def inspect_pair(pair):
-    global setups
-
     candles = get_closed_candles(pair)
 
-    if len(candles) < LOOKBACK + 2:
+    if len(candles) < LOOKBACK + 1:
         return None
 
     current = candles[-1]
@@ -273,20 +408,23 @@ def inspect_pair(pair):
 
     last_seen[pair] = candle_time
 
-    opening, closing, high, low = candle_values(current)
+    try:
+        opening, closing, high, low = candle_values(current)
 
-    previous = candles[-LOOKBACK - 1:-1]
+        previous = candles[-LOOKBACK - 1:-1]
 
-    resistance = max(
-        float(candle["max"]) for candle in previous
-    )
+        resistance = max(
+            float(candle["max"]) for candle in previous
+        )
 
-    support = min(
-        float(candle["min"]) for candle in previous
-    )
+        support = min(
+            float(candle["min"]) for candle in previous
+        )
+
+    except (KeyError, TypeError, ValueError):
+        return None
 
     tolerance = calculate_tolerance(previous, resistance)
-
     setup = setups.get(pair)
 
     if setup:
@@ -295,7 +433,7 @@ def inspect_pair(pair):
         )
 
         if age > RETEST_CANDLES:
-            log.info("Setup expired for %s", pair)
+            log.info("Setup expired: %s", pair)
             setups.pop(pair, None)
             setup = None
 
@@ -317,10 +455,10 @@ def inspect_pair(pair):
                 }
 
             if closing < level - tolerance:
-                log.info("Retest failed for %s", pair)
                 setups.pop(pair, None)
+                log.info("Bullish retest failed: %s", pair)
 
-        elif direction == "put":
+        else:
             touched = high >= level - tolerance
             held = closing <= level
             bearish = closing < opening
@@ -334,8 +472,8 @@ def inspect_pair(pair):
                 }
 
             if closing > level + tolerance:
-                log.info("Retest failed for %s", pair)
                 setups.pop(pair, None)
+                log.info("Bearish retest failed: %s", pair)
 
         return None
 
@@ -349,9 +487,8 @@ def inspect_pair(pair):
         notify(
             "BREAKOUT UP: " + pair
             + "\nResistance: " + str(round(resistance, 6))
-            + "\nWaiting for retest and bullish confirmation."
+            + "\nWaiting for retest."
         )
-
         return None
 
     if closing < support and closing < opening:
@@ -364,7 +501,7 @@ def inspect_pair(pair):
         notify(
             "BREAKOUT DOWN: " + pair
             + "\nSupport: " + str(round(support, 6))
-            + "\nWaiting for retest and bearish confirmation."
+            + "\nWaiting for retest."
         )
 
     return None
@@ -382,7 +519,7 @@ def get_profit(order_id):
                 return float(item)
 
     raise RuntimeError(
-        "Could not read trade result: " + str(result)
+        "Unresolved trade result: " + str(result)
     )
 
 
@@ -390,17 +527,12 @@ def place_trade(signal):
     global daily_pnl
     global daily_trades
     global consecutive_losses
+    global halted_uncertain
 
     pair = signal["pair"]
     direction = signal["direction"]
 
-    if daily_trades >= MAX_TRADES_PER_DAY:
-        return
-
-    if daily_pnl <= -DAILY_LOSS_LIMIT:
-        return
-
-    if consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+    if trading_stopped():
         return
 
     now = time.time()
@@ -413,11 +545,11 @@ def place_trade(signal):
 
     notify(
         "ENTRY SIGNAL\n"
-        + "Pair: " + pair + "\n"
-        + "Direction: " + action + "\n"
-        + "Stake: $1.00\n"
-        + "Expiry: 1 minute\n"
-        + "Level: " + str(round(signal["level"], 6))
+        + "Pair: " + pair
+        + "\nDirection: " + action
+        + "\nStake: $1.00"
+        + "\nExpiry: 1 minute"
+        + "\nLevel: " + str(round(signal["level"], 6))
     )
 
     try:
@@ -428,7 +560,13 @@ def place_trade(signal):
             EXPIRY_MINUTES
         )
     except Exception as exc:
-        notify("ORDER ERROR: " + pair + "\n" + str(exc))
+        notify(
+            "ORDER STATUS UNCERTAIN\n"
+            + pair + "\n" + str(exc)
+            + "\nTrading halted for safety. Check IQ Option."
+        )
+        halted_uncertain = True
+        save_state()
         return
 
     if not accepted:
@@ -437,6 +575,7 @@ def place_trade(signal):
 
     daily_trades += 1
     last_trade_time[pair] = now
+    save_state()
 
     notify(
         "ORDER ACCEPTED\n"
@@ -447,23 +586,26 @@ def place_trade(signal):
     try:
         profit = get_profit(order_id)
     except Exception as exc:
+        halted_uncertain = True
+        save_state()
+
         notify(
-            "RESULT ERROR\n"
-            + pair + "\n"
-            + str(exc)
-            + "\nCheck the order in IQ Option manually."
+            "RESULT UNKNOWN - TRADING HALTED\n"
+            + pair + "\n" + str(exc)
+            + "\nCheck the order manually before restarting."
         )
         return
 
     daily_pnl += profit
 
-    # A zero result is counted as a loss for the streak.
     if profit > 0:
         consecutive_losses = 0
         outcome = "WIN"
     else:
         consecutive_losses += 1
         outcome = "LOSS"
+
+    save_state()
 
     notify(
         "TRADE RESULT: " + outcome
@@ -477,23 +619,30 @@ def place_trade(signal):
 
 
 def trading_stopped():
-    if daily_pnl <= -DAILY_LOSS_LIMIT:
-        notify("STOP: Daily loss limit reached.")
-        return True
+    global stop_notice_sent
 
-    if consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
-        notify("STOP: Three consecutive losses.")
-        return True
+    reason = None
 
-    if daily_trades >= MAX_TRADES_PER_DAY:
-        notify("STOP: Daily trade limit reached.")
+    if halted_uncertain:
+        reason = "Unresolved order or unsafe saved state."
+    elif daily_pnl <= -DAILY_LOSS_LIMIT:
+        reason = "Daily loss limit reached."
+    elif consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+        reason = "Three consecutive losses reached."
+    elif daily_trades >= MAX_TRADES_PER_DAY:
+        reason = "Daily trade limit reached."
+
+    if reason:
+        if not stop_notice_sent:
+            notify("TRADING STOPPED\n" + reason)
+            stop_notice_sent = True
         return True
 
     return False
 
 
 def main():
-    reset_daily_stats()
+    load_state()
     connect_iq()
 
     pairs = []
@@ -501,11 +650,11 @@ def main():
 
     notify(
         "SCANNER STARTED\n"
-        "Strategy: Breakout + Retest\n"
+        "Strategy: Forex OTC Breakout + Retest\n"
         "Market: Forex OTC only\n"
         "Candles: 1 minute\n"
         "Expiry: 1 minute\n"
-        "Stake: Fixed $1\n"
+        "Fixed stake: $1\n"
         "Recovery staking: Disabled"
     )
 
@@ -514,11 +663,16 @@ def main():
             reset_daily_stats()
 
         if trading_stopped():
-            time.sleep(60)
+            time.sleep(30)
             continue
 
-        if not api.check_connect():
-            notify("Connection lost. Reconnecting...")
+        try:
+            connected = api.check_connect()
+        except Exception:
+            connected = False
+
+        if not connected:
+            notify("Connection lost. Reconnecting.")
 
             try:
                 connect_iq()
@@ -541,7 +695,7 @@ def main():
             try:
                 signal = inspect_pair(pair)
 
-                if signal:
+                if signal is not None:
                     place_trade(signal)
 
             except Exception as exc:
